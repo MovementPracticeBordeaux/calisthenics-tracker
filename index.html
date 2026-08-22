@@ -801,15 +801,49 @@ async function renderSommeil() {
   const last14 = []; for (let i = 13; i >= 0; i--) last14.push(daysAgo(i));
   const nights = last14.map(function(d) {
     const w = wearable.find(function(x) { return x.day === d; });
-    return { date: d, tracked: !!(w && w.sleep_session_recorded), stress: w ? w.stress_avg : null };
+    return {
+      date: d, tracked: !!(w && w.sleep_session_recorded), stress: w ? w.stress_avg : null,
+      total: w ? w.sleep_total_min : null, light: w ? w.sleep_light_min : null,
+      deep: w ? w.sleep_deep_min : null, rem: w ? w.sleep_rem_min : null, awake: w ? w.sleep_awake_count : null,
+    };
   });
+  const withSleep = nights.filter(function(n) { return n.total != null; });
+  const latest = withSleep.length ? withSleep[withSleep.length - 1] : null;
+  const avgTotal = withSleep.length ? avgOf(withSleep.map(function(n){return n.total;})) : null;
 
   const stressBars = nights.map(function(n) { return { label: formatDateLabel(n.date).slice(0,2), val: n.stress || 0 }; });
+  const sleepBars = nights.map(function(n) { return { label: formatDateLabel(n.date).slice(0,2), val: n.total ? Math.round(n.total/60*10)/10 : 0 }; });
 
   let html = "";
   if (errorMsg) html += '<div class="error-banner"><b>Erreur :</b> ' + esc(errorMsg) + "</div>";
   html += '<h1 style="margin-bottom:4px">Sommeil</h1>';
   html += '<div class="muted" style="margin-bottom:18px">14 dernières nuits</div>';
+
+  if (latest) {
+    const h = Math.floor(latest.total / 60), m = latest.total % 60;
+    html += '<div class="card"><div class="section-label">Dernière nuit trackée — ' + formatDateLabel(latest.date) + '</div>';
+    html += '<div style="text-align:center;padding:6px 0 14px"><div style="font-size:34px;font-weight:900">' + h + 'h' + (m<10?'0':'') + m + '</div>';
+    if (avgTotal != null) html += '<div class="muted" style="font-size:11px">moyenne 14j : ' + Math.floor(avgTotal/60) + 'h' + Math.round(avgTotal%60).toString().padStart(2,'0') + '</div>';
+    html += "</div>";
+    const stages = [
+      ["Léger", latest.light, "steel"],
+      ["Profond", latest.deep, "rust"],
+      ["Paradoxal", latest.rem, "green"],
+    ];
+    const stageTotal = latest.total || 1;
+    stages.forEach(function(s) {
+      const pct = Math.round((s[1]/stageTotal)*100);
+      const sh = Math.floor(s[1]/60), sm = s[1]%60;
+      html += '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span>' + s[0] + '</span><span class="muted">' + sh + 'h' + (sm<10?'0':'') + sm + ' · ' + pct + '%</span></div>';
+      html += '<div style="height:8px;background:var(--surfaceRaised);border-radius:4px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:var(--' + s[2] + ')"></div></div></div>';
+    });
+    if (latest.awake != null) html += '<div class="muted" style="font-size:11px;margin-top:6px">Réveils détectés : ' + latest.awake + "</div>";
+    html += "</div>";
+  }
+
+  html += '<div class="card"><div class="section-label">Durée de sommeil (h) — 14 jours</div>';
+  html += barChartHtml(sleepBars, { color: "steel", decimals: 1 });
+  html += "</div>";
 
   html += '<div class="card"><div class="section-label">Stress — tendance récente</div>';
   html += barChartHtml(stressBars, { color: "amber" });
@@ -819,15 +853,20 @@ async function renderSommeil() {
   nights.slice().reverse().forEach(function(n) {
     html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
     html += '<span style="font-size:13px">' + formatDateLabel(n.date) + "</span>";
-    html += n.tracked
-      ? '<span style="color:var(--green);font-size:12px;font-weight:700">Trackée</span>'
-      : '<span class="muted" style="font-size:12px">—</span>';
+    if (n.total != null) {
+      const h = Math.floor(n.total/60), m = n.total%60;
+      html += '<span style="color:var(--green);font-size:12px;font-weight:700">' + h + 'h' + (m<10?'0':'') + m + "</span>";
+    } else if (n.tracked) {
+      html += '<span style="color:var(--muted);font-size:12px">Trackée (détail indispo)</span>';
+    } else {
+      html += '<span class="muted" style="font-size:12px">—</span>';
+    }
     html += "</div>";
   });
   html += "</div>";
 
-  html += '<div class="card amber"><div class="section-label">En construction</div>';
-  html += '<div style="font-size:12px;color:var(--chalkDim);line-height:1.5">La durée exacte et les phases de sommeil (léger/profond/paradoxal) sont encodées par ta montre dans un format binaire propriétaire que je ne décode pas encore de façon fiable — je préfère ne rien afficher plutôt que de te donner des chiffres possiblement faux. Dis-moi si tu veux qu\'on creuse ce décodage la prochaine fois.</div></div>';
+  html += '<div class="card steel"><div class="section-label">À savoir</div>';
+  html += '<div style="font-size:11px;color:var(--chalkDim);line-height:1.5">Les stades (léger/profond/paradoxal) viennent d\'un décodage du format propriétaire de ta montre, validé contre les valeurs affichées par Zepp — fiable mais non officiellement documenté. Une nuit isolée à durée très courte (ex. sieste) peut apparaître si le capteur a mal segmenté la session.</div></div>';
 
   app.innerHTML = html;
 }
