@@ -6,7 +6,7 @@
 <title>Calisthenics Tracker</title>
 <style>
   :root {
-    --bg: #17181A; --surface: #211F1D; --surfaceRaised: #2A2724;
+    --bg: #0b0b0d; --surface: #1a1a1c; --surfaceRaised: #242426;
     --chalk: #EDE8DF; --chalkDim: #B8B2A6; --rust: #C1441E; --rustDim: #7A2C14;
     --steel: #5B7B8C; --green: #5C7A4A; --amber: #B08838; --muted: #5A564C; --line: #38352F;
   }
@@ -68,6 +68,7 @@
 </head>
 <body>
 <div class="wrap">
+  <div style="text-align:center;color:var(--muted);font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px">MOVEMENT PRACTICE ✦ SUIVI</div>
   <div class="tabs">
     <button class="tab active" data-tab="seance">Séance</button>
     <button class="tab" data-tab="dashboard">Dashboard</button>
@@ -418,8 +419,9 @@ function rpeLadderHtml(scope, value) {
   return html + "</div>";
 }
 function wearableCardHtml(w) {
-  let html = '<div class="card steel" id="wearable-slot"><div class="section-label">Montre — ' + formatDateLabel(w.day || currentDate) + '</div><div style="display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--chalkDim)">';
+  let html = '<div class="card steel" id="wearable-slot"><div class="section-label">Strap — ' + formatDateLabel(w.day || currentDate) + '</div><div style="display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--chalkDim)">';
   if (w.hr_resting != null) html += "<span>FC repos <b style='color:var(--chalk)'>" + w.hr_resting + "</b></span>";
+  if (w.hrv_avg != null) html += "<span>VFC <b style='color:var(--chalk)'>" + Math.round(w.hrv_avg) + " ms</b></span>";
   if (w.hr_avg != null) html += "<span>FC activité <b style='color:var(--chalk)'>" + Math.round(w.hr_avg) + "</b></span>";
   if (w.stress_avg != null) html += "<span>Stress moy. <b style='color:var(--chalk)'>" + Math.round(w.stress_avg) + "</b></span>";
   if (w.steps_total != null) html += "<span>Pas <b style='color:var(--chalk)'>" + w.steps_total + "</b></span>";
@@ -563,14 +565,20 @@ async function renderDashboard() {
     streak++;
   }
 
-  // Interprétation + récupération
-  let hrDiff = null, stressDiff = null, loadRatio = null;
+  // Interprétation + indicateur de forme (charge + FC repos + VFC + stress)
+  let hrDiff = null, stressDiff = null, loadRatio = null, hrvDiff = null;
   const lines = [];
   const hrBaseline = avgOf(wearable7.filter(function(w){ return w.day !== today && w.hr_resting != null; }).map(function(w){ return w.hr_resting; }));
   if (todayWearable && todayWearable.hr_resting != null && hrBaseline != null) {
     hrDiff = todayWearable.hr_resting - hrBaseline;
     if (hrDiff >= 3) lines.push({ tone: "warn", text: "FC repos à " + todayWearable.hr_resting + " bpm, " + hrDiff.toFixed(1) + " au-dessus de ta moyenne récente (" + hrBaseline.toFixed(0) + ") — fatigue possible." });
     else if (hrDiff <= -3) lines.push({ tone: "good", text: "FC repos à " + todayWearable.hr_resting + " bpm, plus basse que d'habitude — bon signe." });
+  }
+  const hrvBaseline = avgOf(wearable7.filter(function(w){ return w.day !== today && w.hrv_avg != null; }).map(function(w){ return w.hrv_avg; }));
+  if (todayWearable && todayWearable.hrv_avg != null && hrvBaseline != null) {
+    hrvDiff = todayWearable.hrv_avg - hrvBaseline;
+    if (hrvDiff <= -8) lines.push({ tone: "warn", text: "VFC à " + todayWearable.hrv_avg.toFixed(0) + " ms, nettement plus basse que d'habitude (" + hrvBaseline.toFixed(0) + ") — système nerveux sous tension." });
+    else if (hrvDiff >= 8) lines.push({ tone: "good", text: "VFC à " + todayWearable.hrv_avg.toFixed(0) + " ms, en hausse — bon signe de récupération." });
   }
   const stressBaseline = avgOf(wearable7.filter(function(w){ return w.day !== today && w.stress_avg != null; }).map(function(w){ return w.stress_avg; }));
   if (todayWearable && todayWearable.stress_avg != null && stressBaseline != null) {
@@ -591,6 +599,7 @@ async function renderDashboard() {
 
   let score = 75, signals = 0;
   if (hrDiff != null) { signals++; if (hrDiff >= 5) score -= 35; else if (hrDiff >= 3) score -= 20; else if (hrDiff >= 1) score -= 5; else if (hrDiff <= -3) score += 10; }
+  if (hrvDiff != null) { signals++; if (hrvDiff <= -12) score -= 25; else if (hrvDiff <= -8) score -= 15; else if (hrvDiff <= -4) score -= 5; else if (hrvDiff >= 8) score += 10; }
   if (stressDiff != null) { signals++; if (stressDiff >= 10) score -= 25; else if (stressDiff >= 5) score -= 10; }
   if (loadRatio != null) { signals++; if (loadRatio > 1.5) score -= 30; else if (loadRatio > 1.3) score -= 15; else if (loadRatio < 0.7) score += 5; }
   score = Math.max(0, Math.min(100, score));
@@ -637,10 +646,27 @@ async function renderDashboard() {
   html += "</div>";
 
   if (dashPeriod === "jour") {
-    html += '<div class="card"><div class="section-label">Récupération</div>';
+    html += '<div class="card"><div class="section-label">Forme</div>';
     html += '<div style="text-align:center;padding:8px 0"><div style="font-size:38px;font-weight:900">' + score + '</div>';
     html += '<div style="color:var(--' + tierColor + ');font-size:13px;font-weight:800;text-transform:uppercase">' + tier + "</div></div>";
     html += '<div style="text-align:center;padding-top:10px;border-top:1px solid var(--line);font-size:12px">Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div></div>";
+
+    // Tendance FC repos + VFC sur 14 jours
+    const trend14 = []; for (let i = 13; i >= 0; i--) trend14.push(daysAgo(i));
+    const hrSeries = trend14.map(function(d) { const w = wearable.find(function(x) { return x.day === d; }); return { date: d, val: (w && w.hr_resting) || 0 }; });
+    const hrvSeries = trend14.map(function(d) { const w = wearable.find(function(x) { return x.day === d; }); return { date: d, val: (w && w.hrv_avg) || 0 }; });
+    const hasHrData = hrSeries.some(function(s) { return s.val > 0; });
+    if (hasHrData) {
+      const maxHr = Math.max.apply(null, hrSeries.map(function(s) { return s.val; }).concat([1]));
+      const maxHrv = Math.max.apply(null, hrvSeries.map(function(s) { return s.val; }).concat([1]));
+      html += '<div class="card"><div class="section-label">FC repos — 14 jours</div><div class="bars">';
+      hrSeries.forEach(function(s) { html += '<div class="bar" style="height:' + (s.val > 0 ? Math.max(2, (s.val / maxHr) * 56) : 2) + 'px;background:var(--steel)"></div>'; });
+      html += '</div><div class="muted" style="font-size:11px;margin-top:4px">' + (todayWearable && todayWearable.hr_resting != null ? "Aujourd'hui : " + todayWearable.hr_resting + " bpm" : "") + "</div></div>";
+      html += '<div class="card"><div class="section-label">VFC — 14 jours</div><div class="bars">';
+      hrvSeries.forEach(function(s) { html += '<div class="bar" style="height:' + (s.val > 0 ? Math.max(2, (s.val / maxHrv) * 56) : 2) + 'px;background:var(--green)"></div>'; });
+      html += '</div><div class="muted" style="font-size:11px;margin-top:4px">' + (todayWearable && todayWearable.hrv_avg != null ? "Aujourd'hui : " + todayWearable.hrv_avg.toFixed(0) + " ms" : "") + "</div></div>";
+    }
+
     if (todayWearable && todayWearable.stress_avg != null) {
       const sv = todayWearable.stress_avg;
       const sColor = sv >= 50 ? "rust" : sv >= 30 ? "amber" : "green";
