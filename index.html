@@ -259,7 +259,22 @@ async function getWorkoutForDate(dateStr) {
   const zones = ["zone_leger_min", "zone_intensif_min", "zone_aerobique_min", "zone_anaerobie_min", "zone_vo2max_min"];
   const agg = { duration_min: rows.reduce(function(s, r) { return s + r.duration_min; }, 0), count: rows.length };
   zones.forEach(function(z) { agg[z] = rows.reduce(function(s, r) { return s + Number(r[z] || 0); }, 0); });
+  const teA = rows.map(function(r){ return r.training_effect_aerobic; }).filter(function(v){ return v != null; });
+  const teN = rows.map(function(r){ return r.training_effect_anaerobic; }).filter(function(v){ return v != null; });
+  agg.te_aerobic = teA.length ? Math.max.apply(null, teA) : null;
+  agg.te_anaerobic = teN.length ? Math.max.apply(null, teN) : null;
+  agg.calories = rows.reduce(function(s, r){ return s + (Number(r.calories)||0); }, 0);
+  agg.official = rows.some(function(r){ return r.source === "zepp_official"; });
   return agg;
+}
+
+function teLabel(v) {
+  if (v == null) return null;
+  if (v < 1) return "Minime";
+  if (v < 2) return "Léger";
+  if (v < 3) return "Modéré";
+  if (v < 4) return "Bien";
+  return "Élevé";
 }
 
 async function loadSeance() {
@@ -300,15 +315,21 @@ function workoutCardHtml(w) {
     ["VO2 max", w.zone_vo2max_min, "var(--rust)"],
   ];
   const total = zones.reduce(function(s, z) { return s + z[1]; }, 0) || 1;
-  let html = '<div class="card steel" id="workout-slot"><div class="section-label">Zones cardiaques (montre)</div>';
-  html += '<div class="muted" style="margin-bottom:10px">Durée détectée : ' + w.duration_min + " min" + (w.count > 1 ? " sur " + w.count + " séances" : "") + "</div>";
+  let html = '<div class="card steel" id="workout-slot"><div class="section-label">Zones cardiaques' + (w.official ? " (officiel Zepp)" : " (montre)") + '</div>';
+  html += '<div class="muted" style="margin-bottom:10px">Durée détectée : ' + Math.round(w.duration_min) + " min" + (w.count > 1 ? " sur " + w.count + " séances" : "") + (w.calories ? " · " + w.calories + " kcal" : "") + "</div>";
   zones.forEach(function(z) {
     const label = z[0], min = z[1], color = z[2];
     if (min <= 0) return;
     const pct = Math.round((min / total) * 100);
-    html += '<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>' + label + '</span><span class="muted">' + min + ' min</span></div>';
+    html += '<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>' + label + '</span><span class="muted">' + Math.round(min) + ' min</span></div>';
     html += '<div style="height:6px;background:var(--surfaceRaised);border-radius:3px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + color + '"></div></div></div>';
   });
+  if (w.te_aerobic != null || w.te_anaerobic != null) {
+    html += '<div style="display:flex;gap:16px;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)">';
+    if (w.te_aerobic != null) html += '<div style="flex:1"><div class="muted" style="font-size:10px;text-transform:uppercase">Effet aérobie</div><div style="font-size:18px;font-weight:900">' + w.te_aerobic.toFixed(1) + '</div><div style="font-size:11px;color:var(--green)">' + teLabel(w.te_aerobic) + "</div></div>";
+    if (w.te_anaerobic != null) html += '<div style="flex:1"><div class="muted" style="font-size:10px;text-transform:uppercase">Effet anaérobie</div><div style="font-size:18px;font-weight:900">' + w.te_anaerobic.toFixed(1) + '</div><div style="font-size:11px;color:var(--amber)">' + teLabel(w.te_anaerobic) + "</div></div>";
+    html += "</div>";
+  }
   html += "</div>";
   return html;
 }
