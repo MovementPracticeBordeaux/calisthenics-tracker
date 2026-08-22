@@ -613,11 +613,34 @@ async function renderDashboard() {
   if (todaySession && todaySession.correctedLoad) lines.push({ tone: "neutral", text: "Séance loggée aujourd'hui — charge corrigée " + todaySession.correctedLoad + "." });
   else lines.push({ tone: "neutral", text: "Pas de séance enregistrée aujourd'hui." });
 
+  // Sommeil de la nuit précédente — cible générale 7-9h (littérature sommeil/performance),
+  // en dessous de 6h associé à une récupération significativement dégradée.
+  let sleepMin = todayWearable && todayWearable.sleep_total_min != null ? todayWearable.sleep_total_min : null;
+  if (sleepMin != null) {
+    const h = Math.floor(sleepMin / 60), m = sleepMin % 60;
+    const label = h + "h" + (m < 10 ? "0" : "") + m;
+    if (sleepMin < 360) lines.push({ tone: "warn", text: "Sommeil de " + label + " cette nuit — nettement sous les 7-9h recommandées, récupération probablement incomplète." });
+    else if (sleepMin < 420) lines.push({ tone: "neutral", text: "Sommeil de " + label + " — un peu court par rapport aux 7-9h habituellement recommandées." });
+    else lines.push({ tone: "good", text: "Sommeil de " + label + " — dans la fourchette recommandée." });
+  }
+
+  // Fréquence respiratoire nocturne — signal stable (peu de bruit jour/jour), utilisé
+  // par WHOOP notamment ; une hausse vs baseline personnelle précède souvent maladie
+  // ou récupération incomplète après une charge d'entraînement élevée.
+  const respBaseline = avgOf(wearable7.filter(function(w){ return w.day !== today && w.resp_rate_avg != null; }).map(function(w){ return w.resp_rate_avg; }));
+  let respDiff = null;
+  if (todayWearable && todayWearable.resp_rate_avg != null && respBaseline != null) {
+    respDiff = todayWearable.resp_rate_avg - respBaseline;
+    if (respDiff >= 2) lines.push({ tone: "warn", text: "Fréquence respiratoire nocturne à " + todayWearable.resp_rate_avg.toFixed(1) + " resp/min, au-dessus de ta moyenne (" + respBaseline.toFixed(1) + ") — à surveiller sur plusieurs nuits (signe précoce possible de fatigue ou début de maladie)." });
+  }
+
   let score = 75, signals = 0;
   if (hrDiff != null) { signals++; if (hrDiff >= 10) score -= 30; else if (hrDiff >= 5) score -= 15; else if (hrDiff >= 3) score -= 3; else if (hrDiff <= -3) score += 5; }
   if (hrvPct != null) { signals++; if (hrvPct <= -30) score -= 25; else if (hrvPct <= -20) score -= 15; else if (hrvPct <= -10) score -= 5; else if (hrvPct >= 15) score += 10; }
   if (stressDiff != null) { signals++; if (stressDiff >= 10) score -= 25; else if (stressDiff >= 5) score -= 10; }
   if (loadRatio != null) { signals++; if (loadRatio > 1.5) score -= 20; else if (loadRatio > 1.3) score -= 10; else if (loadRatio < 0.7) score += 5; }
+  if (sleepMin != null) { signals++; if (sleepMin < 300) score -= 25; else if (sleepMin < 360) score -= 15; else if (sleepMin < 420) score -= 5; else if (sleepMin > 600) score -= 5; }
+  if (respDiff != null) { signals++; if (respDiff >= 3) score -= 20; else if (respDiff >= 2) score -= 10; }
   score = Math.max(0, Math.min(100, score));
   let tier = "Données insuffisantes", tierColor = "muted", needRest = "–";
   if (signals > 0) {
