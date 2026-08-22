@@ -17,7 +17,7 @@
   .tab { flex: 1; padding: 9px 2px; border-radius: 7px; border: none; background: transparent; color: var(--muted);
     font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .2px; cursor: pointer; }
   .tab.active { background: var(--rust); color: var(--chalk); }
-  h1 { font-size: 26px; font-weight: 900; margin: 0; font-family: 'Arial Black', system-ui, sans-serif; }
+  h1 { font-size: 26px; font-weight: 900; margin: 0; font-family: 'Arial Black', system-ui, sans-serif; text-transform: uppercase; letter-spacing: .5px; }
   .muted { color: var(--muted); font-size: 12px; }
   .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
   .card.amber { border-color: var(--amber); }
@@ -665,18 +665,16 @@ async function renderDashboard() {
 
     // Tendance FC repos + VFC sur 14 jours
     const trend14 = []; for (let i = 13; i >= 0; i--) trend14.push(daysAgo(i));
-    const hrSeries = trend14.map(function(d) { const w = wearable.find(function(x) { return x.day === d; }); return { date: d, val: (w && w.hr_resting) || 0 }; });
-    const hrvSeries = trend14.map(function(d) { const w = wearable.find(function(x) { return x.day === d; }); return { date: d, val: (w && w.hrv_avg) || 0 }; });
+    const hrSeries = trend14.map(function(d) { const w = wearable.find(function(x) { return x.day === d; }); return { label: formatDateLabel(d).slice(0,2), val: (w && w.hr_resting) || 0 }; });
+    const hrvSeries = trend14.map(function(d) { const w = wearable.find(function(x) { return x.day === d; }); return { label: formatDateLabel(d).slice(0,2), val: (w && w.hrv_avg) || 0 }; });
     const hasHrData = hrSeries.some(function(s) { return s.val > 0; });
     if (hasHrData) {
-      const maxHr = Math.max.apply(null, hrSeries.map(function(s) { return s.val; }).concat([1]));
-      const maxHrv = Math.max.apply(null, hrvSeries.map(function(s) { return s.val; }).concat([1]));
-      html += '<div class="card"><div class="section-label">FC repos — 14 jours</div><div class="bars">';
-      hrSeries.forEach(function(s) { html += '<div class="bar" style="height:' + (s.val > 0 ? Math.max(2, (s.val / maxHr) * 56) : 2) + 'px;background:var(--steel)"></div>'; });
-      html += '</div><div class="muted" style="font-size:11px;margin-top:4px">' + (todayWearable && todayWearable.hr_resting != null ? "Aujourd'hui : " + todayWearable.hr_resting + " bpm" : "") + "</div></div>";
-      html += '<div class="card"><div class="section-label">VFC — 14 jours</div><div class="bars">';
-      hrvSeries.forEach(function(s) { html += '<div class="bar" style="height:' + (s.val > 0 ? Math.max(2, (s.val / maxHrv) * 56) : 2) + 'px;background:var(--green)"></div>'; });
-      html += '</div><div class="muted" style="font-size:11px;margin-top:4px">' + (todayWearable && todayWearable.hrv_avg != null ? "Aujourd'hui : " + todayWearable.hrv_avg.toFixed(0) + " ms" : "") + "</div></div>";
+      html += '<div class="card"><div class="section-label">FC repos (bpm) — 14 jours</div>';
+      html += barChartHtml(hrSeries, { color: "steel" });
+      html += "</div>";
+      html += '<div class="card"><div class="section-label">VFC (ms) — 14 jours</div>';
+      html += barChartHtml(hrvSeries, { color: "green" });
+      html += "</div>";
     }
 
     if (todayWearable && todayWearable.stress_avg != null) {
@@ -704,14 +702,11 @@ async function renderDashboard() {
     const last7Sessions = sessions.filter(function(s){ return last7.indexOf(s.date) !== -1; });
     const bars = last7.map(function(d) {
       const s = sessions.find(function(x){ return x.date === d; });
-      return { date: d, load: (s && s.correctedLoad) || 0 };
+      return { label: formatDateLabel(d).slice(0,2), val: (s && s.correctedLoad) || 0 };
     });
-    const max = Math.max.apply(null, bars.map(function(b){return b.load;}).concat([1]));
-    html += '<div class="card"><div class="section-label">Charge corrigée — 7 derniers jours</div><div class="bars">';
-    bars.forEach(function(b) { html += '<div class="bar' + (b.load === max && b.load > 0 ? " max" : "") + '" style="height:' + Math.max(2,(b.load/max)*56) + 'px"></div>'; });
-    html += '</div><div class="bars-axis">';
-    bars.forEach(function(b){ html += "<span>" + formatDateLabel(b.date).slice(0,2) + "</span>"; });
-    html += "</div></div>";
+    html += '<div class="card"><div class="section-label">Charge corrigée — 7 derniers jours</div>';
+    html += barChartHtml(bars, { color: "steel" });
+    html += "</div>";
     const totalLoad = last7Sessions.reduce(function(s,x){return s+(x.correctedLoad||0);},0);
     const rpeVals = last7Sessions.map(function(s){return s.intensity;}).filter(function(v){return v>0;});
     const achieved = last7Sessions.filter(function(s){return s.achievement==="atteint";}).length;
@@ -729,12 +724,11 @@ async function renderDashboard() {
     for (let w = 0; w < 5; w++) {
       const bd = month.slice(w*6, w*6+6); if (!bd.length) continue;
       const bs = monthSessions.filter(function(s){ return bd.indexOf(s.date) !== -1; });
-      buckets.push({ label: bd[0].slice(8,10), load: bs.reduce(function(s,x){return s+(x.correctedLoad||0);},0) });
+      buckets.push({ label: bd[0].slice(8,10)+"-"+bd[bd.length-1].slice(8,10), val: bs.reduce(function(s,x){return s+(x.correctedLoad||0);},0) });
     }
-    const max = Math.max.apply(null, buckets.map(function(b){return b.load;}).concat([1]));
-    html += '<div class="card"><div class="section-label">Charge corrigée — 30 derniers jours</div><div class="bars" style="height:64px">';
-    buckets.forEach(function(b){ html += '<div class="bar' + (b.load===max&&b.load>0?" max":"") + '" style="height:' + Math.max(2,(b.load/max)*64) + 'px"></div>'; });
-    html += '</div><div class="bars-axis">'; buckets.forEach(function(b){ html += "<span>"+b.label+"</span>"; }); html += "</div></div>";
+    html += '<div class="card"><div class="section-label">Charge corrigée — 30 derniers jours</div>';
+    html += barChartHtml(buckets, { color: "steel", height: 72 });
+    html += "</div>";
     const achieved = monthSessions.filter(function(s){return s.achievement==="atteint";}).length;
     const withAch = monthSessions.filter(function(s){return s.achievement;}).length;
     html += '<div class="card"><div class="stat-row">';
@@ -810,19 +804,16 @@ async function renderSommeil() {
     return { date: d, tracked: !!(w && w.sleep_session_recorded), stress: w ? w.stress_avg : null };
   });
 
-  const stressBars = nights.map(function(n) { return { date: n.date, val: n.stress || 0 }; });
-  const maxStress = Math.max.apply(null, stressBars.map(function(b) { return b.val; }).concat([1]));
+  const stressBars = nights.map(function(n) { return { label: formatDateLabel(n.date).slice(0,2), val: n.stress || 0 }; });
 
   let html = "";
   if (errorMsg) html += '<div class="error-banner"><b>Erreur :</b> ' + esc(errorMsg) + "</div>";
   html += '<h1 style="margin-bottom:4px">Sommeil</h1>';
   html += '<div class="muted" style="margin-bottom:18px">14 dernières nuits</div>';
 
-  html += '<div class="card"><div class="section-label">Stress — tendance récente</div><div class="bars">';
-  stressBars.forEach(function(b) { html += '<div class="bar" style="height:' + Math.max(2, (b.val / maxStress) * 56) + 'px"></div>'; });
-  html += '</div><div class="bars-axis">';
-  stressBars.forEach(function(b) { html += "<span>" + formatDateLabel(b.date).slice(0, 2) + "</span>"; });
-  html += "</div></div>";
+  html += '<div class="card"><div class="section-label">Stress — tendance récente</div>';
+  html += barChartHtml(stressBars, { color: "amber" });
+  html += "</div>";
 
   html += '<div class="card"><div class="section-label">Nuits trackées</div>';
   nights.slice().reverse().forEach(function(n) {
@@ -839,6 +830,31 @@ async function renderSommeil() {
   html += '<div style="font-size:12px;color:var(--chalkDim);line-height:1.5">La durée exacte et les phases de sommeil (léger/profond/paradoxal) sont encodées par ta montre dans un format binaire propriétaire que je ne décode pas encore de façon fiable — je préfère ne rien afficher plutôt que de te donner des chiffres possiblement faux. Dis-moi si tu veux qu\'on creuse ce décodage la prochaine fois.</div></div>';
 
   app.innerHTML = html;
+}
+
+// Graphique en barres lisible : valeur numérique au-dessus de chaque barre,
+// libellé de jour en dessous, barre du jour le plus récent mise en valeur.
+function barChartHtml(items, opts) {
+  opts = opts || {};
+  const color = opts.color || "steel";
+  const decimals = opts.decimals || 0;
+  const height = opts.height || 64;
+  const vals = items.map(function(i) { return i.val; });
+  const max = Math.max.apply(null, vals.concat([1]));
+  const min = Math.min.apply(null, vals.filter(function(v) { return v > 0; }).concat([max]));
+  let html = '<div style="display:flex;align-items:flex-end;gap:6px">';
+  items.forEach(function(item, i) {
+    const v = item.val || 0;
+    const h = v > 0 ? Math.max(18, (v / max) * height) : 4;
+    const isLast = i === items.length - 1;
+    const barColor = isLast && v > 0 ? "rust" : color;
+    html += '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px">';
+    html += '<span style="font-size:9px;color:var(--chalkDim);white-space:nowrap">' + (v > 0 ? v.toFixed(decimals) : "–") + "</span>";
+    html += '<div style="width:100%;height:' + h + 'px;background:var(--' + barColor + ');border-radius:3px 3px 1px 1px"></div>';
+    html += '<span style="font-size:9px;color:var(--muted)">' + (item.label || "") + "</span>";
+    html += "</div>";
+  });
+  return html + "</div>";
 }
 
 function statHtml(label, value, color) {
