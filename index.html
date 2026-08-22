@@ -571,7 +571,11 @@ async function renderDashboard() {
   const hrBaseline = avgOf(wearable7.filter(function(w){ return w.day !== today && w.hr_resting != null; }).map(function(w){ return w.hr_resting; }));
   if (todayWearable && todayWearable.hr_resting != null && hrBaseline != null) {
     hrDiff = todayWearable.hr_resting - hrBaseline;
-    if (hrDiff >= 3) lines.push({ tone: "warn", text: "FC repos à " + todayWearable.hr_resting + " bpm, " + hrDiff.toFixed(1) + " au-dessus de ta moyenne récente (" + hrBaseline.toFixed(0) + ") — fatigue possible." });
+    // Seuils calibrés sur la littérature (variation 3-4bpm normale au quotidien ;
+    // 5+ bpm = signal significatif de fatigue/surcharge ; 10+ bpm = signal fort,
+    // parfois précurseur de maladie, cf. Friman & Wesslén 2000).
+    if (hrDiff >= 10) lines.push({ tone: "warn", text: "FC repos à " + todayWearable.hr_resting + " bpm, " + hrDiff.toFixed(1) + " au-dessus de ta moyenne récente (" + hrBaseline.toFixed(0) + ") — écart marqué, vigilance (fatigue ou début de maladie possibles)." });
+    else if (hrDiff >= 5) lines.push({ tone: "warn", text: "FC repos à " + todayWearable.hr_resting + " bpm, " + hrDiff.toFixed(1) + " au-dessus de ta moyenne récente (" + hrBaseline.toFixed(0) + ") — fatigue possible." });
     else if (hrDiff <= -3) lines.push({ tone: "good", text: "FC repos à " + todayWearable.hr_resting + " bpm, plus basse que d'habitude — bon signe." });
   }
   const hrvBaseline = avgOf(wearable7.filter(function(w){ return w.day !== today && w.hrv_avg != null; }).map(function(w){ return w.hrv_avg; }));
@@ -595,7 +599,10 @@ async function renderDashboard() {
   const r10 = avgOf(loaded.slice(-10).map(function(s){ return s.correctedLoad; }));
   if (r3 != null && r10) {
     loadRatio = r3 / r10;
-    if (loadRatio > 1.3) lines.push({ tone: "warn", text: "Charge des 3 dernières séances nettement au-dessus de ta moyenne — vigilance." });
+    // NB : ce ratio (inspiré de l'ACWR sportif) est indicatif seulement — la littérature
+    // récente (Impellizzeri et al.) remet en cause sa valeur prédictive isolée. À croiser
+    // avec les autres signaux, jamais à lire seul.
+    if (loadRatio > 1.3) lines.push({ tone: "warn", text: "Charge des 3 dernières séances au-dessus de ta moyenne récente — à surveiller, sans excès d'inquiétude isolément." });
     else if (loadRatio < 0.85) lines.push({ tone: "neutral", text: "Charge récente en retrait — phase plus légère." });
     else lines.push({ tone: "good", text: "Charge récente cohérente avec ta progression." });
   }
@@ -603,10 +610,10 @@ async function renderDashboard() {
   else lines.push({ tone: "neutral", text: "Pas de séance enregistrée aujourd'hui." });
 
   let score = 75, signals = 0;
-  if (hrDiff != null) { signals++; if (hrDiff >= 5) score -= 35; else if (hrDiff >= 3) score -= 20; else if (hrDiff >= 1) score -= 5; else if (hrDiff <= -3) score += 10; }
+  if (hrDiff != null) { signals++; if (hrDiff >= 10) score -= 30; else if (hrDiff >= 5) score -= 15; else if (hrDiff >= 3) score -= 3; else if (hrDiff <= -3) score += 5; }
   if (hrvPct != null) { signals++; if (hrvPct <= -30) score -= 25; else if (hrvPct <= -20) score -= 15; else if (hrvPct <= -10) score -= 5; else if (hrvPct >= 15) score += 10; }
   if (stressDiff != null) { signals++; if (stressDiff >= 10) score -= 25; else if (stressDiff >= 5) score -= 10; }
-  if (loadRatio != null) { signals++; if (loadRatio > 1.5) score -= 30; else if (loadRatio > 1.3) score -= 15; else if (loadRatio < 0.7) score += 5; }
+  if (loadRatio != null) { signals++; if (loadRatio > 1.5) score -= 20; else if (loadRatio > 1.3) score -= 10; else if (loadRatio < 0.7) score += 5; }
   score = Math.max(0, Math.min(100, score));
   let tier = "Données insuffisantes", tierColor = "muted", needRest = "–";
   if (signals > 0) {
