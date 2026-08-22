@@ -71,7 +71,7 @@
   <div class="tabs">
     <button class="tab active" data-tab="seance">Séance</button>
     <button class="tab" data-tab="dashboard">Dashboard</button>
-    <button class="tab" disabled title="Bientôt" style="border:1px dashed var(--line);cursor:not-allowed;">Exercices</button>
+    <button class="tab" data-tab="sommeil">Sommeil</button>
   </div>
   <div id="app"></div>
 </div>
@@ -244,30 +244,78 @@ async function listWearable(limit) {
 let currentTab = "seance";
 let currentDate = todayISO();
 
-// ---------------- Rendu : Séance ----------------
-async function renderSeance() {
-  const app = document.getElementById("app");
-  app.innerHTML = '<div class="muted">Chargement…</div>';
-  let session, wearable = null, history = [], errorMsg = "";
-  try {
-    const classes = getScheduledClasses(currentDate);
-    const existing = await loadSession(currentDate);
-    session = existing || sessionFromSchedule(classes) || emptySession();
-    history = await listSessions(15);
-    history = history.filter(function(h){ return h.date !== currentDate; }).slice(0, 14);
-    getWearableForDate(currentDate).then(function(w) {
-      wearable = w;
-      const slot = document.getElementById("wearable-slot");
-      if (slot && wearable) slot.outerHTML = wearableCardHtml(wearable);
-    }).catch(function(){});
-  } catch (e) {
-    errorMsg = e.message;
-    session = emptySession();
-  }
+// ---------------- État séance (séparé du réseau pour un rendu instantané) ----------------
+let seance = { session: emptySession(), history: [], classes: [], wearable: null, workout: null, error: "", isNew: true };
+let historyOpen = false;
 
-  const classes = getScheduledClasses(currentDate);
+async function getWorkoutForDate(dateStr) {
+  const rows = await sb("workout_sessions?day=eq." + dateStr + "&select=*");
+  if (!rows || !rows.length) return null;
+  const zones = ["zone_leger_min", "zone_intensif_min", "zone_aerobique_min", "zone_anaerobie_min", "zone_vo2max_min"];
+  const agg = { duration_min: rows.reduce(function(s, r) { return s + r.duration_min; }, 0), count: rows.length };
+  zones.forEach(function(z) { agg[z] = rows.reduce(function(s, r) { return s + Number(r[z] || 0); }, 0); });
+  return agg;
+}
+
+async function loadSeance() {
+  historyOpen = false;
+  seance.error = "";
+  seance.wearable = null;
+  seance.workout = null;
+  try {
+    seance.classes = getScheduledClasses(currentDate);
+    const existing = await loadSession(currentDate);
+    seance.isNew = !existing;
+    seance.session = existing || sessionFromSchedule(seance.classes) || emptySession();
+    const all = await listSessions(15);
+    seance.history = all.filter(function(h) { return h.date !== currentDate; }).slice(0, 14);
+  } catch (e) {
+    seance.error = e.message;
+    seance.session = emptySession();
+  }
+  drawSeance();
+
+  getWearableForDate(currentDate).then(function(w) { seance.wearable = w; drawSeance(); }).catch(function(){});
+  getWorkoutForDate(currentDate).then(function(w) {
+    seance.workout = w;
+    if (w && seance.isNew && !seance.session.duration) {
+      seance.session.duration = w.duration_min;
+      seance.session.durationPreset = deriveDurationPreset(w.duration_min);
+    }
+    drawSeance();
+  }).catch(function(){});
+}
+
+function workoutCardHtml(w) {
+  const zones = [
+    ["Léger", w.zone_leger_min, "#8b6fb0"],
+    ["Intensif", w.zone_intensif_min, "var(--steel)"],
+    ["Aérobique", w.zone_aerobique_min, "var(--green)"],
+    ["Anaérobie", w.zone_anaerobie_min, "var(--amber)"],
+    ["VO2 max", w.zone_vo2max_min, "var(--rust)"],
+  ];
+  const total = zones.reduce(function(s, z) { return s + z[1]; }, 0) || 1;
+  let html = '<div class="card steel" id="workout-slot"><div class="section-label">Zones cardiaques (montre)</div>';
+  html += '<div class="muted" style="margin-bottom:10px">Durée détectée : ' + w.duration_min + " min" + (w.count > 1 ? " sur " + w.count + " séances" : "") + "</div>";
+  zones.forEach(function(z) {
+    const label = z[0], min = z[1], color = z[2];
+    if (min <= 0) return;
+    const pct = Math.round((min / total) * 100);
+    html += '<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>' + label + '</span><span class="muted">' + min + ' min</span></div>';
+    html += '<div style="height:6px;background:var(--surfaceRaised);border-radius:3px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + color + '"></div></div></div>';
+  });
+  html += "</div>";
+  return html;
+}
+
+// ---------------- Rendu : Séance (synchrone, ne touche jamais le réseau) ----------------
+function drawSeance() {
+  const app = document.getElementById("app");
+  const scrollY = window.scrollY;
+  const session = seance.session;
+  const classes = seance.classes;
   let html = "";
-  if (errorMsg) html += '<div class="error-banner"><b>Erreur :</b> ' + esc(errorMsg) + "</div>";
+  if (seance.error) html += '<div class="error-banner"><b>Erreur :</b> ' + esc(seance.error) + "</div>";
 
   html += '<div style="margin-bottom:20px">';
   html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
@@ -283,12 +331,12 @@ async function renderSeance() {
     html += '<div class="card steel"><div class="section-label">Cours prévu ce jour</div>';
     classes.forEach(function(c, i) {
       const suggested = DISCIPLINE_TO_THEMES[c.discipline];
-      html += '<div style="margin-bottom:' + (i < classes.length-1 ? 10 : 0) + 'px">';
+      html += '<div style="margin-bottom:' + (i < classes.length - 1 ? 10 : 0) + 'px">';
       html += '<div style="display:flex;justify-content:space-between;align-items:center">';
       html += '<span style="font-weight:800;font-size:14px">' + esc(c.discipline) + "</span>";
-      html += '<span class="muted">' + c.heure_debut.slice(0,5) + "–" + c.heure_fin.slice(0,5) + "</span></div>";
+      html += '<span class="muted">' + c.heure_debut.slice(0, 5) + "–" + c.heure_fin.slice(0, 5) + "</span></div>";
       if (suggested) {
-        const labels = THEMES.filter(function(t){ return suggested.indexOf(t.id) !== -1; }).map(function(t){return t.label;}).join(", ");
+        const labels = THEMES.filter(function(t) { return suggested.indexOf(t.id) !== -1; }).map(function(t) { return t.label; }).join(", ");
         html += '<button class="apply-schedule-theme" data-themes="' + suggested.join(",") + '" style="margin-top:6px;background:none;border:1px dashed var(--steel);border-radius:6px;color:var(--steel);font-size:11px;font-weight:700;padding:5px 10px;cursor:pointer">Cocher ' + esc(labels) + " →</button>";
       } else {
         html += '<div class="muted" style="font-size:11px;margin-top:2px">Pas d\'équivalent direct — à sélectionner manuellement.</div>';
@@ -298,22 +346,23 @@ async function renderSeance() {
     html += "</div>";
   }
 
-  html += '<div id="wearable-slot">' + (wearable ? wearableCardHtml(wearable) : "") + "</div>";
+  if (seance.wearable) html += wearableCardHtml(seance.wearable);
+  if (seance.workout) html += workoutCardHtml(seance.workout);
 
   html += '<div class="card">';
   html += '<div class="section-label">Discipline</div>';
   html += '<input type="text" id="discipline-input" placeholder="ex. Calisthenics, session perso…" value="' + esc(session.discipline || "") + '" style="margin-bottom:16px" />';
   html += '<div class="section-label">Objectif de séance</div><div class="pill-row" id="goal-row" style="margin-bottom:16px">';
-  GOALS.forEach(function(g){ html += pillHtml(g, session.goal === g.id, "goal"); });
+  GOALS.forEach(function(g) { html += pillHtml(g, session.goal === g.id, "goal"); });
   html += "</div>";
-  html += '<div class="section-label">Durée</div><div class="pill-row" id="duration-row" style="margin-bottom:' + (session.durationPreset === "plus" ? 10 : 16) + 'px">';
-  DURATIONS.forEach(function(d){ html += pillHtml(d, session.durationPreset === d.id, "duration"); });
+  html += '<div class="section-label">Durée' + (seance.workout ? ' <span class="muted" style="text-transform:none">(détectée par la montre, modifiable)</span>' : "") + '</div><div class="pill-row" id="duration-row" style="margin-bottom:' + (session.durationPreset === "plus" ? 10 : 16) + 'px">';
+  DURATIONS.forEach(function(d) { html += pillHtml(d, session.durationPreset === d.id, "duration"); });
   html += "</div>";
   if (session.durationPreset === "plus") {
     html += '<input type="number" id="duration-custom" placeholder="Durée exacte en minutes" value="' + esc(session.duration) + '" style="margin-bottom:16px" />';
   }
   html += '<div class="section-label">Objectif atteint ?</div><div class="pill-row" id="achievement-row" style="margin-bottom:16px">';
-  ACHIEVEMENTS.forEach(function(a){ html += pillHtml(a, session.achievement === a.id, "achievement"); });
+  ACHIEVEMENTS.forEach(function(a) { html += pillHtml(a, session.achievement === a.id, "achievement"); });
   html += "</div>";
   html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">';
   html += '<span class="section-label" style="margin:0">Intensité globale ressentie</span><span class="rpe-value">' + (session.intensity > 0 ? session.intensity : "–") + "</span></div>";
@@ -335,14 +384,14 @@ async function renderSeance() {
   html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:18px;min-height:20px">';
   html += '<span class="muted">' + (activeCount > 0 ? activeCount + " thème(s) sélectionné(s)" : "Coche les thèmes travaillés") + '</span><span class="status" id="save-status"></span></div>';
 
-  html += '<button class="btn-outline" id="toggle-history">Voir l\'historique (' + history.length + ")</button>";
-  html += '<div id="history-list" style="display:none;margin-top:14px">';
-  if (history.length === 0) html += '<div class="muted" style="text-align:center;padding:16px 0">Aucune séance précédente.</div>';
-  history.forEach(function(h) {
-    const ach = ACHIEVEMENTS.find(function(a){ return a.id === h.achievement; });
+  html += '<button class="btn-outline" id="toggle-history">Voir l\'historique (' + seance.history.length + ")</button>";
+  html += '<div id="history-list" style="display:' + (historyOpen ? "block" : "none") + ';margin-top:14px">';
+  if (seance.history.length === 0) html += '<div class="muted" style="text-align:center;padding:16px 0">Aucune séance précédente.</div>';
+  seance.history.forEach(function(h) {
+    const ach = ACHIEVEMENTS.find(function(a) { return a.id === h.achievement; });
     html += '<button class="history-item" data-date="' + h.date + '"><div style="font-weight:700;font-size:13px;margin-bottom:6px">' + formatDateLabel(h.date) + "</div>";
     Object.keys(h.entries).forEach(function(tid) {
-      const th = THEMES.find(function(t){ return t.id === tid; });
+      const th = THEMES.find(function(t) { return t.id === tid; });
       const d = h.entries[tid];
       html += '<span class="badge">' + (th ? th.label : tid) + " · " + (d.modalite === "charge" ? "charge" : "libre") + " · RPE " + (d.rpe || "–") + "</span>";
     });
@@ -352,7 +401,8 @@ async function renderSeance() {
   html += "</div>";
 
   app.innerHTML = html;
-  wireSeanceEvents(session);
+  wireSeanceEvents();
+  window.scrollTo(0, scrollY);
 }
 
 function pillHtml(opt, active, group) {
@@ -384,10 +434,10 @@ function themeCardHtml(theme, data) {
   if (on) {
     html += '<div class="theme-body">';
     html += '<div class="pill-row" style="margin-bottom:14px" data-theme-group="modalite" data-theme="' + theme.id + '">';
-    MODALITES.forEach(function(m){ html += '<button class="pill' + (data.modalite === m.id ? " active" : "") + '" data-id="' + m.id + '">' + m.label + "</button>"; });
+    MODALITES.forEach(function(m) { html += '<button class="pill' + (data.modalite === m.id ? " active" : "") + '" data-id="' + m.id + '">' + m.label + "</button>"; });
     html += "</div>";
     html += '<div class="section-label">Type d\'effort</div><div class="pill-row compact" style="margin-bottom:14px" data-theme-group="type" data-theme="' + theme.id + '">';
-    GOALS.forEach(function(g){ html += '<button class="pill' + (data.type === g.id ? " active" : "") + '" data-id="' + g.id + '">' + g.label + "</button>"; });
+    GOALS.forEach(function(g) { html += '<button class="pill' + (data.type === g.id ? " active" : "") + '" data-id="' + g.id + '">' + g.label + "</button>"; });
     html += "</div>";
     html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><span class="section-label" style="margin:0">Intensité (RPE)</span><span class="rpe-value">' + (data.rpe > 0 ? data.rpe : "–") + "</span></div>";
     html += rpeLadderHtml("theme:" + theme.id, data.rpe || 0);
@@ -397,52 +447,57 @@ function themeCardHtml(theme, data) {
   return html;
 }
 
-function wireSeanceEvents(session) {
-  let status;
-  const setStatus = function(s) { status = s; const el = document.getElementById("save-status"); if (el) el.textContent = s; };
-  const persist = async function() {
-    try { await saveSession(currentDate, session); setStatus("Enregistré"); setTimeout(function(){ setStatus(""); }, 1400); }
-    catch (e) { setStatus("Erreur : " + e.message); }
-  };
+// Sauvegarde en tâche de fond — ne bloque jamais le rendu, ne relance jamais
+// de rechargement réseau (fini les doubles-clics et le retour en haut de page).
+function saveInBackground() {
+  const setStatus = function(s) { const el = document.getElementById("save-status"); if (el) el.textContent = s; };
+  saveSession(currentDate, seance.session)
+    .then(function() { seance.isNew = false; setStatus("Enregistré"); setTimeout(function() { setStatus(""); }, 1400); })
+    .catch(function(e) { setStatus("Erreur : " + e.message); });
+}
+
+function wireSeanceEvents() {
+  const session = seance.session;
+  const update = function() { drawSeance(); saveInBackground(); };
 
   const dp = document.getElementById("date-picker");
-  if (dp) dp.addEventListener("change", function() { if (dp.value) { currentDate = dp.value; renderSeance(); } });
+  if (dp) dp.addEventListener("change", function() { if (dp.value) { currentDate = dp.value; loadSeance(); } });
   const backBtn = document.getElementById("back-today");
-  if (backBtn) backBtn.addEventListener("click", function() { currentDate = todayISO(); renderSeance(); });
+  if (backBtn) backBtn.addEventListener("click", function() { currentDate = todayISO(); loadSeance(); });
 
   document.querySelectorAll(".apply-schedule-theme").forEach(function(btn) {
     btn.addEventListener("click", function() {
       btn.dataset.themes.split(",").forEach(function(id) { if (!session.entries[id]) session.entries[id] = { modalite: "libre", rpe: 0 }; });
-      persist(); renderSeance();
+      update();
     });
   });
 
   const discInput = document.getElementById("discipline-input");
-  if (discInput) discInput.addEventListener("blur", function() { session.discipline = discInput.value; persist(); });
+  if (discInput) discInput.addEventListener("blur", function() { session.discipline = discInput.value; saveInBackground(); });
 
   document.querySelectorAll('#goal-row .pill').forEach(function(btn) {
-    btn.addEventListener("click", function() { session.goal = session.goal === btn.dataset.id ? null : btn.dataset.id; persist(); renderSeance(); });
+    btn.addEventListener("click", function() { session.goal = session.goal === btn.dataset.id ? null : btn.dataset.id; update(); });
   });
   document.querySelectorAll('#duration-row .pill').forEach(function(btn) {
     btn.addEventListener("click", function() {
-      const preset = DURATIONS.find(function(d){ return d.id === btn.dataset.id; });
+      const preset = DURATIONS.find(function(d) { return d.id === btn.dataset.id; });
       if (session.durationPreset === preset.id) { session.durationPreset = null; session.duration = ""; }
       else if (preset.id === "plus") { session.durationPreset = "plus"; }
       else { session.durationPreset = preset.id; session.duration = preset.minutes; }
-      persist(); renderSeance();
+      update();
     });
   });
   const durCustom = document.getElementById("duration-custom");
-  if (durCustom) durCustom.addEventListener("blur", function() { session.duration = durCustom.value; persist(); renderSeance(); });
+  if (durCustom) durCustom.addEventListener("blur", function() { session.duration = durCustom.value; update(); });
   document.querySelectorAll('#achievement-row .pill').forEach(function(btn) {
-    btn.addEventListener("click", function() { session.achievement = session.achievement === btn.dataset.id ? null : btn.dataset.id; persist(); renderSeance(); });
+    btn.addEventListener("click", function() { session.achievement = session.achievement === btn.dataset.id ? null : btn.dataset.id; update(); });
   });
 
   document.querySelectorAll('.rpe-ladder[data-scope="global"] .rpe-bar').forEach(function(btn) {
     btn.addEventListener("click", function() {
       const n = Number(btn.dataset.n);
       session.intensity = session.intensity === n ? 0 : n;
-      persist(); renderSeance();
+      update();
     });
   });
 
@@ -450,21 +505,17 @@ function wireSeanceEvents(session) {
     btn.addEventListener("click", function() {
       const id = btn.dataset.theme;
       if (session.entries[id]) delete session.entries[id]; else session.entries[id] = { modalite: "libre", rpe: 0 };
-      persist(); renderSeance();
+      update();
     });
   });
   document.querySelectorAll('[data-theme-group="modalite"]').forEach(function(row) {
     row.querySelectorAll(".pill").forEach(function(btn) {
-      btn.addEventListener("click", function() {
-        session.entries[row.dataset.theme].modalite = btn.dataset.id; persist(); renderSeance();
-      });
+      btn.addEventListener("click", function() { session.entries[row.dataset.theme].modalite = btn.dataset.id; update(); });
     });
   });
   document.querySelectorAll('[data-theme-group="type"]').forEach(function(row) {
     row.querySelectorAll(".pill").forEach(function(btn) {
-      btn.addEventListener("click", function() {
-        session.entries[row.dataset.theme].type = btn.dataset.id; persist(); renderSeance();
-      });
+      btn.addEventListener("click", function() { session.entries[row.dataset.theme].type = btn.dataset.id; update(); });
     });
   });
   document.querySelectorAll('.rpe-ladder').forEach(function(ladder) {
@@ -474,18 +525,18 @@ function wireSeanceEvents(session) {
       btn.addEventListener("click", function() {
         const n = Number(btn.dataset.n);
         session.entries[themeId].rpe = session.entries[themeId].rpe === n ? 0 : n;
-        persist(); renderSeance();
+        update();
       });
     });
   });
 
   const toggleHist = document.getElementById("toggle-history");
   if (toggleHist) toggleHist.addEventListener("click", function() {
-    const list = document.getElementById("history-list");
-    list.style.display = list.style.display === "none" ? "block" : "none";
+    historyOpen = !historyOpen;
+    drawSeance();
   });
   document.querySelectorAll(".history-item").forEach(function(btn) {
-    btn.addEventListener("click", function() { currentDate = btn.dataset.date; renderSeance(); });
+    btn.addEventListener("click", function() { currentDate = btn.dataset.date; loadSeance(); });
   });
 }
 
@@ -590,6 +641,19 @@ async function renderDashboard() {
     html += '<div style="text-align:center;padding:8px 0"><div style="font-size:38px;font-weight:900">' + score + '</div>';
     html += '<div style="color:var(--' + tierColor + ');font-size:13px;font-weight:800;text-transform:uppercase">' + tier + "</div></div>";
     html += '<div style="text-align:center;padding-top:10px;border-top:1px solid var(--line);font-size:12px">Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div></div>";
+    if (todayWearable && todayWearable.stress_avg != null) {
+      const sv = todayWearable.stress_avg;
+      const sColor = sv >= 50 ? "rust" : sv >= 30 ? "amber" : "green";
+      const sLabel = sv >= 50 ? "Élevé" : sv >= 30 ? "Modéré" : "Faible";
+      html += '<div class="card"><div class="section-label">Stress</div>';
+      html += '<div style="display:flex;align-items:baseline;gap:10px">';
+      html += '<span style="font-size:32px;font-weight:900;color:var(--' + sColor + ')">' + Math.round(sv) + "</span>";
+      html += '<span style="color:var(--' + sColor + ');font-size:13px;font-weight:800;text-transform:uppercase">' + sLabel + "</span></div>";
+      if (stressDiff != null) {
+        html += '<div class="muted" style="font-size:11px;margin-top:6px">' + (stressDiff >= 0 ? "+" : "") + stressDiff.toFixed(0) + " vs ta moyenne des 7 derniers jours</div>";
+      }
+      html += "</div>";
+    }
     html += '<div class="card"><div class="section-label">Interprétation du jour</div>';
     lines.forEach(function(l) {
       const dotColor = l.tone === "warn" ? "rust" : l.tone === "good" ? "green" : "steel";
@@ -695,6 +759,50 @@ async function renderDashboard() {
     btn.addEventListener("click", function() { currentDate = btn.dataset.date; currentTab = "seance"; setTab("seance"); });
   });
 }
+// ---------------- Rendu : Sommeil ----------------
+async function renderSommeil() {
+  const app = document.getElementById("app");
+  app.innerHTML = '<div class="muted">Chargement…</div>';
+  let wearable = [], errorMsg = "";
+  try { wearable = await listWearable(21); } catch (e) { errorMsg = e.message; }
+
+  const last14 = []; for (let i = 13; i >= 0; i--) last14.push(daysAgo(i));
+  const nights = last14.map(function(d) {
+    const w = wearable.find(function(x) { return x.day === d; });
+    return { date: d, tracked: !!(w && w.sleep_session_recorded), stress: w ? w.stress_avg : null };
+  });
+
+  const stressBars = nights.map(function(n) { return { date: n.date, val: n.stress || 0 }; });
+  const maxStress = Math.max.apply(null, stressBars.map(function(b) { return b.val; }).concat([1]));
+
+  let html = "";
+  if (errorMsg) html += '<div class="error-banner"><b>Erreur :</b> ' + esc(errorMsg) + "</div>";
+  html += '<h1 style="margin-bottom:4px">Sommeil</h1>';
+  html += '<div class="muted" style="margin-bottom:18px">14 dernières nuits</div>';
+
+  html += '<div class="card"><div class="section-label">Stress — tendance récente</div><div class="bars">';
+  stressBars.forEach(function(b) { html += '<div class="bar" style="height:' + Math.max(2, (b.val / maxStress) * 56) + 'px"></div>'; });
+  html += '</div><div class="bars-axis">';
+  stressBars.forEach(function(b) { html += "<span>" + formatDateLabel(b.date).slice(0, 2) + "</span>"; });
+  html += "</div></div>";
+
+  html += '<div class="card"><div class="section-label">Nuits trackées</div>';
+  nights.slice().reverse().forEach(function(n) {
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
+    html += '<span style="font-size:13px">' + formatDateLabel(n.date) + "</span>";
+    html += n.tracked
+      ? '<span style="color:var(--green);font-size:12px;font-weight:700">Trackée</span>'
+      : '<span class="muted" style="font-size:12px">—</span>';
+    html += "</div>";
+  });
+  html += "</div>";
+
+  html += '<div class="card amber"><div class="section-label">En construction</div>';
+  html += '<div style="font-size:12px;color:var(--chalkDim);line-height:1.5">La durée exacte et les phases de sommeil (léger/profond/paradoxal) sont encodées par ta montre dans un format binaire propriétaire que je ne décode pas encore de façon fiable — je préfère ne rien afficher plutôt que de te donner des chiffres possiblement faux. Dis-moi si tu veux qu\'on creuse ce décodage la prochaine fois.</div></div>';
+
+  app.innerHTML = html;
+}
+
 function statHtml(label, value, color) {
   return '<div class="stat"><div class="stat-label">' + label + '</div><div class="stat-value"' + (color ? ' style="color:var(--'+color+')"' : '') + '>' + value + "</div></div>";
 }
@@ -703,7 +811,7 @@ function statHtml(label, value, color) {
 function setTab(tab) {
   currentTab = tab;
   document.querySelectorAll(".tab[data-tab]").forEach(function(t) { t.classList.toggle("active", t.dataset.tab === tab); });
-  if (tab === "seance") renderSeance(); else renderDashboard();
+  if (tab === "seance") loadSeance(); else if (tab === "dashboard") renderDashboard(); else renderSommeil();
 }
 document.querySelectorAll(".tab[data-tab]").forEach(function(t) {
   t.addEventListener("click", function() { setTab(t.dataset.tab); });
