@@ -747,7 +747,9 @@ async function renderDashboard() {
     if (todayWearable) html += wearableCardHtml(Object.assign({}, todayWearable, { day: today }));
   } else if (dashPeriod === "semaine") {
     const last7 = []; for (let i = 6; i >= 0; i--) last7.push(daysAgo(i));
+    const prev7 = []; for (let i = 13; i >= 7; i--) prev7.push(daysAgo(i));
     const last7Sessions = sessions.filter(function(s){ return last7.indexOf(s.date) !== -1; });
+    const prev7Sessions = sessions.filter(function(s){ return prev7.indexOf(s.date) !== -1; });
     const bars = last7.map(function(d) {
       const s = sessions.find(function(x){ return x.date === d; });
       return { label: formatDateLabel(d).slice(0,2), val: (s && s.correctedLoad) || 0 };
@@ -756,6 +758,7 @@ async function renderDashboard() {
     html += barChartHtml(bars, { color: "steel" });
     html += "</div>";
     const totalLoad = last7Sessions.reduce(function(s,x){return s+(x.correctedLoad||0);},0);
+    const prevTotalLoad = prev7Sessions.reduce(function(s,x){return s+(x.correctedLoad||0);},0);
     const rpeVals = last7Sessions.map(function(s){return s.intensity;}).filter(function(v){return v>0;});
     const achieved = last7Sessions.filter(function(s){return s.achievement==="atteint";}).length;
     const withAch = last7Sessions.filter(function(s){return s.achievement;}).length;
@@ -765,6 +768,32 @@ async function renderDashboard() {
     html += statHtml("RPE moyen", rpeVals.length ? avgOf(rpeVals).toFixed(1) : "–");
     html += statHtml("Objectifs atteints", withAch ? achieved+"/"+withAch : "–");
     html += "</div></div>";
+
+    const weekLines = [];
+    if (prevTotalLoad > 0) {
+      const pct = Math.round(((totalLoad - prevTotalLoad) / prevTotalLoad) * 100);
+      if (pct >= 30) weekLines.push({ tone: "warn", text: "Charge en hausse de " + pct + "% vs la semaine précédente (" + prevTotalLoad + " → " + totalLoad + ") — progression rapide, surveille ta récupération." });
+      else if (pct <= -30) weekLines.push({ tone: "neutral", text: "Charge en net retrait vs la semaine précédente (" + pct + "%) — phase plus légère ou repos." });
+      else weekLines.push({ tone: "good", text: "Charge stable par rapport à la semaine précédente (" + (pct >= 0 ? "+" : "") + pct + "%)." });
+    } else if (last7Sessions.length > 0) {
+      weekLines.push({ tone: "neutral", text: "Pas de semaine précédente comparable pour l'instant." });
+    }
+    if (last7Sessions.length === 0) {
+      weekLines.push({ tone: "warn", text: "Aucune séance loggée cette semaine." });
+    } else if (last7Sessions.length <= 1) {
+      weekLines.push({ tone: "neutral", text: "Une seule séance cette semaine — fréquence en retrait si ce n'est pas voulu." });
+    }
+    if (withAch >= 2 && achieved / withAch < 0.5) {
+      weekLines.push({ tone: "warn", text: "Moins de la moitié des objectifs atteints cette semaine (" + achieved + "/" + withAch + ") — vaut le coup de regarder pourquoi (charge, sommeil, planning)." });
+    }
+    if (weekLines.length) {
+      html += '<div class="card"><div class="section-label">Lecture de la semaine</div>';
+      weekLines.forEach(function(l) {
+        const dotColor = l.tone === "warn" ? "rust" : l.tone === "good" ? "green" : "steel";
+        html += '<div style="display:flex;align-items:flex-start;margin-bottom:8px;font-size:13px;color:var(--chalkDim)"><span style="display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--' + dotColor + ');margin-right:8px;margin-top:5px;flex-shrink:0"></span><span>' + esc(l.text) + "</span></div>";
+      });
+      html += "</div>";
+    }
   } else if (dashPeriod === "mois") {
     const month = []; for (let i = 29; i >= 0; i--) month.push(daysAgo(i));
     const monthSessions = sessions.filter(function(s){ return month.indexOf(s.date) !== -1; });
@@ -887,6 +916,40 @@ async function renderSommeil() {
     });
     if (latest.awake != null) html += '<div class="muted" style="font-size:11px;margin-top:6px">Réveils détectés : ' + latest.awake + "</div>";
     html += "</div>";
+
+    const sleepLines = [];
+    const totalH = latest.total / 60;
+    if (totalH < 6) sleepLines.push({ tone: "warn", text: "Moins de 6h cette nuit — sous le seuil généralement associé à une récupération incomplète." });
+    else if (totalH >= 7 && totalH <= 9) sleepLines.push({ tone: "good", text: "Dans la fourchette recommandée de 7-9h." });
+    else if (totalH > 9) sleepLines.push({ tone: "neutral", text: "Plus long que d'habitude — peut refléter un vrai besoin de récupération après une charge élevée." });
+    const deepPct = Math.round((latest.deep / latest.total) * 100);
+    const remPct = Math.round((latest.rem / latest.total) * 100);
+    if (deepPct < 10) sleepLines.push({ tone: "neutral", text: "Sommeil profond à " + deepPct + "% — en dessous de la fourchette usuelle (13-23%), sans que ce soit forcément un problème isolément." });
+    if (remPct < 15) sleepLines.push({ tone: "neutral", text: "Sommeil paradoxal à " + remPct + "% — un peu bas vs la fourchette usuelle (20-25%)." });
+    const recentHalf = withSleep.slice(-7), olderHalf = withSleep.slice(-14, -7);
+    if (recentHalf.length >= 3 && olderHalf.length >= 3) {
+      const recentAvg = avgOf(recentHalf.map(function(n){return n.total;}));
+      const olderAvg = avgOf(olderHalf.map(function(n){return n.total;}));
+      const diffMin = recentAvg - olderAvg;
+      if (diffMin <= -30) sleepLines.push({ tone: "warn", text: "Moyenne de sommeil en baisse de " + Math.round(-diffMin) + " min sur les 7 dernières nuits vs les 7 précédentes." });
+      else if (diffMin >= 30) sleepLines.push({ tone: "good", text: "Moyenne de sommeil en hausse de " + Math.round(diffMin) + " min sur les 7 dernières nuits." });
+    }
+    const latestWearable = wearable.find(function(w){ return w.day === latest.date; });
+    if (latestWearable && latestWearable.resp_rate_avg != null) {
+      const respBase = avgOf(wearable.filter(function(w){ return w.day !== latest.date && w.resp_rate_avg != null; }).map(function(w){ return w.resp_rate_avg; }));
+      if (respBase != null) {
+        const rd = latestWearable.resp_rate_avg - respBase;
+        if (rd >= 2) sleepLines.push({ tone: "warn", text: "Fréquence respiratoire nocturne au-dessus de ta moyenne (" + latestWearable.resp_rate_avg.toFixed(1) + " vs " + respBase.toFixed(1) + ") — à surveiller sur les prochaines nuits." });
+      }
+    }
+    if (sleepLines.length) {
+      html += '<div class="card"><div class="section-label">Lecture</div>';
+      sleepLines.forEach(function(l) {
+        const dotColor = l.tone === "warn" ? "rust" : l.tone === "good" ? "green" : "steel";
+        html += '<div style="display:flex;align-items:flex-start;margin-bottom:8px;font-size:13px;color:var(--chalkDim)"><span style="display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--' + dotColor + ');margin-right:8px;margin-top:5px;flex-shrink:0"></span><span>' + esc(l.text) + "</span></div>";
+      });
+      html += '<div class="muted" style="font-size:10px;margin-top:4px">Fourchettes de référence générales (littérature sommeil), pas un diagnostic personnalisé.</div></div>';
+    }
   }
 
   html += '<div class="card"><div class="section-label">Durée de sommeil (h) — 14 jours</div>';
