@@ -9,7 +9,7 @@
     --bg: #0b0b0d; --surface: #1a1a1c; --surfaceRaised: #242426;
     --chalk: #F5F3EF; --chalkDim: #B8B2A6; --rust: #F2711C; --rustDim: #9a4a10;
     --pink: #EC4899; --purple: #A855F7;
-    --steel: #5B7B8C; --green: #5C7A4A; --amber: #B08838; --muted: #6a655c; --line: #2e2c2a;
+    --steel: #5B7B8C; --green: #5C7A4A; --amber: #B08838; --muted: #9a9488; --line: #38352F;
     --gradient: linear-gradient(90deg, var(--rust), var(--pink), var(--purple));
   }
   * { box-sizing: border-box; }
@@ -805,8 +805,7 @@ async function renderDashboard() {
       html += '<div class="error-banner" style="background:rgba(242,113,28,0.15);border-color:var(--rust)"><b>⚠ Signaux similaires à une migraine passée :</b> ' + esc(migraineAlert) + "</div>";
     }
     html += '<div class="card"><div class="section-label">Forme</div>';
-    html += '<div style="text-align:center;padding:8px 0"><div style="font-size:38px;font-weight:900">' + score + '</div>';
-    html += '<div style="color:var(--' + tierColor + ');font-size:13px;font-weight:800;text-transform:uppercase">' + tier + "</div></div>";
+    html += '<div style="padding:10px 0">' + circleGaugeHtml(score, 100, { sublabel: tier }) + "</div>";
     html += '<div style="text-align:center;padding-top:10px;border-top:1px solid var(--line);font-size:12px">Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div></div>";
 
     html += '<div class="card"><div class="section-label">Comment tu te sens aujourd\'hui ?</div>';
@@ -1138,6 +1137,33 @@ async function renderSommeil() {
 
 // Graphique en barres lisible : valeur numérique au-dessus de chaque barre,
 // libellé de jour en dessous, barre du jour le plus récent mise en valeur.
+// Anneau circulaire qui se remplit selon le score — même logique de couleur
+// (rouge/orange/vert) réutilisée partout où un score apparaît dans l'appli.
+function scoreTierColor(pct) {
+  if (pct >= 0.7) return "green";
+  if (pct >= 0.4) return "amber";
+  return "rust";
+}
+function circleGaugeHtml(value, max, opts) {
+  opts = opts || {};
+  const size = opts.size || 140, stroke = opts.strokeWidth || 12;
+  const pct = Math.max(0, Math.min(1, value / max));
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const offset = c * (1 - pct);
+  const color = opts.color || "var(--" + scoreTierColor(pct) + ")";
+  let html = '<div style="position:relative;width:' + size + 'px;height:' + size + 'px;margin:0 auto">';
+  html += '<svg width="' + size + '" height="' + size + '" style="transform:rotate(-90deg)">';
+  html += '<circle cx="' + size/2 + '" cy="' + size/2 + '" r="' + r + '" fill="none" stroke="var(--surfaceRaised)" stroke-width="' + stroke + '"/>';
+  html += '<circle cx="' + size/2 + '" cy="' + size/2 + '" r="' + r + '" fill="none" stroke="' + color + '" stroke-width="' + stroke + '" stroke-dasharray="' + c + '" stroke-dashoffset="' + offset + '" stroke-linecap="round" style="transition:stroke-dashoffset 0.4s"/>';
+  html += '</svg>';
+  html += '<div style="position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center">';
+  html += '<span style="font-size:' + Math.round(size*0.26) + 'px;font-weight:900;color:var(--chalk);line-height:1">' + Math.round(value) + "</span>";
+  if (opts.sublabel) html += '<span style="font-size:11px;font-weight:800;text-transform:uppercase;color:' + color + ';margin-top:2px">' + opts.sublabel + "</span>";
+  html += "</div></div>";
+  return html;
+}
+
 function barChartHtml(items, opts) {
   opts = opts || {};
   const color = opts.color || "steel";
@@ -1274,7 +1300,7 @@ function drawMigraine() {
   html += '<div class="section-label" style="margin-top:14px">Notes</div>';
   html += '<input type="text" id="mig-notes" placeholder="Contexte, symptômes associés…" value="' + esc(migraineForm.notes) + '" style="margin-bottom:14px" />';
 
-  html += '<button class="btn-outline" id="mig-save" style="margin-top:0">Enregistrer</button>';
+  html += '<button id="mig-save" style="margin-top:0;width:100%;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Enregistrer</button>';
   html += "</div>";
 
   if (correlations.length > 0 && history.length >= 3) {
@@ -1436,9 +1462,9 @@ async function renderVie() {
   const weeklyPai = pai7.reduce(function(s, w){ return s + (w.pai_low||0) + (w.pai_moderate||0) + (w.pai_high||0); }, 0);
   const paiColor = weeklyPai >= 100 ? "green" : weeklyPai >= 50 ? "amber" : "rust";
 
-  html += '<div class="card ' + (weeklyPai < 100 ? "amber" : "") + '"><div class="section-label">PAI — cette semaine</div>';
-  html += '<div style="display:flex;align-items:baseline;gap:10px"><span style="font-size:38px;font-weight:900;color:var(--' + paiColor + ')">' + Math.round(weeklyPai) + '</span><span class="muted" style="font-size:13px">/ 100 cible</span></div>';
-  html += '<div style="height:10px;background:var(--surfaceRaised);border-radius:5px;overflow:hidden;margin-top:10px"><div style="width:' + Math.min(100, weeklyPai) + '%;height:100%;background:var(--' + paiColor + ')"></div></div>';
+  html += '<div class="card"><div class="section-label">PAI — cette semaine</div>';
+  html += '<div style="padding:6px 0">' + circleGaugeHtml(Math.min(weeklyPai, 100), 100, { sublabel: weeklyPai >= 100 ? "Objectif atteint" : "/ 100" }) + "</div>";
+  if (weeklyPai > 100) html += '<div class="muted" style="text-align:center;font-size:11px;margin-top:4px">Score réel : ' + Math.round(weeklyPai) + " (au-delà de 100, pas de bénéfice supplémentaire mesuré)</div>";
   html += "</div>";
 
   html += '<div class="card"><div class="section-label">Tendance — 4 dernières semaines</div>';
