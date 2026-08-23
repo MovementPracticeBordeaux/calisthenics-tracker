@@ -205,7 +205,11 @@ function computeLoad(s) {
   }, 0) / totalRpe;
   const typeFactor = active.reduce(function(sum,e){
     const ty = e[1].type || s.goal;
-    return sum + (GOAL_FACTORS[ty] || 1) * e[1].rpe;
+    // La locomotion mêle intrinsèquement renforcement, mobilité et endurance de
+    // force — même taguée "Force", elle ne descend jamais sous ce plancher.
+    const base = GOAL_FACTORS[ty] || 1;
+    const factor = e[0] === "locomotion" ? Math.max(base, GOAL_FACTORS.endurance_force) : base;
+    return sum + factor * e[1].rpe;
   }, 0) / totalRpe;
   const correctedLoad = sessionLoad !== null ? Math.round(sessionLoad * neuralFactor * typeFactor) : null;
   return { sessionLoad: sessionLoad, correctedLoad: correctedLoad };
