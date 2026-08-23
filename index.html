@@ -966,19 +966,31 @@ async function renderSommeil() {
     html += '<div style="text-align:center;padding:6px 0 14px"><div style="font-size:34px;font-weight:900">' + h + 'h' + (m<10?'0':'') + m + '</div>';
     if (avgTotal != null) html += '<div class="muted" style="font-size:11px">moyenne 14j : ' + Math.floor(avgTotal/60) + 'h' + Math.round(avgTotal%60).toString().padStart(2,'0') + '</div>';
     html += "</div>";
+    // Fourchettes normales croisées sur plusieurs sources (Journal of Clinical
+    // Sleep Medicine, méta-analyse AASM/Lancet Resp Med, CDC) : léger 45-55%,
+    // profond 13-23%, paradoxal 20-25% (repère "faible" sous 15%).
+    function stageQualifier(pct, low, high, veryLow) {
+      if (veryLow != null && pct < veryLow) return { label: "Faible", color: "rust" };
+      if (pct < low) return { label: "Un peu bas", color: "amber" };
+      if (pct > high) return { label: "Élevé", color: "amber" };
+      return { label: "Normal", color: "green" };
+    }
     const stages = [
-      ["Léger", latest.light, "steel"],
-      ["Profond", latest.deep, "rust"],
-      ["Paradoxal", latest.rem, "green"],
+      ["Léger", latest.light, "steel", 45, 55, null],
+      ["Profond", latest.deep, "rust", 13, 23, null],
+      ["Paradoxal", latest.rem, "green", 20, 25, 15],
     ];
     const stageTotal = latest.total || 1;
     stages.forEach(function(s) {
       const pct = Math.round((s[1]/stageTotal)*100);
       const sh = Math.floor(s[1]/60), sm = s[1]%60;
+      const q = stageQualifier(pct, s[3], s[4], s[5]);
       html += '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span>' + s[0] + '</span><span class="muted">' + sh + 'h' + (sm<10?'0':'') + sm + ' · ' + pct + '%</span></div>';
-      html += '<div style="height:8px;background:var(--surfaceRaised);border-radius:4px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:var(--' + s[2] + ')"></div></div></div>';
+      html += '<div style="height:8px;background:var(--surfaceRaised);border-radius:4px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:var(--' + s[2] + ')"></div></div>';
+      html += '<div style="text-align:right;font-size:10px;color:var(--' + q.color + ');font-weight:700;margin-top:2px">' + q.label + "</div></div>";
     });
     if (latest.awake != null) html += '<div class="muted" style="font-size:11px;margin-top:6px">Réveils détectés : ' + latest.awake + "</div>";
+    html += '<div class="muted" style="font-size:10px;margin-top:6px">Fourchettes générales pour adultes en bonne santé — varient avec l\'âge et la nuit précédente, à lire en tendance plutôt qu\'isolément.</div>';
     html += "</div>";
 
     const sleepLines = [];
@@ -988,8 +1000,7 @@ async function renderSommeil() {
     else if (totalH > 9) sleepLines.push({ tone: "neutral", text: "Plus long que d'habitude — peut refléter un vrai besoin de récupération après une charge élevée." });
     const deepPct = Math.round((latest.deep / latest.total) * 100);
     const remPct = Math.round((latest.rem / latest.total) * 100);
-    if (deepPct < 10) sleepLines.push({ tone: "neutral", text: "Sommeil profond à " + deepPct + "% — en dessous de la fourchette usuelle (13-23%), sans que ce soit forcément un problème isolément." });
-    if (remPct < 15) sleepLines.push({ tone: "neutral", text: "Sommeil paradoxal à " + remPct + "% — un peu bas vs la fourchette usuelle (20-25%)." });
+    // (qualificatifs déjà affichés directement sous chaque barre ci-dessus)
     const recentHalf = withSleep.slice(-7), olderHalf = withSleep.slice(-14, -7);
     if (recentHalf.length >= 3 && olderHalf.length >= 3) {
       const recentAvg = avgOf(recentHalf.map(function(n){return n.total;}));
