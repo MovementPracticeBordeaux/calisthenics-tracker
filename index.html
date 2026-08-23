@@ -288,6 +288,8 @@ async function getWorkoutForDate(dateStr) {
   agg.te_anaerobic = teN.length ? Math.max.apply(null, teN) : null;
   agg.calories = rows.reduce(function(s, r){ return s + (Number(r.calories)||0); }, 0);
   agg.official = rows.some(function(r){ return r.source === "zepp_official"; });
+  const hrrVals = rows.map(function(r){ return r.hrr_1min; }).filter(function(v){ return v != null; });
+  agg.hrr_1min = hrrVals.length ? Math.round(avgOf(hrrVals)) : null;
   return agg;
 }
 
@@ -347,11 +349,17 @@ function workoutCardHtml(w) {
     html += '<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>' + label + '</span><span class="muted">' + Math.round(min) + ' min</span></div>';
     html += '<div style="height:6px;background:var(--surfaceRaised);border-radius:3px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + color + '"></div></div></div>';
   });
-  if (w.te_aerobic != null || w.te_anaerobic != null) {
-    html += '<div style="display:flex;gap:16px;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)">';
-    if (w.te_aerobic != null) html += '<div style="flex:1"><div class="muted" style="font-size:10px;text-transform:uppercase">Effet aérobie</div><div style="font-size:18px;font-weight:900">' + w.te_aerobic.toFixed(1) + '</div><div style="font-size:11px;color:var(--green)">' + teLabel(w.te_aerobic) + "</div></div>";
-    if (w.te_anaerobic != null) html += '<div style="flex:1"><div class="muted" style="font-size:10px;text-transform:uppercase">Effet anaérobie</div><div style="font-size:18px;font-weight:900">' + w.te_anaerobic.toFixed(1) + '</div><div style="font-size:11px;color:var(--amber)">' + teLabel(w.te_anaerobic) + "</div></div>";
+  if (w.te_aerobic != null || w.te_anaerobic != null || w.hrr_1min != null) {
+    html += '<div style="display:flex;gap:16px;margin-top:12px;padding-top:10px;border-top:1px solid var(--line);flex-wrap:wrap">';
+    if (w.te_aerobic != null) html += '<div style="flex:1;min-width:80px"><div class="muted" style="font-size:10px;text-transform:uppercase">Effet aérobie</div><div style="font-size:18px;font-weight:900">' + w.te_aerobic.toFixed(1) + '</div><div style="font-size:11px;color:var(--green)">' + teLabel(w.te_aerobic) + "</div></div>";
+    if (w.te_anaerobic != null) html += '<div style="flex:1;min-width:80px"><div class="muted" style="font-size:10px;text-transform:uppercase">Effet anaérobie</div><div style="font-size:18px;font-weight:900">' + w.te_anaerobic.toFixed(1) + '</div><div style="font-size:11px;color:var(--amber)">' + teLabel(w.te_anaerobic) + "</div></div>";
+    if (w.hrr_1min != null) {
+      const hrrTier = w.hrr_1min < 12 ? "red" : w.hrr_1min <= 25 ? "amber" : "green";
+      const hrrLabel = w.hrr_1min < 12 ? "Faible" : w.hrr_1min <= 25 ? "Normale" : "Bonne";
+      html += '<div style="flex:1;min-width:80px"><div class="muted" style="font-size:10px;text-transform:uppercase">Récup. FC (1min)</div><div style="font-size:18px;font-weight:900;color:var(--' + hrrTier + ')">-' + w.hrr_1min + ' bpm</div><div style="font-size:11px;color:var(--' + hrrTier + ')">' + hrrLabel + "</div></div>";
+    }
     html += "</div>";
+    if (w.hrr_1min != null) html += '<div class="muted" style="font-size:10px;margin-top:8px">Récupération cardiaque approximée (capteur poignet, moins précis qu\'une ceinture ECG) — une chute ≤12 bpm en 1 min est le seuil clinique généralement associé à un risque cardiovasculaire accru (NEJM, méta-analyse 2017).</div>';
   }
   html += "</div>";
   return html;
@@ -1002,18 +1010,18 @@ async function renderDashboard() {
       html += "</div>";
     }
 
-    html += '<div class="card"><div class="section-label">Comment tu te sens aujourd\'hui ?</div>';
-    html += '<select id="lifeload-select" style="width:100%;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:7px;color:var(--chalk);font-size:16px;padding:10px 12px">';
-    const LIFELOAD_OPTIONS = [
-      ["", "— Choisir —"], ["bien", "Bien"], ["neutre", "Neutre"], ["stresse", "Stressé"],
-      ["fatigue", "Fatigué"], ["courbature", "Courbaturé"], ["malade", "Malade"],
-    ];
-    LIFELOAD_OPTIONS.forEach(function(o) {
-      html += '<option value="' + o[0] + '"' + (lifeload === o[0] || (!lifeload && o[0] === "") ? " selected" : "") + '>' + o[1] + "</option>";
-    });
-    html += "</select>";
-    if (lifeload) html += '<div class="muted" style="font-size:10px;margin-top:6px">Pris en compte dans le score Forme ci-dessus.</div>';
-    html += "</div>";
+    if (!lifeload) {
+      html += '<div class="card"><div class="section-label">Comment tu te sens aujourd\'hui ?</div>';
+      html += '<select id="lifeload-select" style="width:100%;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:7px;color:var(--chalk);font-size:16px;padding:10px 12px">';
+      const LIFELOAD_OPTIONS = [
+        ["", "— Choisir —"], ["bien", "Bien"], ["neutre", "Neutre"], ["stresse", "Stressé"],
+        ["fatigue", "Fatigué"], ["courbature", "Courbaturé"], ["malade", "Malade"],
+      ];
+      LIFELOAD_OPTIONS.forEach(function(o) {
+        html += '<option value="' + o[0] + '"' + (o[0] === "" ? " selected" : "") + '>' + o[1] + "</option>";
+      });
+      html += "</select></div>";
+    }
 
     // Tendance FC repos + VFC sur 14 jours
     const trend14 = []; for (let i = 13; i >= 0; i--) trend14.push(daysAgo(i));
@@ -1453,6 +1461,7 @@ function qualifyHRV(v) { return v < 20 ? "red" : v < 40 ? "amber" : "green"; }
 // direction de la tendance a du sens — hausse soutenue = progression, plat/
 // baisse = stagnation ou surcharge à surveiller selon le contexte.
 function qualifySleepHours(v) { return v < 6 ? "red" : (v < 7 || v > 9.5) ? "amber" : "green"; }
+function qualifyHRR(v) { return v < 12 ? "red" : v <= 25 ? "amber" : "green"; }
 
 // ---------------- Rendu : Migraine ----------------
 const TRIGGERS = [
@@ -1474,6 +1483,7 @@ function nowForDatetimeInput() {
   return d.toISOString().slice(0, 16);
 }
 let migraineForm = { startDateTime: nowForDatetimeInput(), endDateTime: "", intensity: 5, triggers: [], notes: "" };
+let migraineSubTab = "logger";
 
 async function getWearableForDate2(dateStr) {
   const rows = await sb("wearable_daily?day=eq." + dateStr + "&select=*");
@@ -1535,6 +1545,12 @@ function drawMigraine() {
   html += '<h1 style="margin-bottom:4px">Migraine</h1>';
   html += '<div class="muted" style="margin-bottom:18px">Journal et déclencheurs potentiels</div>';
 
+  html += '<div class="pill-row compact" id="migraine-subtab-row" style="margin-bottom:16px">';
+  html += '<button class="pill' + (migraineSubTab === "logger" ? " active" : "") + '" data-subtab="logger">Logger</button>';
+  html += '<button class="pill' + (migraineSubTab === "historique" ? " active" : "") + '" data-subtab="historique">Historique & tendances</button>';
+  html += "</div>";
+
+  if (migraineSubTab === "logger") {
   html += '<div class="card">';
   html += '<div class="section-label">Nouvelle entrée</div>';
   html += '<div class="muted" style="font-size:10px;text-transform:uppercase;margin-bottom:4px">Début</div>';
@@ -1569,6 +1585,7 @@ function drawMigraine() {
 
   html += '<button id="mig-save" style="margin-top:0;width:100%;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Enregistrer</button>';
   html += "</div>";
+  } else {
 
   if (correlations.length > 0 && history.length >= 3) {
     html += '<div class="card steel"><div class="section-label">Corrélation objective (' + history.length + ' migraine(s) vs autres jours)</div>';
@@ -1628,12 +1645,17 @@ function drawMigraine() {
     html += "</div>";
   });
   html += "</div>";
+  }
 
   app.innerHTML = html;
   wireMigraineEvents();
 }
 
 function wireMigraineEvents() {
+  document.querySelectorAll('#migraine-subtab-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { migraineSubTab = btn.dataset.subtab; drawMigraine(); });
+  });
+
   const startInput = document.getElementById("mig-start");
   if (startInput) startInput.addEventListener("change", function() { migraineForm.startDateTime = startInput.value; drawMigraine(); });
   const endInput = document.getElementById("mig-end");
@@ -1702,8 +1724,9 @@ function wireMigraineEvents() {
 async function renderVie() {
   const app = document.getElementById("app");
   app.innerHTML = '<div class="muted">Chargement…</div>';
-  let wearable = [], errorMsg = "";
+  let wearable = [], workouts = [], errorMsg = "";
   try { wearable = await listWearable(60); } catch (e) { errorMsg = e.message; }
+  try { workouts = await sb("workout_sessions?select=start_time,hrr_1min&order=start_time.asc&limit=200") || []; } catch (e) {}
 
   let html = "";
   if (errorMsg) html += '<div class="error-banner"><b>Erreur :</b> ' + esc(errorMsg) + "</div>";
@@ -1737,6 +1760,22 @@ async function renderVie() {
   html += '<div class="card"><div class="section-label">Tendance — 4 dernières semaines</div>';
   html += barChartHtml(weekBars, { height: 56 });
   html += "</div>";
+
+  // HRR (heart rate recovery) — validée depuis 1999 (NEJM, 2428 patients,
+  // 6 ans de suivi) et confirmée par méta-analyse (Qiu et al. 2017) : chaque
+  // 10 bpm de récupération en moins associé à +13% de risque d'événement
+  // cardiovasculaire et +9% de mortalité toutes causes.
+  const hrrRows = workouts.filter(function(w){ return w.hrr_1min != null; });
+  if (hrrRows.length >= 3) {
+    const hrrTrendBars = hrrRows.slice(-12).map(function(w) {
+      return { label: formatDateLabel(w.start_time.slice(0,10)).slice(0,2), val: w.hrr_1min };
+    });
+    const avgHrr = avgOf(hrrRows.map(function(w){return w.hrr_1min;}));
+    const hrrTier = avgHrr < 12 ? "red" : avgHrr <= 25 ? "amber" : "green";
+    html += '<div class="card"><div class="section-label">Récupération cardiaque (HRR, 1min) — par séance</div>';
+    html += barChartHtml(hrrTrendBars, { unit: " bpm", qualify: qualifyHRR });
+    html += '<div class="muted" style="font-size:10px;margin-top:8px">Approximée via capteur poignet (moins précis qu\'une ceinture ECG). ≤12 bpm = seuil clinique généralement associé à un risque cardiovasculaire accru.</div></div>';
+  }
 
   html += '<div class="card steel"><div class="section-label">À savoir</div>';
   html += '<div style="font-size:12px;color:var(--chalkDim);line-height:1.6">Le PAI traduit ta fréquence cardiaque pendant l\'activité en un score personnalisé sur 7 jours glissants. Atteindre <b style="color:var(--chalk)">100 PAI/semaine</b> est associé à 17-36% de réduction du risque de mortalité cardiovasculaire (étude HUNT, Norvège — plus d\'1 million de personnes-années de suivi), résultat répliqué indépendamment aux États-Unis et en Chine. Aucun bénéfice supplémentaire mesuré au-delà de 100 — l\'objectif est de l\'atteindre régulièrement, pas de le maximiser.<br><br>Contrairement au score Forme (qui reflète ta récupération du jour), le PAI est un indicateur de santé cardiovasculaire de long terme — un score bas ne veut pas dire "repose-toi", mais plutôt "bouge un peu plus cette semaine".</div></div>';
