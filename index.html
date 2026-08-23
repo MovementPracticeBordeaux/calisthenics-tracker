@@ -80,7 +80,7 @@
     <span style="color:var(--chalkDim)">MOVEMENT </span><span style="background:var(--gradient);-webkit-background-clip:text;background-clip:text;color:transparent">PRACTICE ✦ SUIVI</span>
   </div>
   <div class="tabs">
-    <button class="tab" data-tab="seance">Séance</button>
+    <button class="tab" data-tab="seance">Entraînement</button>
     <button class="tab" data-tab="sommeil">Sommeil</button>
     <button class="tab active" data-tab="dashboard">Dashboard</button>
     <button class="tab" data-tab="migraine">Migraine</button>
@@ -380,6 +380,61 @@ function renderSeanceTendancesHtml() {
   const prevMonthSessions = allSessions.filter(function(s){ return prevMonth.indexOf(s.date) !== -1; });
 
   let html = "";
+
+  // ---- Semaine ----
+  const last7 = []; for (let i = 6; i >= 0; i--) last7.push(daysAgo(i));
+  const prev7 = []; for (let i = 13; i >= 7; i--) prev7.push(daysAgo(i));
+  const last7Sessions = allSessions.filter(function(s){ return last7.indexOf(s.date) !== -1; });
+  const prev7Sessions = allSessions.filter(function(s){ return prev7.indexOf(s.date) !== -1; });
+  const weekBars = last7.map(function(d) {
+    const s = allSessions.find(function(x){ return x.date === d; });
+    return { label: formatDateLabel(d).slice(0,2), val: (s && s.correctedLoad) || 0 };
+  });
+  html += '<h1 style="font-size:18px;margin-bottom:10px">Cette semaine</h1>';
+  html += '<div class="card"><div class="section-label">Charge d\'entraînement — 7 derniers jours</div>';
+  html += barChartHtml(weekBars, {});
+  html += '<div class="muted" style="font-size:10px;margin-top:6px">Durée × intensité, ajustées par la complexité du mouvement, le type d\'effort et le type de contraction — reflète l\'exigence réelle de la séance, pas juste sa durée.</div>';
+  html += "</div>";
+  const totalLoad = last7Sessions.reduce(function(s,x){return s+(x.correctedLoad||0);},0);
+  const prevTotalLoad = prev7Sessions.reduce(function(s,x){return s+(x.correctedLoad||0);},0);
+  const rpeVals = last7Sessions.map(function(s){return s.intensity;}).filter(function(v){return v>0;});
+  const achievedWk = last7Sessions.filter(function(s){return s.achievement==="atteint";}).length;
+  const withAchWk = last7Sessions.filter(function(s){return s.achievement;}).length;
+  html += '<div class="card"><div class="stat-row">';
+  html += statHtml("Charge totale", totalLoad);
+  html += statHtml("Séances", last7Sessions.length);
+  html += statHtml("RPE moyen", rpeVals.length ? avgOf(rpeVals).toFixed(1) : "–");
+  html += statHtml("Objectifs atteints", withAchWk ? achievedWk+"/"+withAchWk : "–");
+  html += "</div></div>";
+
+  const weekLines = [];
+  if (prevTotalLoad > 0) {
+    const pct = Math.round(((totalLoad - prevTotalLoad) / prevTotalLoad) * 100);
+    if (pct >= 30) weekLines.push({ tone: "warn", text: "Charge en hausse de " + pct + "% vs la semaine précédente (" + prevTotalLoad + " → " + totalLoad + ") — progression rapide, surveille ta récupération." });
+    else if (pct <= -30) weekLines.push({ tone: "neutral", text: "Charge en net retrait vs la semaine précédente (" + pct + "%) — phase plus légère ou repos." });
+    else weekLines.push({ tone: "good", text: "Charge stable par rapport à la semaine précédente (" + (pct >= 0 ? "+" : "") + pct + "%)." });
+  } else if (last7Sessions.length > 0) {
+    weekLines.push({ tone: "neutral", text: "Pas de semaine précédente comparable pour l'instant." });
+  }
+  if (last7Sessions.length === 0) {
+    weekLines.push({ tone: "warn", text: "Aucune séance loggée cette semaine." });
+  } else if (last7Sessions.length <= 1) {
+    weekLines.push({ tone: "neutral", text: "Une seule séance cette semaine — fréquence en retrait si ce n'est pas voulu." });
+  }
+  if (withAchWk >= 2 && achievedWk / withAchWk < 0.5) {
+    weekLines.push({ tone: "warn", text: "Moins de la moitié des objectifs atteints cette semaine (" + achievedWk + "/" + withAchWk + ") — vaut le coup de regarder pourquoi (charge, sommeil, planning)." });
+  }
+  if (weekLines.length) {
+    html += '<div class="card"><div class="section-label">Lecture de la semaine</div>';
+    weekLines.forEach(function(l) {
+      const dotColor = l.tone === "warn" ? "red" : l.tone === "good" ? "green" : "steel";
+      html += '<div style="display:flex;align-items:flex-start;margin-bottom:8px;font-size:13px;color:var(--chalkDim)"><span style="display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--' + dotColor + ');margin-right:8px;margin-top:5px;flex-shrink:0"></span><span>' + esc(l.text) + "</span></div>";
+    });
+    html += "</div>";
+  }
+
+  // ---- Mois ----
+  html += '<h1 style="font-size:18px;margin:22px 0 10px">Ce mois-ci</h1>';
   const buckets = [];
   for (let w = 0; w < 5; w++) {
     const bd = month.slice(w*6, w*6+6); if (!bd.length) continue;
@@ -983,54 +1038,56 @@ async function renderDashboard() {
     if (todayWearable) html += wearableCardHtml(Object.assign({}, todayWearable, { day: today }));
   } else if (dashPeriod === "semaine") {
     const last7 = []; for (let i = 6; i >= 0; i--) last7.push(daysAgo(i));
-    const prev7 = []; for (let i = 13; i >= 7; i--) prev7.push(daysAgo(i));
-    const last7Sessions = sessions.filter(function(s){ return last7.indexOf(s.date) !== -1; });
-    const prev7Sessions = sessions.filter(function(s){ return prev7.indexOf(s.date) !== -1; });
-    const bars = last7.map(function(d) {
-      const s = sessions.find(function(x){ return x.date === d; });
-      return { label: formatDateLabel(d).slice(0,2), val: (s && s.correctedLoad) || 0 };
-    });
-    html += '<div class="card"><div class="section-label">Charge d\'entraînement — 7 derniers jours</div>';
-    html += barChartHtml(bars, {});
-    html += '<div class="muted" style="font-size:10px;margin-top:6px">Durée × intensité, ajustées par la complexité du mouvement, le type d\'effort et le type de contraction — reflète l\'exigence réelle de la séance, pas juste sa durée.</div>';
-    html += "</div>";
-    const totalLoad = last7Sessions.reduce(function(s,x){return s+(x.correctedLoad||0);},0);
-    const prevTotalLoad = prev7Sessions.reduce(function(s,x){return s+(x.correctedLoad||0);},0);
-    const rpeVals = last7Sessions.map(function(s){return s.intensity;}).filter(function(v){return v>0;});
-    const achieved = last7Sessions.filter(function(s){return s.achievement==="atteint";}).length;
-    const withAch = last7Sessions.filter(function(s){return s.achievement;}).length;
-    html += '<div class="card"><div class="stat-row">';
-    html += statHtml("Charge totale", totalLoad, "rust");
-    html += statHtml("Séances", last7Sessions.length);
-    html += statHtml("RPE moyen", rpeVals.length ? avgOf(rpeVals).toFixed(1) : "–");
-    html += statHtml("Objectifs atteints", withAch ? achieved+"/"+withAch : "–");
-    html += "</div></div>";
-
-    const weekLines = [];
-    if (prevTotalLoad > 0) {
-      const pct = Math.round(((totalLoad - prevTotalLoad) / prevTotalLoad) * 100);
-      if (pct >= 30) weekLines.push({ tone: "warn", text: "Charge en hausse de " + pct + "% vs la semaine précédente (" + prevTotalLoad + " → " + totalLoad + ") — progression rapide, surveille ta récupération." });
-      else if (pct <= -30) weekLines.push({ tone: "neutral", text: "Charge en net retrait vs la semaine précédente (" + pct + "%) — phase plus légère ou repos." });
-      else weekLines.push({ tone: "good", text: "Charge stable par rapport à la semaine précédente (" + (pct >= 0 ? "+" : "") + pct + "%)." });
-    } else if (last7Sessions.length > 0) {
-      weekLines.push({ tone: "neutral", text: "Pas de semaine précédente comparable pour l'instant." });
-    }
-    if (last7Sessions.length === 0) {
-      weekLines.push({ tone: "warn", text: "Aucune séance loggée cette semaine." });
-    } else if (last7Sessions.length <= 1) {
-      weekLines.push({ tone: "neutral", text: "Une seule séance cette semaine — fréquence en retrait si ce n'est pas voulu." });
-    }
-    if (withAch >= 2 && achieved / withAch < 0.5) {
-      weekLines.push({ tone: "warn", text: "Moins de la moitié des objectifs atteints cette semaine (" + achieved + "/" + withAch + ") — vaut le coup de regarder pourquoi (charge, sommeil, planning)." });
-    }
-    if (weekLines.length) {
-      html += '<div class="card"><div class="section-label">Lecture de la semaine</div>';
-      weekLines.forEach(function(l) {
-        const dotColor = l.tone === "warn" ? "red" : l.tone === "good" ? "green" : "steel";
-        html += '<div style="display:flex;align-items:flex-start;margin-bottom:8px;font-size:13px;color:var(--chalkDim)"><span style="display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--' + dotColor + ');margin-right:8px;margin-top:5px;flex-shrink:0"></span><span>' + esc(l.text) + "</span></div>";
+    const week7Wearable = wearable.filter(function(w){ return last7.indexOf(w.day) !== -1; });
+    function dailyTrendBars(field) {
+      return last7.map(function(d) {
+        const w = week7Wearable.find(function(x){ return x.day === d; });
+        return { label: formatDateLabel(d).slice(0,2), val: (w && w[field] != null) ? w[field] : 0 };
       });
+    }
+    const hasHrW = week7Wearable.some(function(w){return w.hr_resting!=null;});
+    const hasHrvW = week7Wearable.some(function(w){return w.hrv_avg!=null;});
+    const hasStressW = week7Wearable.some(function(w){return w.stress_avg!=null;});
+    const hasSleepW = week7Wearable.some(function(w){return w.sleep_total_min!=null;});
+    if (hasHrW) {
+      html += '<div class="card"><div class="section-label">FC repos — 7 derniers jours</div>';
+      html += barChartHtml(dailyTrendBars("hr_resting"), { unit: " bpm" });
       html += "</div>";
     }
+    if (hasHrvW) {
+      html += '<div class="card"><div class="section-label">VFC — 7 derniers jours</div>';
+      html += barChartHtml(dailyTrendBars("hrv_avg"), { unit: " ms" });
+      html += "</div>";
+    }
+    if (hasStressW) {
+      html += '<div class="card"><div class="section-label">Stress — 7 derniers jours</div>';
+      html += barChartHtml(dailyTrendBars("stress_avg"), {});
+      html += "</div>";
+    }
+    if (hasSleepW) {
+      const sleepBarsW = last7.map(function(d) {
+        const w = week7Wearable.find(function(x){ return x.day === d; });
+        const mins = w && w.sleep_total_min != null ? w.sleep_total_min : 0;
+        return { label: formatDateLabel(d).slice(0,2), val: Math.round((mins/60)*10)/10 };
+      });
+      html += '<div class="card"><div class="section-label">Sommeil (h) — 7 derniers jours</div>';
+      html += barChartHtml(sleepBarsW, { decimals: 1, unit: "h" });
+      html += "</div>";
+    }
+    if (!hasHrW && !hasHrvW && !hasStressW && !hasSleepW) {
+      html += '<div class="card"><div class="muted" style="text-align:center;padding:16px 0">Pas encore assez de données montre cette semaine.</div></div>';
+    }
+
+    const weekMig = monthMigraines.filter(function(m){ return last7.indexOf(m.day) !== -1; });
+    if (weekMig.length > 0) {
+      const avgIntensityW = avgOf(weekMig.map(function(m){ return m.intensity || 0; }));
+      html += '<div class="card ' + (weekMig.length >= 2 ? "amber" : "") + '"><div class="section-label">Migraines cette semaine</div><div class="stat-row">';
+      html += statHtml("Nombre", weekMig.length, weekMig.length >= 2 ? "amber" : null);
+      html += statHtml("Intensité moy.", avgIntensityW.toFixed(1) + "/10");
+      html += "</div></div>";
+    }
+
+    html += '<div class="card steel"><div class="muted" style="font-size:12px;text-align:center">Les données d\'entraînement de la semaine sont dans l\'onglet <b style="color:var(--chalk)">Entraînement → Tendances</b>.</div></div>';
   } else if (dashPeriod === "mois") {
     const month = []; for (let i = 29; i >= 0; i--) month.push(daysAgo(i));
     const monthSessions = sessions.filter(function(s){ return month.indexOf(s.date) !== -1; });
