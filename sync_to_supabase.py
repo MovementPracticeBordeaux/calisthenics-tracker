@@ -143,6 +143,17 @@ def build_daily_summary(db_path):
             days[d]["hr_max_activity"] = max(hr_by_day[d])
 
     conn.close()
+
+    # PostgREST exige que tous les objets d'un même envoi aient exactement les
+    # mêmes clés — on normalise chaque jour avec le même schéma complet (None
+    # pour les champs absents).
+    all_keys = set()
+    for d in days.values():
+        all_keys.update(d.keys())
+    for d in days.values():
+        for k in all_keys:
+            d.setdefault(k, None)
+
     return list(days.values())
 
 
