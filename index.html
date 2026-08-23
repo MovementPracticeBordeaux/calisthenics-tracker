@@ -9,8 +9,14 @@
     --bg: #0b0b0d; --surface: #1a1a1c; --surfaceRaised: #242426;
     --chalk: #F5F3EF; --chalkDim: #B8B2A6; --rust: #F2711C; --rustDim: #9a4a10;
     --pink: #EC4899; --purple: #A855F7;
-    --steel: #8b6fb0; --green: #5C7A4A; --amber: #B08838; --muted: #9a9488; --line: #38352F;
+    --steel: #8b6fb0; --muted: #9a9488; --line: #38352F;
     --gradient: linear-gradient(90deg, var(--rust), var(--pink), var(--purple));
+    /* Palette néon des indicateurs (bon/moyen/mauvais) — vive et légèrement
+       dégradée, cohérente avec l'esprit lumineux de la charte plutôt que des
+       tons ternes classiques. */
+    --green: #39FF8A; --greenDark: #0FA85A;
+    --amber: #FFB020; --amberDark: #E0791A;
+    --red: #FF3366; --redDark: #C41E52;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); font-family: system-ui, -apple-system, sans-serif; color: var(--chalk); }
@@ -132,7 +138,7 @@ const CONTRACTION_FACTORS = { dynamique: 1.0, isometrique: 1.15, excentrique: 1.
 const GOALS = [{ id: "force", label: "Force" }, { id: "endurance_force", label: "End. force" }, { id: "endurance", label: "Endurance" }, { id: "hybride", label: "Hybride" }];
 const GOAL_FACTORS = { force: 1.0, endurance_force: 1.15, endurance: 1.25, hybride: 1.20 };
 const DURATIONS = [{ id: "30", label: "30 min", minutes: 30 }, { id: "45", label: "45 min", minutes: 45 }, { id: "60", label: "1h", minutes: 60 }, { id: "plus", label: "Plus", minutes: null }];
-const ACHIEVEMENTS = [{ id: "atteint", label: "Atteint", color: "green" }, { id: "moyen", label: "Moyennement", color: "amber" }, { id: "pas", label: "Pas atteint", color: "rust" }];
+const ACHIEVEMENTS = [{ id: "atteint", label: "Atteint", color: "green" }, { id: "moyen", label: "Moyennement", color: "amber" }, { id: "pas", label: "Pas atteint", color: "red" }];
 const WARMUP_MINUTES = 22;
 const DISCIPLINE_TO_THEMES = {
   Handstand: ["handstand"], "Mobilité": ["bas"], Locomotion: ["locomotion"],
@@ -762,7 +768,7 @@ async function renderDashboard() {
   if (signals > 0) {
     if (score >= 70) { tier = "Bonne"; tierColor = "green"; needRest = "Non — tu peux enchaîner"; }
     else if (score >= 40) { tier = "Suffisante"; tierColor = "amber"; needRest = "Optionnel — reste attentif"; }
-    else { tier = "Insuffisante"; tierColor = "rust"; needRest = "Oui — repos recommandé"; }
+    else { tier = "Insuffisante"; tierColor = "red"; needRest = "Oui — repos recommandé"; }
   }
 
   let html = "";
@@ -850,7 +856,7 @@ async function renderDashboard() {
     }
     html += '<div class="card"><div class="section-label">Interprétation du jour</div>';
     lines.forEach(function(l) {
-      const dotColor = l.tone === "warn" ? "rust" : l.tone === "good" ? "green" : "steel";
+      const dotColor = l.tone === "warn" ? "red" : l.tone === "good" ? "green" : "steel";
       html += '<div style="display:flex;align-items:flex-start;margin-bottom:8px;font-size:13px;color:var(--chalkDim)"><span style="display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--' + dotColor + ');margin-right:8px;margin-top:5px;flex-shrink:0"></span><span>' + esc(l.text) + "</span></div>";
     });
     html += '<div class="muted" style="font-size:10px;margin-top:4px">Interprétation indicative — ne remplace pas ton ressenti ni un avis médical. Les fluctuations de VFC de 10-20% d\'un jour à l\'autre sont normales ; seuls les écarts plus marqués ou les tendances sur plusieurs jours sont vraiment significatifs.</div></div>';
@@ -900,7 +906,7 @@ async function renderDashboard() {
     if (weekLines.length) {
       html += '<div class="card"><div class="section-label">Lecture de la semaine</div>';
       weekLines.forEach(function(l) {
-        const dotColor = l.tone === "warn" ? "rust" : l.tone === "good" ? "green" : "steel";
+        const dotColor = l.tone === "warn" ? "red" : l.tone === "good" ? "green" : "steel";
         html += '<div style="display:flex;align-items:flex-start;margin-bottom:8px;font-size:13px;color:var(--chalkDim)"><span style="display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--' + dotColor + ');margin-right:8px;margin-top:5px;flex-shrink:0"></span><span>' + esc(l.text) + "</span></div>";
       });
       html += "</div>";
@@ -989,7 +995,7 @@ async function renderDashboard() {
       const llCounts = {};
       monthLL.forEach(function(l){ llCounts[l.state] = (llCounts[l.state]||0) + 1; });
       const llLabels = { bien: "Bien", neutre: "Neutre", stresse: "Stressé", fatigue: "Fatigué", courbature: "Courbaturé", malade: "Malade" };
-      const llColors = { bien: "green", neutre: "steel", stresse: "amber", fatigue: "amber", courbature: "amber", malade: "rust" };
+      const llColors = { bien: "green", neutre: "steel", stresse: "amber", fatigue: "amber", courbature: "amber", malade: "red" };
       html += '<div class="card"><div class="section-label">Comment tu t\'es senti ce mois-ci (' + monthLL.length + ' jour(s) renseigné(s))</div>';
       Object.keys(llCounts).sort(function(a,b){ return llCounts[b]-llCounts[a]; }).forEach(function(k) {
         const pct = Math.round((llCounts[k]/monthLL.length)*100);
@@ -1127,7 +1133,7 @@ async function renderSommeil() {
     // Sleep Medicine, méta-analyse AASM/Lancet Resp Med, CDC) : léger 45-55%,
     // profond 13-23%, paradoxal 20-25% (repère "faible" sous 15%).
     function stageQualifier(pct, low, high, veryLow) {
-      if (veryLow != null && pct < veryLow) return { label: "Faible", color: "rust" };
+      if (veryLow != null && pct < veryLow) return { label: "Faible", color: "red" };
       if (pct < low) return { label: "Un peu bas", color: "amber" };
       if (pct > high) return { label: "Élevé", color: "amber" };
       return { label: "Normal", color: "green" };
@@ -1185,7 +1191,7 @@ async function renderSommeil() {
     if (sleepLines.length) {
       html += '<div class="card"><div class="section-label">Lecture</div>';
       sleepLines.forEach(function(l) {
-        const dotColor = l.tone === "warn" ? "rust" : l.tone === "good" ? "green" : "steel";
+        const dotColor = l.tone === "warn" ? "red" : l.tone === "good" ? "green" : "steel";
         html += '<div style="display:flex;align-items:flex-start;margin-bottom:8px;font-size:13px;color:var(--chalkDim)"><span style="display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--' + dotColor + ');margin-right:8px;margin-top:5px;flex-shrink:0"></span><span>' + esc(l.text) + "</span></div>";
       });
       html += '<div class="muted" style="font-size:10px;margin-top:4px">Fourchettes de référence générales (littérature sommeil), pas un diagnostic personnalisé.</div></div>';
@@ -1230,8 +1236,13 @@ function scoreTierColor(pct, invert) {
   if (invert) pct = 1 - pct;
   if (pct >= 0.7) return "green";
   if (pct >= 0.4) return "amber";
-  return "rust";
+  return "red";
 }
+function scoreTierGradient(tier) {
+  const stops = { green: ["var(--greenDark)", "var(--green)"], amber: ["var(--amberDark)", "var(--amber)"], red: ["var(--redDark)", "var(--red)"] };
+  return stops[tier] || stops.green;
+}
+let gaugeIdCounter = 0;
 function circleGaugeHtml(value, max, opts) {
   opts = opts || {};
   const size = opts.size || 140, stroke = opts.strokeWidth || 12;
@@ -1239,15 +1250,21 @@ function circleGaugeHtml(value, max, opts) {
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const offset = c * (1 - pct);
-  const color = opts.color || "var(--" + scoreTierColor(pct, opts.invert) + ")";
+  const tier = opts.tier || scoreTierColor(pct, opts.invert);
+  const gradStops = scoreTierGradient(tier);
+  const solidColor = "var(--" + tier + ")";
+  const gid = "gauge-grad-" + (gaugeIdCounter++);
   let html = '<div style="position:relative;width:' + size + 'px;height:' + size + 'px;margin:0 auto">';
-  html += '<svg width="' + size + '" height="' + size + '" style="transform:rotate(-90deg)">';
+  html += '<svg width="' + size + '" height="' + size + '" style="transform:rotate(-90deg);overflow:visible">';
+  html += '<defs><linearGradient id="' + gid + '" x1="0%" y1="0%" x2="100%" y2="100%">';
+  html += '<stop offset="0%" stop-color="' + gradStops[0] + '"/><stop offset="100%" stop-color="' + gradStops[1] + '"/>';
+  html += '</linearGradient></defs>';
   html += '<circle cx="' + size/2 + '" cy="' + size/2 + '" r="' + r + '" fill="none" stroke="var(--surfaceRaised)" stroke-width="' + stroke + '"/>';
-  html += '<circle cx="' + size/2 + '" cy="' + size/2 + '" r="' + r + '" fill="none" stroke="' + color + '" stroke-width="' + stroke + '" stroke-dasharray="' + c + '" stroke-dashoffset="' + offset + '" stroke-linecap="round" style="transition:stroke-dashoffset 0.4s"/>';
+  html += '<circle cx="' + size/2 + '" cy="' + size/2 + '" r="' + r + '" fill="none" stroke="url(#' + gid + ')" stroke-width="' + stroke + '" stroke-dasharray="' + c + '" stroke-dashoffset="' + offset + '" stroke-linecap="round" style="transition:stroke-dashoffset 0.4s;filter:drop-shadow(0 0 6px ' + solidColor + ')"/>';
   html += '</svg>';
   html += '<div style="position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center">';
-  html += '<span style="font-size:' + Math.round(size*0.26) + 'px;font-weight:900;color:var(--chalk);line-height:1">' + Math.round(value) + "</span>";
-  if (opts.sublabel) html += '<span style="font-size:11px;font-weight:800;text-transform:uppercase;color:' + color + ';margin-top:2px">' + opts.sublabel + "</span>";
+  html += '<span style="font-size:' + Math.round(size*0.26) + 'px;font-weight:900;color:var(--chalk);line-height:1;text-shadow:0 0 14px ' + solidColor + '55">' + Math.round(value) + "</span>";
+  if (opts.sublabel) html += '<span style="font-size:11px;font-weight:800;text-transform:uppercase;color:' + solidColor + ';margin-top:2px">' + opts.sublabel + "</span>";
   html += "</div></div>";
   return html;
 }
@@ -1405,7 +1422,7 @@ function drawMigraine() {
       html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
       html += '<span style="font-size:12px">' + c.label + "</span>";
       html += '<span style="font-size:12px;color:var(--chalkDim)">' + c.migAvg.toFixed(1) + c.unit + ' <span class="muted">vs ' + c.otherAvg.toFixed(1) + c.unit + "</span>";
-      if (diffPct != null && Math.abs(diffPct) >= 10) html += ' <b style="color:var(--' + (diffPct < 0 ? "rust" : "amber") + ')">(' + (diffPct > 0 ? "+" : "") + diffPct + "%)</b>";
+      if (diffPct != null && Math.abs(diffPct) >= 10) html += ' <b style="color:var(--' + (diffPct < 0 ? "red" : "amber") + ')">(' + (diffPct > 0 ? "+" : "") + diffPct + "%)</b>";
       html += "</span></div>";
     });
     html += '<div class="muted" style="font-size:10px;margin-top:6px">Comparaison directe de tes données mesurées, pas juste des cases cochées — corrélation, pas forcément causalité (n=' + history.length + ').</div></div>';
@@ -1554,7 +1571,7 @@ async function renderVie() {
 
   const pai7 = wearable.filter(function(w){ return w.day >= daysAgo(6); });
   const weeklyPai = pai7.reduce(function(s, w){ return s + (w.pai_low||0) + (w.pai_moderate||0) + (w.pai_high||0); }, 0);
-  const paiColor = weeklyPai >= 100 ? "green" : weeklyPai >= 50 ? "amber" : "rust";
+  const paiColor = weeklyPai >= 100 ? "green" : weeklyPai >= 50 ? "amber" : "red";
 
   html += '<div class="card"><div class="section-label">PAI — cette semaine</div>';
   html += '<div style="padding:6px 0">' + circleGaugeHtml(Math.min(weeklyPai, 100), 100, { sublabel: weeklyPai >= 100 ? "Objectif atteint" : "/ 100" }) + "</div>";
