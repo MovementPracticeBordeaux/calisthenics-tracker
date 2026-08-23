@@ -16,8 +16,8 @@
   body { margin: 0; background: var(--bg); font-family: system-ui, -apple-system, sans-serif; color: var(--chalk); }
   .wrap { max-width: 480px; margin: 0 auto; padding: 12px 16px 40px; }
   .tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); padding-bottom: 12px; margin-bottom: 16px; }
-  .tab { flex: 1; padding: 9px 2px; border-radius: 7px; border: none; background: transparent; color: var(--muted);
-    font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .2px; cursor: pointer; }
+  .tab { flex: 1; padding: 9px 1px; border-radius: 7px; border: none; background: transparent; color: var(--muted);
+    font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .1px; cursor: pointer; white-space: nowrap; }
   .tab.active { background: var(--gradient); color: var(--bg); font-weight: 900; }
   h1 { font-size: 26px; font-weight: 900; margin: 0; font-family: 'Arial Black', system-ui, sans-serif; text-transform: uppercase; letter-spacing: .5px; }
   .muted { color: var(--muted); font-size: 12px; }
@@ -77,6 +77,7 @@
     <button class="tab active" data-tab="seance">Séance</button>
     <button class="tab" data-tab="dashboard">Dashboard</button>
     <button class="tab" data-tab="sommeil">Sommeil</button>
+    <button class="tab" data-tab="migraine">Migraine</button>
   </div>
   <div id="app"></div>
 </div>
@@ -1007,6 +1008,160 @@ function barChartHtml(items, opts) {
   return html + "</div>";
 }
 
+// ---------------- Rendu : Migraine ----------------
+const TRIGGERS = [
+  { id: "stress", label: "Stress" },
+  { id: "sommeil", label: "Sommeil insuffisant/perturbé" },
+  { id: "effort", label: "Effort intense/soudain" },
+  { id: "ecrans", label: "Écrans prolongés" },
+  { id: "deshydratation", label: "Déshydratation" },
+  { id: "repas", label: "Repas sauté" },
+  { id: "cervical", label: "Tension nerveuse/cervicale" },
+  { id: "meteo", label: "Météo" },
+  { id: "alcool", label: "Alcool" },
+  { id: "hormonal", label: "Hormonal" },
+];
+
+let migraineForm = { day: todayISO(), intensity: 5, triggers: [], notes: "" };
+
+async function getWearableForDate2(dateStr) {
+  const rows = await sb("wearable_daily?day=eq." + dateStr + "&select=*");
+  return rows && rows[0] ? rows[0] : null;
+}
+
+async function renderMigraine() {
+  const app = document.getElementById("app");
+  app.innerHTML = '<div class="muted">Chargement…</div>';
+  let history = [], errorMsg = "";
+  try {
+    history = await sb("migraines?select=*&order=day.desc&limit=60") || [];
+  } catch (e) { errorMsg = e.message; }
+
+  // Contexte automatique du jour sélectionné dans le formulaire
+  let ctx = null;
+  try { ctx = await getWearableForDate2(migraineForm.day); } catch (e) {}
+  const sessionCtx = (await listSessions(90)).find(function(s) { return s.date === migraineForm.day; });
+
+  // Fréquence des déclencheurs sur l'historique
+  const triggerCounts = {};
+  history.forEach(function(m) {
+    (m.triggers || []).forEach(function(t) { triggerCounts[t] = (triggerCounts[t] || 0) + 1; });
+  });
+  const sortedTriggers = Object.keys(triggerCounts).sort(function(a, b) { return triggerCounts[b] - triggerCounts[a]; });
+
+  let html = "";
+  if (errorMsg) html += '<div class="error-banner"><b>Erreur :</b> ' + esc(errorMsg) + "</div>";
+  html += '<h1 style="margin-bottom:4px">Migraine</h1>';
+  html += '<div class="muted" style="margin-bottom:18px">Journal et déclencheurs potentiels</div>';
+
+  html += '<div class="card">';
+  html += '<div class="section-label">Nouvelle entrée</div>';
+  html += '<input type="date" id="mig-date" value="' + migraineForm.day + '" max="' + todayISO() + '" style="margin-bottom:14px" />';
+
+  if (ctx || sessionCtx) {
+    html += '<div style="background:var(--surfaceRaised);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:11px;color:var(--chalkDim)">';
+    html += '<div class="muted" style="font-size:10px;text-transform:uppercase;margin-bottom:4px">Contexte ce jour-là</div>';
+    const parts = [];
+    if (ctx && ctx.sleep_total_min != null) parts.push("Sommeil " + Math.floor(ctx.sleep_total_min/60) + "h" + (ctx.sleep_total_min%60).toString().padStart(2,'0'));
+    if (ctx && ctx.stress_avg != null) parts.push("Stress " + Math.round(ctx.stress_avg));
+    if (ctx && ctx.hrv_avg != null) parts.push("VFC " + Math.round(ctx.hrv_avg) + "ms");
+    if (sessionCtx && sessionCtx.correctedLoad) parts.push("Charge " + sessionCtx.correctedLoad);
+    html += parts.length ? parts.join(" · ") : "Pas de données montre pour ce jour.";
+    html += "</div>";
+  }
+
+  html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><span class="section-label" style="margin:0">Intensité</span><span class="rpe-value">' + migraineForm.intensity + "</span></div>";
+  html += rpeLadderHtml("migraine", migraineForm.intensity);
+
+  html += '<div class="section-label" style="margin-top:14px">Déclencheurs potentiels</div><div class="pill-row compact" style="flex-wrap:wrap;gap:6px">';
+  TRIGGERS.forEach(function(t) {
+    const on = migraineForm.triggers.indexOf(t.id) !== -1;
+    html += '<button class="pill mig-trigger' + (on ? " active" : "") + '" data-id="' + t.id + '" style="flex:none;padding:7px 10px">' + t.label + "</button>";
+  });
+  html += "</div>";
+
+  html += '<div class="section-label" style="margin-top:14px">Notes</div>';
+  html += '<input type="text" id="mig-notes" placeholder="Contexte, symptômes associés…" value="' + esc(migraineForm.notes) + '" style="margin-bottom:14px" />';
+
+  html += '<button class="btn-outline" id="mig-save" style="margin-top:0">Enregistrer</button>';
+  html += "</div>";
+
+  if (sortedTriggers.length > 0) {
+    const maxCount = triggerCounts[sortedTriggers[0]];
+    html += '<div class="card amber"><div class="section-label">Déclencheurs les plus fréquents (' + history.length + ' entrée(s))</div>';
+    sortedTriggers.slice(0, 6).forEach(function(tid) {
+      const t = TRIGGERS.find(function(x) { return x.id === tid; });
+      const pct = Math.round((triggerCounts[tid] / maxCount) * 100);
+      html += '<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>' + (t ? t.label : tid) + '</span><span class="muted">' + triggerCounts[tid] + "×</span></div>";
+      html += '<div style="height:6px;background:var(--surfaceRaised);border-radius:3px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:var(--amber)"></div></div></div>';
+    });
+    html += '<div class="muted" style="font-size:10px;margin-top:4px">Fréquence déclarative — une corrélation répétée mérite d\'en parler à un médecin, elle ne remplace pas un diagnostic.</div></div>';
+  }
+
+  html += '<div class="card"><div class="section-label">Historique (' + history.length + ")</div>";
+  if (history.length === 0) html += '<div class="muted" style="text-align:center;padding:16px 0">Aucune entrée pour l\'instant.</div>';
+  history.forEach(function(m) {
+    html += '<div style="padding:8px 0;border-bottom:1px solid var(--line)">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center"><span style="font-weight:700;font-size:13px">' + formatDateLabel(m.day) + '</span><span style="color:var(--rust);font-weight:800">' + (m.intensity || "–") + "/10</span></div>";
+    if (m.triggers && m.triggers.length) {
+      html += '<div style="margin-top:4px">';
+      m.triggers.forEach(function(tid) {
+        const t = TRIGGERS.find(function(x) { return x.id === tid; });
+        html += '<span class="badge">' + (t ? t.label : tid) + "</span>";
+      });
+      html += "</div>";
+    }
+    if (m.notes) html += '<div class="muted" style="font-size:11px;margin-top:4px">' + esc(m.notes) + "</div>";
+    html += "</div>";
+  });
+  html += "</div>";
+
+  app.innerHTML = html;
+  wireMigraineEvents();
+}
+
+function wireMigraineEvents() {
+  const dateInput = document.getElementById("mig-date");
+  if (dateInput) dateInput.addEventListener("change", function() { migraineForm.day = dateInput.value; renderMigraine(); });
+
+  document.querySelectorAll('.rpe-ladder[data-scope="migraine"] .rpe-bar').forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      migraineForm.intensity = Number(btn.dataset.n);
+      renderMigraine();
+    });
+  });
+
+  document.querySelectorAll(".mig-trigger").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      const id = btn.dataset.id;
+      const idx = migraineForm.triggers.indexOf(id);
+      if (idx === -1) migraineForm.triggers.push(id); else migraineForm.triggers.splice(idx, 1);
+      renderMigraine();
+    });
+  });
+
+  const notesInput = document.getElementById("mig-notes");
+  if (notesInput) notesInput.addEventListener("input", function() { migraineForm.notes = notesInput.value; });
+
+  const saveBtn = document.getElementById("mig-save");
+  if (saveBtn) saveBtn.addEventListener("click", function() {
+    saveBtn.textContent = "Enregistrement…";
+    sb("migraines", {
+      method: "POST",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        day: migraineForm.day, intensity: migraineForm.intensity,
+        triggers: migraineForm.triggers, notes: migraineForm.notes || null,
+      }),
+    }).then(function() {
+      migraineForm = { day: todayISO(), intensity: 5, triggers: [], notes: "" };
+      renderMigraine();
+    }).catch(function(e) {
+      saveBtn.textContent = "Erreur : " + e.message;
+    });
+  });
+}
+
 function statHtml(label, value, color) {
   return '<div class="stat"><div class="stat-label">' + label + '</div><div class="stat-value"' + (color ? ' style="color:var(--'+color+')"' : '') + '>' + value + "</div></div>";
 }
@@ -1015,7 +1170,10 @@ function statHtml(label, value, color) {
 function setTab(tab) {
   currentTab = tab;
   document.querySelectorAll(".tab[data-tab]").forEach(function(t) { t.classList.toggle("active", t.dataset.tab === tab); });
-  if (tab === "seance") loadSeance(); else if (tab === "dashboard") renderDashboard(); else renderSommeil();
+  if (tab === "seance") loadSeance();
+  else if (tab === "dashboard") renderDashboard();
+  else if (tab === "sommeil") renderSommeil();
+  else renderMigraine();
 }
 document.querySelectorAll(".tab[data-tab]").forEach(function(t) {
   t.addEventListener("click", function() { setTab(t.dataset.tab); });
