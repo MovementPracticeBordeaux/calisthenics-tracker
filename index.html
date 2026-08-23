@@ -416,7 +416,7 @@ function drawSeance() {
     html += '<span style="font-size:12px;color:var(--chalkDim)">Charge de séance</span><span style="font-size:20px;font-weight:900">' + load.sessionLoad + "</span></div>";
     if (load.correctedLoad !== load.sessionLoad) {
       html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">';
-      html += '<span style="font-size:12px;color:var(--chalkDim)">Charge corrigée</span><span style="font-size:20px;font-weight:900;color:var(--rust)">' + load.correctedLoad + "</span></div>";
+      html += '<span style="font-size:12px;color:var(--chalkDim)">Charge d\'entraînement</span><span style="font-size:20px;font-weight:900;color:var(--rust)">' + load.correctedLoad + "</span></div>";
     }
   }
   html += "</div>";
@@ -864,8 +864,9 @@ async function renderDashboard() {
       const s = sessions.find(function(x){ return x.date === d; });
       return { label: formatDateLabel(d).slice(0,2), val: (s && s.correctedLoad) || 0 };
     });
-    html += '<div class="card"><div class="section-label">Charge corrigée — 7 derniers jours</div>';
+    html += '<div class="card"><div class="section-label">Charge d\'entraînement — 7 derniers jours</div>';
     html += barChartHtml(bars, { color: "steel" });
+    html += '<div class="muted" style="font-size:10px;margin-top:6px">Durée × intensité, ajustées par la complexité du mouvement, le type d\'effort et le type de contraction — reflète l\'exigence réelle de la séance, pas juste sa durée.</div>';
     html += "</div>";
     const totalLoad = last7Sessions.reduce(function(s,x){return s+(x.correctedLoad||0);},0);
     const prevTotalLoad = prev7Sessions.reduce(function(s,x){return s+(x.correctedLoad||0);},0);
@@ -914,9 +915,23 @@ async function renderDashboard() {
       const bs = monthSessions.filter(function(s){ return bd.indexOf(s.date) !== -1; });
       buckets.push({ label: bd[0].slice(8,10)+"-"+bd[bd.length-1].slice(8,10), val: bs.reduce(function(s,x){return s+(x.correctedLoad||0);},0) });
     }
-    html += '<div class="card"><div class="section-label">Charge corrigée — 30 derniers jours</div>';
+    html += '<div class="card"><div class="section-label">Charge d\'entraînement — 30 derniers jours</div>';
     html += barChartHtml(buckets, { color: "steel", height: 72 });
     html += "</div>";
+
+    // Vue d'ensemble : moyennes mensuelles de tous les grands indicateurs,
+    // réunies au même endroit plutôt que dispersées entre onglets.
+    const monthWearableOverview = wearable.filter(function(w){ return month.indexOf(w.day) !== -1; });
+    function monthAvg(field) { const v = monthWearableOverview.map(function(w){return w[field];}).filter(function(x){return x!=null;}); return v.length ? avgOf(v) : null; }
+    const mHr = monthAvg("hr_resting"), mHrv = monthAvg("hrv_avg"), mStress = monthAvg("stress_avg"), mResp = monthAvg("resp_rate_avg");
+    if (mHr != null || mHrv != null || mStress != null) {
+      html += '<div class="card steel"><div class="section-label">Vue d\'ensemble — moyennes du mois</div><div class="stat-row">';
+      if (mHr != null) html += statHtml("FC repos", Math.round(mHr) + " bpm");
+      if (mHrv != null) html += statHtml("VFC", Math.round(mHrv) + " ms");
+      if (mStress != null) html += statHtml("Stress", Math.round(mStress));
+      if (mResp != null) html += statHtml("Respiration", mResp.toFixed(1) + "/min");
+      html += "</div></div>";
+    }
     const achieved = monthSessions.filter(function(s){return s.achievement==="atteint";}).length;
     const withAch = monthSessions.filter(function(s){return s.achievement;}).length;
     const monthTotalLoad = monthSessions.reduce(function(s,x){return s+(x.correctedLoad||0);},0);
@@ -1230,21 +1245,19 @@ function circleGaugeHtml(value, max, opts) {
 
 function barChartHtml(items, opts) {
   opts = opts || {};
-  const color = opts.color || "steel";
   const decimals = opts.decimals || 0;
   const height = opts.height || 64;
   const vals = items.map(function(i) { return i.val; });
   const max = Math.max.apply(null, vals.concat([1]));
-  const min = Math.min.apply(null, vals.filter(function(v) { return v > 0; }).concat([max]));
   let html = '<div style="display:flex;align-items:flex-end;gap:6px">';
   items.forEach(function(item, i) {
     const v = item.val || 0;
     const h = v > 0 ? Math.max(18, (v / max) * height) : 4;
     const isLast = i === items.length - 1;
-    const barColor = isLast && v > 0 ? "rust" : color;
+    const barStyle = isLast && v > 0 ? "background:var(--gradient)" : "background:var(--steel);opacity:0.75";
     html += '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px">';
     html += '<span style="font-size:9px;color:var(--chalkDim);white-space:nowrap">' + (v > 0 ? v.toFixed(decimals) : "–") + "</span>";
-    html += '<div style="width:100%;height:' + h + 'px;background:var(--' + barColor + ');border-radius:3px 3px 1px 1px"></div>';
+    html += '<div style="width:100%;height:' + h + 'px;' + barStyle + ';border-radius:3px 3px 1px 1px"></div>';
     html += '<span style="font-size:9px;color:var(--muted)">' + (item.label || "") + "</span>";
     html += "</div>";
   });
