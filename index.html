@@ -588,13 +588,14 @@ let dashPeriod = "jour";
 async function renderDashboard() {
   const app = document.getElementById("app");
   app.innerHTML = '<div class="muted">Chargement du dashboard…</div>';
-  let sessions = [], wearable = [], dismissedDates = [], errorMsg = "";
+  let sessions = [], wearable = [], dismissedDates = [], workouts = [], errorMsg = "";
   try { sessions = await listSessions(90); } catch (e) { errorMsg = e.message; }
   try { wearable = await listWearable(40); } catch (e) { errorMsg = errorMsg || e.message; }
   try {
     const rows = await sb("dismissed_activity_flags?select=day");
     dismissedDates = (rows || []).map(function(r) { return r.day; });
   } catch (e) {}
+  try { workouts = await sb("workout_sessions?select=day,training_effect_aerobic,training_effect_anaerobic&order=day.desc&limit=60") || []; } catch (e) {}
 
   const today = todayISO();
   const todaySession = sessions.find(function(s){ return s.date === today; }) || null;
@@ -682,6 +683,27 @@ async function renderDashboard() {
   } catch (e) {}
 
   let todayMigraine = null;
+  let history_migraines_count = 0, migraine_signature = null;
+  try {
+    const migRows = await sb("migraines?select=day") || [];
+    const migDays = migRows.map(function(r){ return r.day; });
+    history_migraines_count = migDays.length;
+    if (migDays.length >= 5) {
+      const migWearable = wearable.filter(function(w){ return migDays.indexOf(w.day) !== -1; });
+      const baseWearable = wearable.filter(function(w){ return migDays.indexOf(w.day) === -1; });
+      function avgF(arr, f) { const v = arr.map(function(w){return w[f];}).filter(function(x){return x!=null;}); return v.length ? avgOf(v) : null; }
+      const bHr = avgF(baseWearable, "hr_resting"), mHr = avgF(migWearable, "hr_resting");
+      const bHrv = avgF(baseWearable, "hrv_avg"), mHrv = avgF(migWearable, "hrv_avg");
+      const bStress = avgF(baseWearable, "stress_avg"), mStress = avgF(migWearable, "stress_avg");
+      const mSleep = avgF(migWearable, "sleep_total_min");
+      migraine_signature = {
+        hrDiff: (bHr != null && mHr != null) ? mHr - bHr : null,
+        hrvPct: (bHrv != null && mHrv != null && bHrv > 0) ? ((mHrv - bHrv) / bHrv) * 100 : null,
+        stressDiff: (bStress != null && mStress != null) ? mStress - bStress : null,
+        sleepMin: mSleep,
+      };
+    }
+  } catch (e) {}
   try {
     const rows = await sb("migraines?day=eq." + today + "&select=intensity");
     if (rows && rows.length) todayMigraine = Math.max.apply(null, rows.map(function(r) { return r.intensity || 5; }));
@@ -696,6 +718,39 @@ async function renderDashboard() {
   if (respDiff != null) { signals++; if (respDiff >= 3) score -= 20; else if (respDiff >= 2) score -= 10; }
   if (todayMigraine != null) { signals++; score -= (10 + todayMigraine * 4); }
   if (todayMigraine != null) lines.unshift({ tone: "warn", text: "Migraine enregistrée aujourd'hui (intensité " + todayMigraine + "/10) — pèse sur le score et la récupération recommandée." });
+
+  // Effet d'entraînement officiel (aérobie/anaérobie, données Zepp/Firstbeat) —
+  // même logique de ratio 3j récents vs référence que la charge, mais sur une
+  // mesure validée par la montre plutôt qu'estimée par nous.
+  const teVals = workouts.filter(function(w){ return w.training_effect_anaerobic != null; })
+    .sort(function(a,b){ return a.day < b.day ? -1 : 1; });
+  let teRatio = null;
+  if (teVals.length >= 4) {
+    const recent3 = teVals.slice(-3).map(function(w){ return w.training_effect_anaerobic; });
+    const base10 = teVals.slice(-10).map(function(w){ return w.training_effect_anaerobic; });
+    const recentAvg = avgOf(recent3), baseAvg = avgOf(base10);
+    if (baseAvg > 0) {
+      teRatio = recentAvg / baseAvg;
+      signals++;
+      if (teRatio > 1.6) { score -= 15; lines.push({ tone: "warn", text: "Effet d'entraînement anaérobie (données montre) nettement au-dessus de ta référence récente — sollicitation élevée à ne pas négliger dans ta récup." }); }
+      else if (teRatio < 0.6 && recentAvg < 1) { lines.push({ tone: "neutral", text: "Effet d'entraînement récent plutôt faible (données montre) — cohérent avec une phase plus légère." }); }
+    }
+  }
+
+  // Détection de motifs proches d'une migraine passée — comparaison directe à
+  // ton propre historique, pas un diagnostic. Nécessite au moins 5 migraines
+  // enregistrées pour éviter le surajustement sur un trop petit échantillon.
+  let migraineAlert = null;
+  if (todayMigraine == null && history_migraines_count >= 5 && migraine_signature) {
+    let matches = 0, checked = 0;
+    if (hrDiff != null && migraine_signature.hrDiff != null) { checked++; if (Math.sign(hrDiff) === Math.sign(migraine_signature.hrDiff) && Math.abs(hrDiff) >= Math.abs(migraine_signature.hrDiff) * 0.5) matches++; }
+    if (hrvPct != null && migraine_signature.hrvPct != null) { checked++; if (Math.sign(hrvPct) === Math.sign(migraine_signature.hrvPct) && Math.abs(hrvPct) >= Math.abs(migraine_signature.hrvPct) * 0.5) matches++; }
+    if (stressDiff != null && migraine_signature.stressDiff != null) { checked++; if (Math.sign(stressDiff) === Math.sign(migraine_signature.stressDiff) && Math.abs(stressDiff) >= Math.abs(migraine_signature.stressDiff) * 0.5) matches++; }
+    if (sleepMin != null && migraine_signature.sleepMin != null) { checked++; if (sleepMin <= migraine_signature.sleepMin + 30) matches++; }
+    if (checked >= 3 && matches / checked >= 0.75) {
+      migraineAlert = "Tes signaux d'aujourd'hui ressemblent à ceux de tes migraines passées (" + history_migraines_count + " enregistrées) — pas une certitude, mais peut valoir le coup de rester attentif et de t'hydrater/te reposer si possible.";
+    }
+  }
   const LIFELOAD_IMPACT = { bien: 8, stresse: -12, fatigue: -18, malade: -40, courbature: -10, neutre: 0 };
   if (lifeload != null) { signals++; score += (LIFELOAD_IMPACT[lifeload] || 0); }
   score = Math.max(0, Math.min(100, score));
@@ -745,6 +800,9 @@ async function renderDashboard() {
   html += "</div>";
 
   if (dashPeriod === "jour") {
+    if (migraineAlert) {
+      html += '<div class="error-banner" style="background:rgba(242,113,28,0.15);border-color:var(--rust)"><b>⚠ Signaux similaires à une migraine passée :</b> ' + esc(migraineAlert) + "</div>";
+    }
     html += '<div class="card"><div class="section-label">Forme</div>';
     html += '<div style="text-align:center;padding:8px 0"><div style="font-size:38px;font-weight:900">' + score + '</div>';
     html += '<div style="color:var(--' + tierColor + ');font-size:13px;font-weight:800;text-transform:uppercase">' + tier + "</div></div>";
@@ -797,6 +855,20 @@ async function renderDashboard() {
     });
     html += '<div class="muted" style="font-size:10px;margin-top:4px">Interprétation indicative — ne remplace pas ton ressenti ni un avis médical. Les fluctuations de VFC de 10-20% d\'un jour à l\'autre sont normales ; seuls les écarts plus marqués ou les tendances sur plusieurs jours sont vraiment significatifs.</div></div>';
     if (todayWearable) html += wearableCardHtml(Object.assign({}, todayWearable, { day: today }));
+
+    // PAI (Personal Activity Intelligence) — indicateur hebdomadaire distinct de
+    // la Forme du jour : validé par l'étude HUNT (Norvège, >1M personnes-années),
+    // répliqué aux USA et en Chine. ≥100/semaine associé à -17 à -36% de risque
+    // de mortalité cardiovasculaire ; pas de bénéfice supplémentaire au-delà.
+    const pai7 = wearable.filter(function(w){ return w.day >= daysAgo(6) && (w.pai_low != null || w.pai_moderate != null || w.pai_high != null); });
+    if (pai7.length > 0) {
+      const weeklyPai = pai7.reduce(function(s, w){ return s + (w.pai_low||0) + (w.pai_moderate||0) + (w.pai_high||0); }, 0);
+      const paiColor = weeklyPai >= 100 ? "green" : weeklyPai >= 50 ? "amber" : "rust";
+      html += '<div class="card ' + (weeklyPai < 100 ? "amber" : "") + '"><div class="section-label">PAI — 7 derniers jours</div>';
+      html += '<div style="display:flex;align-items:baseline;gap:10px"><span style="font-size:32px;font-weight:900;color:var(--' + paiColor + ')">' + Math.round(weeklyPai) + '</span><span class="muted" style="font-size:12px">/ 100 cible</span></div>';
+      html += '<div style="height:8px;background:var(--surfaceRaised);border-radius:4px;overflow:hidden;margin-top:8px"><div style="width:' + Math.min(100, weeklyPai) + '%;height:100%;background:var(--' + paiColor + ')"></div></div>';
+      html += '<div class="muted" style="font-size:10px;margin-top:8px">Atteindre 100 PAI/semaine associé à un risque de mortalité cardiovasculaire réduit de 17-36% (étude HUNT, Norvège, répliquée aux USA et en Chine) — indicateur de santé long terme, distinct de ta récupération du jour.</div></div>';
+    }
   } else if (dashPeriod === "semaine") {
     const last7 = []; for (let i = 6; i >= 0; i--) last7.push(daysAgo(i));
     const prev7 = []; for (let i = 13; i >= 7; i--) prev7.push(daysAgo(i));
