@@ -392,7 +392,7 @@ function renderSeanceTendancesHtml() {
   });
   html += '<h1 style="font-size:18px;margin-bottom:10px">Cette semaine</h1>';
   html += '<div class="card"><div class="section-label">Charge d\'entraînement — 7 derniers jours</div>';
-  html += barChartHtml(weekBars, { trendQualify: qualifyLoadTrend });
+  html += barChartHtml(weekBars, {});
   html += '<div class="muted" style="font-size:10px;margin-top:6px">Durée × intensité, ajustées par la complexité du mouvement, le type d\'effort et le type de contraction — reflète l\'exigence réelle de la séance, pas juste sa durée.</div>';
   html += "</div>";
   const totalLoad = last7Sessions.reduce(function(s,x){return s+(x.correctedLoad||0);},0);
@@ -442,7 +442,7 @@ function renderSeanceTendancesHtml() {
     buckets.push({ label: bd[0].slice(8,10)+"-"+bd[bd.length-1].slice(8,10), val: bs.reduce(function(s,x){return s+(x.correctedLoad||0);},0) });
   }
   html += '<div class="card"><div class="section-label">Charge d\'entraînement — tendance</div>';
-  html += barChartHtml(buckets, { height: 72, trendQualify: qualifyLoadTrend });
+  html += barChartHtml(buckets, { height: 72 });
   html += '<div class="muted" style="font-size:10px;margin-top:6px">Durée × intensité, ajustées par la complexité du mouvement, le type d\'effort et le type de contraction.</div>';
   html += "</div>";
 
@@ -1452,18 +1452,6 @@ function qualifyHRV(v) { return v < 20 ? "red" : v < 40 ? "amber" : "green"; }
 // logique de progression long terme (sans pic de compétition visé), la
 // direction de la tendance a du sens — hausse soutenue = progression, plat/
 // baisse = stagnation ou surcharge à surveiller selon le contexte.
-function qualifyLoadTrend(items) {
-  const vals = items.map(function(i){ return i.val; }).filter(function(v){ return v > 0; });
-  if (vals.length < 3) return null;
-  const mid = Math.floor(vals.length / 2);
-  const firstHalf = avgOf(vals.slice(0, mid));
-  const secondHalf = avgOf(vals.slice(mid));
-  if (!firstHalf) return null;
-  const pct = (secondHalf - firstHalf) / firstHalf;
-  if (pct >= 0.12) return "green";
-  if (pct <= -0.20) return "red";
-  return "amber";
-}
 function qualifySleepHours(v) { return v < 6 ? "red" : (v < 7 || v > 9.5) ? "amber" : "green"; }
 
 // ---------------- Rendu : Migraine ----------------
