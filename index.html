@@ -798,7 +798,7 @@ async function renderDashboard() {
   }
 
   html += '<div class="pill-row" style="margin-bottom:16px" id="period-row">';
-  [["jour","Jour"],["semaine","Semaine"],["mois","Mois"],["comparer","Comparer"]].forEach(function(p) {
+  [["jour","Jour"],["semaine","Semaine"],["mois","Mois"]].forEach(function(p) {
     html += '<button class="pill' + (dashPeriod === p[0] ? " active" : "") + '" data-period="' + p[0] + '" style="font-size:11.5px;padding:9px 2px">' + p[1] + "</button>";
   });
   html += "</div>";
@@ -915,23 +915,48 @@ async function renderDashboard() {
       const bs = monthSessions.filter(function(s){ return bd.indexOf(s.date) !== -1; });
       buckets.push({ label: bd[0].slice(8,10)+"-"+bd[bd.length-1].slice(8,10), val: bs.reduce(function(s,x){return s+(x.correctedLoad||0);},0) });
     }
-    html += '<div class="card"><div class="section-label">Charge d\'entraînement — 30 derniers jours</div>';
-    html += barChartHtml(buckets, { color: "steel", height: 72 });
+    html += '<div class="card"><div class="section-label">Charge d\'entraînement — tendance</div>';
+    html += barChartHtml(buckets, { height: 72 });
     html += "</div>";
 
-    // Vue d'ensemble : moyennes mensuelles de tous les grands indicateurs,
-    // réunies au même endroit plutôt que dispersées entre onglets.
+    // Tendances physiologiques : moyenne par tranche de ~6 jours plutôt qu'un
+    // chiffre unique — pour voir l'évolution, pas juste l'état actuel.
     const monthWearableOverview = wearable.filter(function(w){ return month.indexOf(w.day) !== -1; });
-    function monthAvg(field) { const v = monthWearableOverview.map(function(w){return w[field];}).filter(function(x){return x!=null;}); return v.length ? avgOf(v) : null; }
-    const mHr = monthAvg("hr_resting"), mHrv = monthAvg("hrv_avg"), mStress = monthAvg("stress_avg"), mResp = monthAvg("resp_rate_avg");
-    if (mHr != null || mHrv != null || mStress != null) {
-      html += '<div class="card steel"><div class="section-label">Vue d\'ensemble — moyennes du mois</div><div class="stat-row">';
-      if (mHr != null) html += statHtml("FC repos", Math.round(mHr) + " bpm");
-      if (mHrv != null) html += statHtml("VFC", Math.round(mHrv) + " ms");
-      if (mStress != null) html += statHtml("Stress", Math.round(mStress));
-      if (mResp != null) html += statHtml("Respiration", mResp.toFixed(1) + "/min");
-      html += "</div></div>";
+    function weeklyTrendBuckets(field, decimals) {
+      const b = [];
+      for (let w = 0; w < 5; w++) {
+        const bd = month.slice(w*6, w*6+6); if (!bd.length) continue;
+        const vals = monthWearableOverview.filter(function(x){ return bd.indexOf(x.day) !== -1; }).map(function(x){return x[field];}).filter(function(v){return v!=null;});
+        b.push({ label: bd[0].slice(8,10)+"-"+bd[bd.length-1].slice(8,10), val: vals.length ? avgOf(vals) : 0 });
+      }
+      return b;
     }
+    const hasHr = monthWearableOverview.some(function(w){return w.hr_resting!=null;});
+    const hasHrv = monthWearableOverview.some(function(w){return w.hrv_avg!=null;});
+    const hasStress = monthWearableOverview.some(function(w){return w.stress_avg!=null;});
+    const hasSleep = monthWearableOverview.some(function(w){return w.sleep_total_min!=null;});
+    if (hasHr) {
+      html += '<div class="card"><div class="section-label">FC repos — tendance</div>';
+      html += barChartHtml(weeklyTrendBuckets("hr_resting"), { height: 56 });
+      html += "</div>";
+    }
+    if (hasHrv) {
+      html += '<div class="card"><div class="section-label">VFC — tendance</div>';
+      html += barChartHtml(weeklyTrendBuckets("hrv_avg"), { height: 56 });
+      html += "</div>";
+    }
+    if (hasStress) {
+      html += '<div class="card"><div class="section-label">Stress — tendance</div>';
+      html += barChartHtml(weeklyTrendBuckets("stress_avg"), { height: 56 });
+      html += "</div>";
+    }
+    if (hasSleep) {
+      const sleepHourBuckets = weeklyTrendBuckets("sleep_total_min").map(function(b){ return { label: b.label, val: Math.round((b.val/60)*10)/10 }; });
+      html += '<div class="card"><div class="section-label">Sommeil (h) — tendance</div>';
+      html += barChartHtml(sleepHourBuckets, { decimals: 1, height: 56 });
+      html += "</div>";
+    }
+
     const achieved = monthSessions.filter(function(s){return s.achievement==="atteint";}).length;
     const withAch = monthSessions.filter(function(s){return s.achievement;}).length;
     const monthTotalLoad = monthSessions.reduce(function(s,x){return s+(x.correctedLoad||0);},0);
@@ -946,21 +971,6 @@ async function renderDashboard() {
       html += statHtml("Vs mois précédent", (deltaPct >= 0 ? "+" : "") + deltaPct + "%", deltaPct >= 30 ? "amber" : null);
     }
     html += "</div></div>";
-
-    // Sommeil du mois
-    const monthWearable = wearable.filter(function(w){ return month.indexOf(w.day) !== -1; });
-    const monthSleepVals = monthWearable.map(function(w){ return w.sleep_total_min; }).filter(function(v){ return v != null; });
-    if (monthSleepVals.length >= 3) {
-      const avgSleep = avgOf(monthSleepVals);
-      const monthDeep = avgOf(monthWearable.map(function(w){return w.sleep_deep_min;}).filter(function(v){return v!=null;}));
-      const monthRem = avgOf(monthWearable.map(function(w){return w.sleep_rem_min;}).filter(function(v){return v!=null;}));
-      html += '<div class="card"><div class="section-label">Sommeil — moyenne du mois (' + monthSleepVals.length + ' nuits)</div>';
-      html += '<div class="stat-row">';
-      html += statHtml("Durée moy.", Math.floor(avgSleep/60) + "h" + Math.round(avgSleep%60).toString().padStart(2,'0'));
-      if (monthDeep != null) html += statHtml("Profond moy.", Math.round(monthDeep) + " min");
-      if (monthRem != null) html += statHtml("Paradoxal moy.", Math.round(monthRem) + " min");
-      html += "</div></div>";
-    }
 
     // Migraines du mois
     const monthMig = monthMigraines.filter(function(m){ return month.indexOf(m.day) !== -1; });
@@ -1014,25 +1024,24 @@ async function renderDashboard() {
       stale.forEach(function(s) { html += '<div style="font-size:12px;color:var(--chalkDim);margin-bottom:8px"><span style="color:var(--amber);font-weight:700">'+s.theme.label+'</span> — '+(s.days===null?"jamais travaillé":"pas travaillé depuis "+s.days+"j")+"</div>"; });
       html += "</div>";
     }
-  } else if (dashPeriod === "comparer") {
-    const stats = {};
+
+    // Comparaison par discipline (ex-onglet "Comparer", fusionné ici)
+    const discStats = {};
     sessions.filter(function(s){ return s.discipline && s.correctedLoad != null; }).forEach(function(s) {
-      if (!stats[s.discipline]) stats[s.discipline] = [];
-      stats[s.discipline].push(s.correctedLoad);
+      if (!discStats[s.discipline]) discStats[s.discipline] = [];
+      discStats[s.discipline].push(s.correctedLoad);
     });
-    const rows = Object.keys(stats).map(function(name) {
-      const loads = stats[name];
+    const discRows = Object.keys(discStats).map(function(name) {
+      const loads = discStats[name];
       return { name: name, count: loads.length, avg: Math.round(avgOf(loads)) };
     }).sort(function(a,b){ return b.avg - a.avg; });
-    if (!rows.length) {
-      html += '<div class="card"><div class="muted" style="text-align:center;padding:10px 0">Pas encore assez de séances pour comparer.</div></div>';
-    } else {
+    if (discRows.length) {
       html += '<div class="card"><div class="section-label">Charge moyenne par discipline</div>';
-      const max = rows[0].avg || 1;
-      rows.forEach(function(r, i) {
-        const pct = Math.max(6, (r.avg/max)*100);
+      const maxDisc = discRows[0].avg || 1;
+      discRows.forEach(function(r, i) {
+        const pct = Math.max(6, (r.avg/maxDisc)*100);
         html += '<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-weight:700;font-size:13px">' + esc(r.name) + '</span><span style="font-size:12px;color:var(--chalkDim)">' + r.avg + ' <span class="muted">· ' + r.count + " séance(s)</span></span></div>";
-        html += '<div style="height:8px;background:var(--surfaceRaised);border-radius:4px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:var(--' + (i===0?"rust":"steel") + ');border-radius:4px"></div></div></div>';
+        html += '<div style="height:8px;background:var(--surfaceRaised);border-radius:4px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + (i===0?"var(--gradient)":"var(--steel)") + ';border-radius:4px"></div></div></div>';
       });
       html += "</div>";
     }
