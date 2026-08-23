@@ -1188,7 +1188,7 @@ const TRIGGERS = [
   { id: "hormonal", label: "Hormonal" },
 ];
 
-let migraineForm = { day: todayISO(), intensity: 5, triggers: [], notes: "" };
+let migraineForm = { day: todayISO(), startTime: "", endTime: "", intensity: 5, triggers: [], notes: "" };
 
 async function getWearableForDate2(dateStr) {
   const rows = await sb("wearable_daily?day=eq." + dateStr + "&select=*");
@@ -1243,7 +1243,11 @@ async function renderMigraine() {
 
   html += '<div class="card">';
   html += '<div class="section-label">Nouvelle entrée</div>';
-  html += '<input type="date" id="mig-date" value="' + migraineForm.day + '" max="' + todayISO() + '" style="margin-bottom:14px" />';
+  html += '<input type="date" id="mig-date" value="' + migraineForm.day + '" max="' + todayISO() + '" style="margin-bottom:10px" />';
+  html += '<div style="display:flex;gap:8px;margin-bottom:14px">';
+  html += '<div style="flex:1"><div class="muted" style="font-size:10px;text-transform:uppercase;margin-bottom:4px">Début</div><input type="time" id="mig-start" value="' + migraineForm.startTime + '" /></div>';
+  html += '<div style="flex:1"><div class="muted" style="font-size:10px;text-transform:uppercase;margin-bottom:4px">Fin (si connue)</div><input type="time" id="mig-end" value="' + migraineForm.endTime + '" /></div>';
+  html += "</div>";
 
   if (ctx || sessionCtx) {
     html += '<div style="background:var(--surfaceRaised);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:11px;color:var(--chalkDim)">';
@@ -1308,6 +1312,17 @@ async function renderMigraine() {
     html += '<div style="display:flex;align-items:center;gap:10px"><span style="color:var(--rust);font-weight:800">' + (m.intensity || "–") + '/10</span>';
     html += '<button class="mig-delete" data-id="' + m.id + '" data-day="' + esc(formatDateLabel(m.day)) + '" style="background:none;border:none;color:var(--muted);font-size:16px;line-height:1;cursor:pointer;padding:2px 4px">✕</button></div>';
     html += "</div>";
+    if (m.start_time) {
+      const st = new Date(m.start_time);
+      let timeLabel = "Début " + st.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+      if (m.end_time) {
+        const et = new Date(m.end_time);
+        timeLabel += " → " + et.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+        if (et.toDateString() !== st.toDateString()) timeLabel += " (+1j)";
+        if (m.duration_min) timeLabel += " · " + Math.floor(m.duration_min/60) + "h" + (m.duration_min%60).toString().padStart(2,'0');
+      }
+      html += '<div class="muted" style="font-size:11px;margin-top:2px">' + timeLabel + "</div>";
+    }
     if (m.triggers && m.triggers.length) {
       html += '<div style="margin-top:4px">';
       m.triggers.forEach(function(tid) {
@@ -1328,6 +1343,10 @@ async function renderMigraine() {
 function wireMigraineEvents() {
   const dateInput = document.getElementById("mig-date");
   if (dateInput) dateInput.addEventListener("change", function() { migraineForm.day = dateInput.value; renderMigraine(); });
+  const startInput = document.getElementById("mig-start");
+  if (startInput) startInput.addEventListener("change", function() { migraineForm.startTime = startInput.value; });
+  const endInput = document.getElementById("mig-end");
+  if (endInput) endInput.addEventListener("change", function() { migraineForm.endTime = endInput.value; });
 
   document.querySelectorAll(".mig-delete").forEach(function(btn) {
     btn.addEventListener("click", function() {
@@ -1362,15 +1381,29 @@ function wireMigraineEvents() {
   const saveBtn = document.getElementById("mig-save");
   if (saveBtn) saveBtn.addEventListener("click", function() {
     saveBtn.textContent = "Enregistrement…";
+    let startTs = null, endTs = null, durationMin = null;
+    if (migraineForm.startTime) {
+      startTs = new Date(migraineForm.day + "T" + migraineForm.startTime + ":00");
+      if (migraineForm.endTime) {
+        endTs = new Date(migraineForm.day + "T" + migraineForm.endTime + ":00");
+        // Passage à minuit : si l'heure de fin est numériquement avant celle de
+        // début, la crise a continué le lendemain.
+        if (endTs <= startTs) endTs.setDate(endTs.getDate() + 1);
+        durationMin = Math.round((endTs - startTs) / 60000);
+      }
+    }
     sb("migraines", {
       method: "POST",
       headers: { Prefer: "return=minimal" },
       body: JSON.stringify({
         day: migraineForm.day, intensity: migraineForm.intensity,
         triggers: migraineForm.triggers, notes: migraineForm.notes || null,
+        start_time: startTs ? startTs.toISOString() : null,
+        end_time: endTs ? endTs.toISOString() : null,
+        duration_min: durationMin,
       }),
     }).then(function() {
-      migraineForm = { day: todayISO(), intensity: 5, triggers: [], notes: "" };
+      migraineForm = { day: todayISO(), startTime: "", endTime: "", intensity: 5, triggers: [], notes: "" };
       renderMigraine();
     }).catch(function(e) {
       saveBtn.textContent = "Erreur : " + e.message;
