@@ -573,9 +573,13 @@ let dashPeriod = "jour";
 async function renderDashboard() {
   const app = document.getElementById("app");
   app.innerHTML = '<div class="muted">Chargement du dashboard…</div>';
-  let sessions = [], wearable = [], errorMsg = "";
+  let sessions = [], wearable = [], dismissedDates = [], errorMsg = "";
   try { sessions = await listSessions(90); } catch (e) { errorMsg = e.message; }
   try { wearable = await listWearable(40); } catch (e) { errorMsg = errorMsg || e.message; }
+  try {
+    const rows = await sb("dismissed_activity_flags?select=day");
+    dismissedDates = (rows || []).map(function(r) { return r.day; });
+  } catch (e) {}
 
   const today = todayISO();
   const todaySession = sessions.find(function(s){ return s.date === today; }) || null;
@@ -656,6 +660,12 @@ async function renderDashboard() {
     if (respDiff >= 2) lines.push({ tone: "warn", text: "Fréquence respiratoire nocturne à " + todayWearable.resp_rate_avg.toFixed(1) + " resp/min, au-dessus de ta moyenne (" + respBaseline.toFixed(1) + ") — à surveiller sur plusieurs nuits (signe précoce possible de fatigue ou début de maladie)." });
   }
 
+  let lifeload = null;
+  try {
+    const rows = await sb("lifeload?day=eq." + today + "&select=state");
+    if (rows && rows[0]) lifeload = rows[0].state;
+  } catch (e) {}
+
   let score = 75, signals = 0;
   if (hrDiff != null) { signals++; if (hrDiff >= 10) score -= 30; else if (hrDiff >= 5) score -= 15; else if (hrDiff >= 3) score -= 3; else if (hrDiff <= -3) score += 5; }
   if (hrvPct != null) { signals++; if (hrvPct <= -30) score -= 25; else if (hrvPct <= -20) score -= 15; else if (hrvPct <= -10) score -= 5; else if (hrvPct >= 15) score += 10; }
@@ -663,6 +673,8 @@ async function renderDashboard() {
   if (loadRatio != null) { signals++; if (loadRatio > 1.5) score -= 20; else if (loadRatio > 1.3) score -= 10; else if (loadRatio < 0.7) score += 5; }
   if (sleepMin != null) { signals++; if (sleepMin < 300) score -= 25; else if (sleepMin < 360) score -= 15; else if (sleepMin < 420) score -= 5; else if (sleepMin > 600) score -= 5; }
   if (respDiff != null) { signals++; if (respDiff >= 3) score -= 20; else if (respDiff >= 2) score -= 10; }
+  const LIFELOAD_IMPACT = { bien: 8, stresse: -12, fatigue: -18, malade: -40, courbature: -10, neutre: 0 };
+  if (lifeload != null) { signals++; score += (LIFELOAD_IMPACT[lifeload] || 0); }
   score = Math.max(0, Math.min(100, score));
   let tier = "Données insuffisantes", tierColor = "muted", needRest = "–";
   if (signals > 0) {
@@ -686,16 +698,19 @@ async function renderDashboard() {
     const s = sessions.find(function(x){ return x.date === d; });
     const hasSession = s && Object.keys(s.entries).length > 0;
     const signal = w && ((w.intensity_avg && w.intensity_avg > 25) || (w.hr_max_activity && w.hr_max_activity > 140));
-    return { date: d, wearable: w, signal: signal && !hasSession };
+    return { date: d, wearable: w, signal: signal && !hasSession && dismissedDates.indexOf(d) === -1 };
   });
   const toComplete = journal.filter(function(j){ return j.signal; });
   if (toComplete.length) {
     html += '<div class="card amber"><div class="section-label">Séances possibles non renseignées</div>';
     html += '<div class="muted" style="margin-bottom:10px">Activité détectée par la montre sans QCM correspondant.</div>';
     toComplete.forEach(function(g) {
-      html += '<button class="history-item goto-date" data-date="' + g.date + '" style="display:flex;justify-content:space-between;align-items:center;background:var(--surfaceRaised)">';
+      html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">';
+      html += '<button class="history-item goto-date" data-date="' + g.date + '" style="flex:1;display:flex;justify-content:space-between;align-items:center;background:var(--surfaceRaised);margin-bottom:0">';
       html += '<span style="font-weight:700;font-size:12px">' + formatDateLabel(g.date) + "</span>";
       html += '<span style="color:var(--amber);font-size:11px;font-weight:800">Compléter →</span></button>';
+      html += '<button class="dismiss-flag" data-date="' + g.date + '" title="Ce n\'était pas une séance" style="background:var(--surfaceRaised);border:none;border-radius:8px;color:var(--muted);font-size:15px;padding:10px 12px;cursor:pointer">✕</button>';
+      html += "</div>";
     });
     html += "</div>";
   }
@@ -711,6 +726,19 @@ async function renderDashboard() {
     html += '<div style="text-align:center;padding:8px 0"><div style="font-size:38px;font-weight:900">' + score + '</div>';
     html += '<div style="color:var(--' + tierColor + ');font-size:13px;font-weight:800;text-transform:uppercase">' + tier + "</div></div>";
     html += '<div style="text-align:center;padding-top:10px;border-top:1px solid var(--line);font-size:12px">Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div></div>";
+
+    html += '<div class="card"><div class="section-label">Comment tu te sens aujourd\'hui ?</div>';
+    html += '<select id="lifeload-select" style="width:100%;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:7px;color:var(--chalk);font-size:16px;padding:10px 12px">';
+    const LIFELOAD_OPTIONS = [
+      ["", "— Choisir —"], ["bien", "Bien"], ["neutre", "Neutre"], ["stresse", "Stressé"],
+      ["fatigue", "Fatigué"], ["courbature", "Courbaturé"], ["malade", "Malade"],
+    ];
+    LIFELOAD_OPTIONS.forEach(function(o) {
+      html += '<option value="' + o[0] + '"' + (lifeload === o[0] || (!lifeload && o[0] === "") ? " selected" : "") + '>' + o[1] + "</option>";
+    });
+    html += "</select>";
+    if (lifeload) html += '<div class="muted" style="font-size:10px;margin-top:6px">Pris en compte dans le score Forme ci-dessus.</div>';
+    html += "</div>";
 
     // Tendance FC repos + VFC sur 14 jours
     const trend14 = []; for (let i = 13; i >= 0; i--) trend14.push(daysAgo(i));
@@ -867,6 +895,27 @@ async function renderDashboard() {
   });
   document.querySelectorAll('.goto-date').forEach(function(btn) {
     btn.addEventListener("click", function() { currentDate = btn.dataset.date; currentTab = "seance"; setTab("seance"); });
+  });
+  document.querySelectorAll('.dismiss-flag').forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      const d = btn.dataset.date;
+      btn.textContent = "…";
+      sb("dismissed_activity_flags", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({ day: d }),
+      }).then(function() { renderDashboard(); }).catch(function(e) { alert("Erreur : " + e.message); });
+    });
+  });
+  const lifeloadSelect = document.getElementById("lifeload-select");
+  if (lifeloadSelect) lifeloadSelect.addEventListener("change", function() {
+    const v = lifeloadSelect.value;
+    if (!v) return;
+    sb("lifeload", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify({ day: todayISO(), state: v }),
+    }).then(function() { renderDashboard(); }).catch(function(e) { alert("Erreur : " + e.message); });
   });
 }
 // ---------------- Rendu : Sommeil ----------------
