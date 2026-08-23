@@ -121,10 +121,13 @@ const CONTRACTIONS = [
   { id: "excentrique", label: "Excentrique" },
   { id: "mixte", label: "Mixte" },
 ];
-// Isométrique : fatigue nerveuse plus élevée (compression vasculaire soutenue).
-// Excentrique : coût métabolique immédiat plus faible mais dommage structurel/
-// courbatures plus marqués — coût de récupération plus lourd que le ressenti immédiat.
-const CONTRACTION_FACTORS = { dynamique: 1.0, isometrique: 1.15, excentrique: 1.15, mixte: 1.05 };
+// Isométrique : preuves mitigées mais mécanisme de fatigue nerveuse/vasculaire
+// réel (compression soutenue) — bonus modéré maintenu.
+// Excentrique : coût métabolique immédiat en réalité PLUS FAIBLE que le
+// concentrique (moins de ponts actine-myosine, titine élastique) — mais dommage
+// structurel et fatigue différée plus marqués (DOMS, récupération plus longue).
+// Le bonus reflète donc un coût de récupération, pas un coût de séance immédiat.
+const CONTRACTION_FACTORS = { dynamique: 1.0, isometrique: 1.15, excentrique: 1.10, mixte: 1.05 };
 const GOALS = [{ id: "force", label: "Force" }, { id: "endurance_force", label: "End. force" }, { id: "endurance", label: "Endurance" }, { id: "hybride", label: "Hybride" }];
 const GOAL_FACTORS = { force: 1.0, endurance_force: 1.15, endurance: 1.25, hybride: 1.20 };
 const DURATIONS = [{ id: "30", label: "30 min", minutes: 30 }, { id: "45", label: "45 min", minutes: 45 }, { id: "60", label: "1h", minutes: 60 }, { id: "plus", label: "Plus", minutes: null }];
