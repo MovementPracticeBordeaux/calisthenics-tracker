@@ -1061,7 +1061,7 @@ async function renderDashboard() {
     }
     if (hasStressW) {
       html += '<div class="card"><div class="section-label">Stress — 7 derniers jours</div>';
-      html += barChartHtml(dailyTrendBars("stress_avg"), {});
+      html += barChartHtml(dailyTrendBars("stress_avg"), { qualify: qualifyStress });
       html += "</div>";
     }
     if (hasSleepW) {
@@ -1071,7 +1071,7 @@ async function renderDashboard() {
         return { label: formatDateLabel(d).slice(0,2), val: Math.round((mins/60)*10)/10 };
       });
       html += '<div class="card"><div class="section-label">Sommeil (h) — 7 derniers jours</div>';
-      html += barChartHtml(sleepBarsW, { decimals: 1, unit: "h" });
+      html += barChartHtml(sleepBarsW, { decimals: 1, unit: "h", qualify: qualifySleepHours });
       html += "</div>";
     }
     if (!hasHrW && !hasHrvW && !hasStressW && !hasSleepW) {
@@ -1120,13 +1120,13 @@ async function renderDashboard() {
     }
     if (hasStress) {
       html += '<div class="card"><div class="section-label">Stress — tendance</div>';
-      html += barChartHtml(weeklyTrendBuckets("stress_avg"), { height: 56 });
+      html += barChartHtml(weeklyTrendBuckets("stress_avg"), { height: 56, qualify: qualifyStress });
       html += "</div>";
     }
     if (hasSleep) {
       const sleepHourBuckets = weeklyTrendBuckets("sleep_total_min").map(function(b){ return { label: b.label, val: Math.round((b.val/60)*10)/10 }; });
       html += '<div class="card"><div class="section-label">Sommeil (h) — tendance</div>';
-      html += barChartHtml(sleepHourBuckets, { decimals: 1, height: 56, unit: "h" });
+      html += barChartHtml(sleepHourBuckets, { decimals: 1, height: 56, unit: "h", qualify: qualifySleepHours });
       html += "</div>";
     }
     if (!hasHr && !hasHrv && !hasStress && !hasSleep) {
@@ -1309,11 +1309,11 @@ async function renderSommeil() {
   }
 
   html += '<div class="card"><div class="section-label">Durée de sommeil (h) — 14 jours</div>';
-  html += barChartHtml(sleepBars, { decimals: 1, unit: "h" });
+  html += barChartHtml(sleepBars, { decimals: 1, unit: "h", qualify: qualifySleepHours });
   html += "</div>";
 
   html += '<div class="card"><div class="section-label">Stress — tendance récente</div>';
-  html += barChartHtml(stressBars, {});
+  html += barChartHtml(stressBars, { qualify: qualifyStress });
   html += "</div>";
 
   html += '<div class="card"><div class="section-label">Nuits trackées</div>';
@@ -1427,11 +1427,18 @@ function barChartHtml(items, opts) {
   if (opts.showAvg !== false) {
     const nonZero = vals.filter(function(v) { return v > 0; });
     if (nonZero.length >= 2) {
-      html += '<div class="muted" style="text-align:center;font-size:11px;margin-top:8px">moyenne : <b style="color:var(--chalk)">' + avgOf(nonZero).toFixed(decimals) + unit + "</b></div>";
+      const avgVal = avgOf(nonZero);
+      const avgColor = opts.qualify ? "var(--" + opts.qualify(avgVal) + ")" : "var(--chalk)";
+      html += '<div class="muted" style="text-align:center;font-size:11px;margin-top:8px">moyenne : <b style="color:' + avgColor + '">' + avgVal.toFixed(decimals) + unit + "</b></div>";
     }
   }
   return html;
 }
+
+// Seuils déjà utilisés ailleurs dans l'appli (stress 0-100 Zepp ; sommeil 7-9h
+// optimal) — réutilisés ici pour rester cohérent, pas de nouveau seuil inventé.
+function qualifyStress(v) { return v >= 50 ? "red" : v >= 30 ? "amber" : "green"; }
+function qualifySleepHours(v) { return v < 6 ? "red" : (v < 7 || v > 9.5) ? "amber" : "green"; }
 
 // ---------------- Rendu : Migraine ----------------
 const TRIGGERS = [
