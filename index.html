@@ -1102,7 +1102,11 @@ async function renderMigraine() {
   if (history.length === 0) html += '<div class="muted" style="text-align:center;padding:16px 0">Aucune entrée pour l\'instant.</div>';
   history.forEach(function(m) {
     html += '<div style="padding:8px 0;border-bottom:1px solid var(--line)">';
-    html += '<div style="display:flex;justify-content:space-between;align-items:center"><span style="font-weight:700;font-size:13px">' + formatDateLabel(m.day) + '</span><span style="color:var(--rust);font-weight:800">' + (m.intensity || "–") + "/10</span></div>";
+    html += '<div style="display:flex;justify-content:space-between;align-items:center">';
+    html += '<span style="font-weight:700;font-size:13px">' + formatDateLabel(m.day) + '</span>';
+    html += '<div style="display:flex;align-items:center;gap:10px"><span style="color:var(--rust);font-weight:800">' + (m.intensity || "–") + '/10</span>';
+    html += '<button class="mig-delete" data-id="' + m.id + '" data-day="' + esc(formatDateLabel(m.day)) + '" style="background:none;border:none;color:var(--muted);font-size:16px;line-height:1;cursor:pointer;padding:2px 4px">✕</button></div>';
+    html += "</div>";
     if (m.triggers && m.triggers.length) {
       html += '<div style="margin-top:4px">';
       m.triggers.forEach(function(tid) {
@@ -1123,6 +1127,17 @@ async function renderMigraine() {
 function wireMigraineEvents() {
   const dateInput = document.getElementById("mig-date");
   if (dateInput) dateInput.addEventListener("change", function() { migraineForm.day = dateInput.value; renderMigraine(); });
+
+  document.querySelectorAll(".mig-delete").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      if (!confirm("Supprimer l'entrée du " + btn.dataset.day + " ?")) return;
+      const id = btn.dataset.id;
+      btn.textContent = "…";
+      sb("migraines?id=eq." + id, { method: "DELETE", headers: { Prefer: "return=minimal" } })
+        .then(function() { renderMigraine(); })
+        .catch(function(e) { alert("Erreur : " + e.message); });
+    });
+  });
 
   document.querySelectorAll('.rpe-ladder[data-scope="migraine"] .rpe-bar').forEach(function(btn) {
     btn.addEventListener("click", function() {
