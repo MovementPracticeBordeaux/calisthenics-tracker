@@ -597,6 +597,9 @@ async function renderDashboard() {
     dismissedDates = (rows || []).map(function(r) { return r.day; });
   } catch (e) {}
   try { workouts = await sb("workout_sessions?select=day,training_effect_aerobic,training_effect_anaerobic&order=day.desc&limit=60") || []; } catch (e) {}
+  let monthMigraines = [], monthLifeload = [];
+  try { monthMigraines = await sb("migraines?select=day,intensity&order=day.desc&limit=60") || []; } catch (e) {}
+  try { monthLifeload = await sb("lifeload?select=day,state&order=day.desc&limit=60") || []; } catch (e) {}
 
   const today = todayISO();
   const todaySession = sessions.find(function(s){ return s.date === today; }) || null;
@@ -837,14 +840,11 @@ async function renderDashboard() {
 
     if (todayWearable && todayWearable.stress_avg != null) {
       const sv = todayWearable.stress_avg;
-      const sColor = sv >= 50 ? "rust" : sv >= 30 ? "amber" : "green";
       const sLabel = sv >= 50 ? "Élevé" : sv >= 30 ? "Modéré" : "Faible";
       html += '<div class="card"><div class="section-label">Stress</div>';
-      html += '<div style="display:flex;align-items:baseline;gap:10px">';
-      html += '<span style="font-size:32px;font-weight:900;color:var(--' + sColor + ')">' + Math.round(sv) + "</span>";
-      html += '<span style="color:var(--' + sColor + ');font-size:13px;font-weight:800;text-transform:uppercase">' + sLabel + "</span></div>";
+      html += '<div style="padding:6px 0">' + circleGaugeHtml(sv, 100, { sublabel: sLabel, invert: true }) + "</div>";
       if (stressDiff != null) {
-        html += '<div class="muted" style="font-size:11px;margin-top:6px">' + (stressDiff >= 0 ? "+" : "") + stressDiff.toFixed(0) + " vs ta moyenne des 7 derniers jours</div>";
+        html += '<div class="muted" style="text-align:center;font-size:11px;margin-top:6px">' + (stressDiff >= 0 ? "+" : "") + stressDiff.toFixed(0) + " vs ta moyenne des 7 derniers jours</div>";
       }
       html += "</div>";
     }
@@ -906,6 +906,7 @@ async function renderDashboard() {
     }
   } else if (dashPeriod === "mois") {
     const month = []; for (let i = 29; i >= 0; i--) month.push(daysAgo(i));
+    const prevMonth = []; for (let i = 59; i >= 30; i--) prevMonth.push(daysAgo(i));
     const monthSessions = sessions.filter(function(s){ return month.indexOf(s.date) !== -1; });
     const buckets = [];
     for (let w = 0; w < 5; w++) {
@@ -918,11 +919,61 @@ async function renderDashboard() {
     html += "</div>";
     const achieved = monthSessions.filter(function(s){return s.achievement==="atteint";}).length;
     const withAch = monthSessions.filter(function(s){return s.achievement;}).length;
+    const monthTotalLoad = monthSessions.reduce(function(s,x){return s+(x.correctedLoad||0);},0);
+    const prevMonthSessions = sessions.filter(function(s){ return prevMonth.indexOf(s.date) !== -1; });
+    const prevMonthTotalLoad = prevMonthSessions.reduce(function(s,x){return s+(x.correctedLoad||0);},0);
     html += '<div class="card"><div class="stat-row">';
     html += statHtml("Séances", monthSessions.length);
     html += statHtml("Objectifs atteints", withAch ? achieved+"/"+withAch : "–");
     html += statHtml("Fréquence", (monthSessions.length/4.3).toFixed(1)+"/sem");
+    if (prevMonthTotalLoad > 0) {
+      const deltaPct = Math.round(((monthTotalLoad - prevMonthTotalLoad) / prevMonthTotalLoad) * 100);
+      html += statHtml("Vs mois précédent", (deltaPct >= 0 ? "+" : "") + deltaPct + "%", deltaPct >= 30 ? "amber" : null);
+    }
     html += "</div></div>";
+
+    // Sommeil du mois
+    const monthWearable = wearable.filter(function(w){ return month.indexOf(w.day) !== -1; });
+    const monthSleepVals = monthWearable.map(function(w){ return w.sleep_total_min; }).filter(function(v){ return v != null; });
+    if (monthSleepVals.length >= 3) {
+      const avgSleep = avgOf(monthSleepVals);
+      const monthDeep = avgOf(monthWearable.map(function(w){return w.sleep_deep_min;}).filter(function(v){return v!=null;}));
+      const monthRem = avgOf(monthWearable.map(function(w){return w.sleep_rem_min;}).filter(function(v){return v!=null;}));
+      html += '<div class="card"><div class="section-label">Sommeil — moyenne du mois (' + monthSleepVals.length + ' nuits)</div>';
+      html += '<div class="stat-row">';
+      html += statHtml("Durée moy.", Math.floor(avgSleep/60) + "h" + Math.round(avgSleep%60).toString().padStart(2,'0'));
+      if (monthDeep != null) html += statHtml("Profond moy.", Math.round(monthDeep) + " min");
+      if (monthRem != null) html += statHtml("Paradoxal moy.", Math.round(monthRem) + " min");
+      html += "</div></div>";
+    }
+
+    // Migraines du mois
+    const monthMig = monthMigraines.filter(function(m){ return month.indexOf(m.day) !== -1; });
+    if (monthMig.length > 0) {
+      const avgIntensity = avgOf(monthMig.map(function(m){ return m.intensity || 0; }));
+      html += '<div class="card ' + (monthMig.length >= 3 ? "amber" : "") + '"><div class="section-label">Migraines ce mois-ci</div>';
+      html += '<div class="stat-row">';
+      html += statHtml("Nombre", monthMig.length, monthMig.length >= 3 ? "amber" : null);
+      html += statHtml("Intensité moy.", avgIntensity.toFixed(1) + "/10");
+      html += "</div></div>";
+    }
+
+    // Répartition LifeLoad du mois
+    const monthLL = monthLifeload.filter(function(l){ return month.indexOf(l.day) !== -1; });
+    if (monthLL.length >= 5) {
+      const llCounts = {};
+      monthLL.forEach(function(l){ llCounts[l.state] = (llCounts[l.state]||0) + 1; });
+      const llLabels = { bien: "Bien", neutre: "Neutre", stresse: "Stressé", fatigue: "Fatigué", courbature: "Courbaturé", malade: "Malade" };
+      const llColors = { bien: "green", neutre: "steel", stresse: "amber", fatigue: "amber", courbature: "amber", malade: "rust" };
+      html += '<div class="card"><div class="section-label">Comment tu t\'es senti ce mois-ci (' + monthLL.length + ' jour(s) renseigné(s))</div>';
+      Object.keys(llCounts).sort(function(a,b){ return llCounts[b]-llCounts[a]; }).forEach(function(k) {
+        const pct = Math.round((llCounts[k]/monthLL.length)*100);
+        html += '<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>' + (llLabels[k]||k) + '</span><span class="muted">' + llCounts[k] + " jour(s)</span></div>";
+        html += '<div style="height:6px;background:var(--surfaceRaised);border-radius:3px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:var(--' + (llColors[k]||"steel") + ')"></div></div></div>';
+      });
+      html += "</div>";
+    }
+
     const themeCounts = {};
     monthSessions.forEach(function(s){ Object.keys(s.entries).forEach(function(t){ themeCounts[t]=(themeCounts[t]||0)+1; }); });
     const stale = THEMES.map(function(t) {
@@ -1031,10 +1082,23 @@ async function renderSommeil() {
 
   if (latest) {
     const h = Math.floor(latest.total / 60), m = latest.total % 60;
+    // Score composite (0-100) : pénalise durée hors 7-9h et stades hors
+    // fourchettes normales (mêmes seuils sourcés que les qualificatifs ci-dessous).
+    let sleepScore = 100;
+    const totalH = latest.total / 60;
+    if (totalH < 6) sleepScore -= 35; else if (totalH < 7) sleepScore -= 12; else if (totalH > 9.5) sleepScore -= 8;
+    const deepPctForScore = Math.round((latest.deep / latest.total) * 100);
+    const remPctForScore = Math.round((latest.rem / latest.total) * 100);
+    if (deepPctForScore < 13) sleepScore -= 15; else if (deepPctForScore > 23) sleepScore -= 5;
+    if (remPctForScore < 15) sleepScore -= 15; else if (remPctForScore < 20 || remPctForScore > 25) sleepScore -= 5;
+    sleepScore = Math.max(0, Math.min(100, sleepScore));
+    const sleepTier = sleepScore >= 70 ? "Bon" : sleepScore >= 40 ? "Correct" : "Insuffisant";
+
     html += '<div class="card"><div class="section-label">Dernière nuit trackée — ' + formatDateLabel(latest.date) + '</div>';
-    html += '<div style="text-align:center;padding:6px 0 14px"><div style="font-size:34px;font-weight:900">' + h + 'h' + (m<10?'0':'') + m + '</div>';
-    if (avgTotal != null) html += '<div class="muted" style="font-size:11px">moyenne 14j : ' + Math.floor(avgTotal/60) + 'h' + Math.round(avgTotal%60).toString().padStart(2,'0') + '</div>';
-    html += "</div>";
+    html += '<div style="padding:6px 0">' + circleGaugeHtml(sleepScore, 100, { sublabel: sleepTier }) + "</div>";
+    html += '<div style="text-align:center;padding-top:10px;border-top:1px solid var(--line);font-size:13px"><b>' + h + 'h' + (m<10?'0':'') + m + '</b>';
+    if (avgTotal != null) html += ' <span class="muted">· moyenne 14j : ' + Math.floor(avgTotal/60) + 'h' + Math.round(avgTotal%60).toString().padStart(2,'0') + '</span>';
+    html += "</div></div>";
     // Fourchettes normales croisées sur plusieurs sources (Journal of Clinical
     // Sleep Medicine, méta-analyse AASM/Lancet Resp Med, CDC) : léger 45-55%,
     // profond 13-23%, paradoxal 20-25% (repère "faible" sous 15%).
@@ -1072,7 +1136,6 @@ async function renderSommeil() {
     html += "</div>";
 
     const sleepLines = [];
-    const totalH = latest.total / 60;
     if (totalH < 6) sleepLines.push({ tone: "warn", text: "Moins de 6h cette nuit — sous le seuil généralement associé à une récupération incomplète." });
     else if (totalH >= 7 && totalH <= 9) sleepLines.push({ tone: "good", text: "Dans la fourchette recommandée de 7-9h." });
     else if (totalH > 9) sleepLines.push({ tone: "neutral", text: "Plus long que d'habitude — peut refléter un vrai besoin de récupération après une charge élevée." });
@@ -1139,7 +1202,8 @@ async function renderSommeil() {
 // libellé de jour en dessous, barre du jour le plus récent mise en valeur.
 // Anneau circulaire qui se remplit selon le score — même logique de couleur
 // (rouge/orange/vert) réutilisée partout où un score apparaît dans l'appli.
-function scoreTierColor(pct) {
+function scoreTierColor(pct, invert) {
+  if (invert) pct = 1 - pct;
   if (pct >= 0.7) return "green";
   if (pct >= 0.4) return "amber";
   return "rust";
@@ -1151,7 +1215,7 @@ function circleGaugeHtml(value, max, opts) {
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const offset = c * (1 - pct);
-  const color = opts.color || "var(--" + scoreTierColor(pct) + ")";
+  const color = opts.color || "var(--" + scoreTierColor(pct, opts.invert) + ")";
   let html = '<div style="position:relative;width:' + size + 'px;height:' + size + 'px;margin:0 auto">';
   html += '<svg width="' + size + '" height="' + size + '" style="transform:rotate(-90deg)">';
   html += '<circle cx="' + size/2 + '" cy="' + size/2 + '" r="' + r + '" fill="none" stroke="var(--surfaceRaised)" stroke-width="' + stroke + '"/>';
