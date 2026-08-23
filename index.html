@@ -115,7 +115,16 @@ const THEMES = [
   { id: "altinha", label: "Altinha", hint: "jonglage, réactivité, coordination", neural: 1.15 },
   { id: "bas", label: "Bas du corps", hint: "jambes, mobilité", neural: 1.0 }
 ];
-const MODALITES = [{ id: "libre", label: "Libre" }, { id: "charge", label: "Avec charge" }];
+const CONTRACTIONS = [
+  { id: "dynamique", label: "Dynamique" },
+  { id: "isometrique", label: "Isométrique" },
+  { id: "excentrique", label: "Excentrique" },
+  { id: "mixte", label: "Mixte" },
+];
+// Isométrique : fatigue nerveuse plus élevée (compression vasculaire soutenue).
+// Excentrique : coût métabolique immédiat plus faible mais dommage structurel/
+// courbatures plus marqués — coût de récupération plus lourd que le ressenti immédiat.
+const CONTRACTION_FACTORS = { dynamique: 1.0, isometrique: 1.15, excentrique: 1.15, mixte: 1.05 };
 const GOALS = [{ id: "force", label: "Force" }, { id: "endurance_force", label: "End. force" }, { id: "endurance", label: "Endurance" }, { id: "hybride", label: "Hybride" }];
 const GOAL_FACTORS = { force: 1.0, endurance_force: 1.15, endurance: 1.25, hybride: 1.20 };
 const DURATIONS = [{ id: "30", label: "30 min", minutes: 30 }, { id: "45", label: "45 min", minutes: 45 }, { id: "60", label: "1h", minutes: 60 }, { id: "plus", label: "Plus", minutes: null }];
@@ -186,7 +195,7 @@ function sessionFromSchedule(classes) {
   });
   const entries = {};
   classes.forEach(function(c) {
-    (DISCIPLINE_TO_THEMES[c.discipline] || []).forEach(function(id) { entries[id] = { modalite: "libre", rpe: 0 }; });
+    (DISCIPLINE_TO_THEMES[c.discipline] || []).forEach(function(id) { entries[id] = { contraction: "dynamique", rpe: 0 }; });
   });
   return { entries: entries, goal: null, duration: totalMinutes, durationPreset: deriveDurationPreset(totalMinutes),
     achievement: null, intensity: 0, discipline: classes.map(function(c){return c.discipline;}).join(" + ") };
@@ -207,7 +216,10 @@ function computeLoad(s) {
     const ty = e[1].type || s.goal;
     return sum + (GOAL_FACTORS[ty] || 1) * e[1].rpe;
   }, 0) / totalRpe;
-  const correctedLoad = sessionLoad !== null ? Math.round(sessionLoad * neuralFactor * typeFactor) : null;
+  const contractionFactor = active.reduce(function(sum,e){
+    return sum + (CONTRACTION_FACTORS[e[1].contraction] || 1) * e[1].rpe;
+  }, 0) / totalRpe;
+  const correctedLoad = sessionLoad !== null ? Math.round(sessionLoad * neuralFactor * typeFactor * contractionFactor) : null;
   return { sessionLoad: sessionLoad, correctedLoad: correctedLoad };
 }
 
@@ -420,7 +432,7 @@ function drawSeance() {
     Object.keys(h.entries).forEach(function(tid) {
       const th = THEMES.find(function(t) { return t.id === tid; });
       const d = h.entries[tid];
-      html += '<span class="badge">' + (th ? th.label : tid) + " · " + (d.modalite === "charge" ? "charge" : "libre") + " · RPE " + (d.rpe || "–") + "</span>";
+      html += '<span class="badge">' + (th ? th.label : tid) + " · " + (CONTRACTIONS.find(function(c){return c.id===d.contraction;})||{label:"dynamique"}).label + " · RPE " + (d.rpe || "–") + "</span>";
     });
     if (ach) html += '<span class="badge" style="background:var(--' + ach.color + ');color:var(--bg);font-weight:700">' + ach.label + "</span>";
     html += "</button>";
@@ -433,7 +445,7 @@ function drawSeance() {
 }
 
 function pillHtml(opt, active, group) {
-  const colorClass = opt.color ? " " + opt.color : (group === "duration" || group === "modalite" ? "" : " rust");
+  const colorClass = opt.color ? " " + opt.color : (group === "duration" || group === "contraction" ? "" : " rust");
   return '<button class="pill' + (active ? " active" + colorClass : "") + '" data-group="' + group + '" data-id="' + opt.id + '">' + esc(opt.label) + "</button>";
 }
 function rpeLadderHtml(scope, value) {
@@ -461,8 +473,8 @@ function themeCardHtml(theme, data) {
   html += '<div class="checkbox' + (on ? " on" : "") + '">' + (on ? "✓" : "") + "</div></button>";
   if (on) {
     html += '<div class="theme-body">';
-    html += '<div class="pill-row" style="margin-bottom:14px" data-theme-group="modalite" data-theme="' + theme.id + '">';
-    MODALITES.forEach(function(m) { html += '<button class="pill' + (data.modalite === m.id ? " active" : "") + '" data-id="' + m.id + '">' + m.label + "</button>"; });
+    html += '<div class="pill-row compact" style="margin-bottom:14px" data-theme-group="contraction" data-theme="' + theme.id + '">';
+    CONTRACTIONS.forEach(function(c) { html += '<button class="pill' + (data.contraction === c.id ? " active" : "") + '" data-id="' + c.id + '">' + c.label + "</button>"; });
     html += "</div>";
     html += '<div class="section-label">Type d\'effort</div><div class="pill-row compact" style="margin-bottom:14px" data-theme-group="type" data-theme="' + theme.id + '">';
     GOALS.forEach(function(g) { html += '<button class="pill' + (data.type === g.id ? " active" : "") + '" data-id="' + g.id + '">' + g.label + "</button>"; });
@@ -495,7 +507,7 @@ function wireSeanceEvents() {
 
   document.querySelectorAll(".apply-schedule-theme").forEach(function(btn) {
     btn.addEventListener("click", function() {
-      btn.dataset.themes.split(",").forEach(function(id) { if (!session.entries[id]) session.entries[id] = { modalite: "libre", rpe: 0 }; });
+      btn.dataset.themes.split(",").forEach(function(id) { if (!session.entries[id]) session.entries[id] = { contraction: "dynamique", rpe: 0 }; });
       update();
     });
   });
@@ -532,13 +544,13 @@ function wireSeanceEvents() {
   document.querySelectorAll('[data-action="toggle-theme"]').forEach(function(btn) {
     btn.addEventListener("click", function() {
       const id = btn.dataset.theme;
-      if (session.entries[id]) delete session.entries[id]; else session.entries[id] = { modalite: "libre", rpe: 0 };
+      if (session.entries[id]) delete session.entries[id]; else session.entries[id] = { contraction: "dynamique", rpe: 0 };
       update();
     });
   });
-  document.querySelectorAll('[data-theme-group="modalite"]').forEach(function(row) {
+  document.querySelectorAll('[data-theme-group="contraction"]').forEach(function(row) {
     row.querySelectorAll(".pill").forEach(function(btn) {
-      btn.addEventListener("click", function() { session.entries[row.dataset.theme].modalite = btn.dataset.id; update(); });
+      btn.addEventListener("click", function() { session.entries[row.dataset.theme].contraction = btn.dataset.id; update(); });
     });
   });
   document.querySelectorAll('[data-theme-group="type"]').forEach(function(row) {
