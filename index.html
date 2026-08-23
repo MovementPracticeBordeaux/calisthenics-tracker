@@ -992,7 +992,16 @@ async function renderSommeil() {
       html += '<div style="height:8px;background:var(--surfaceRaised);border-radius:4px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:var(--' + s[2] + ')"></div></div>';
       html += '<div style="text-align:right;font-size:10px;color:var(--' + q.color + ');font-weight:700;margin-top:2px">' + q.label + "</div></div>";
     });
-    if (latest.awake != null) html += '<div class="muted" style="font-size:11px;margin-top:6px">Réveils détectés : ' + latest.awake + "</div>";
+    if (latest.awake != null) {
+      const otherAwakes = withSleep.filter(function(n) { return n.date !== latest.date && n.awake != null; }).map(function(n) { return n.awake; });
+      const awakeBaseline = otherAwakes.length ? avgOf(otherAwakes) : null;
+      html += '<div class="muted" style="font-size:11px;margin-top:6px">Réveils détectés : ' + latest.awake;
+      if (awakeBaseline != null) html += ' <span class="muted">(moyenne récente : ' + awakeBaseline.toFixed(0) + ')</span>';
+      html += "</div>";
+      if (awakeBaseline != null && latest.awake >= awakeBaseline * 1.8 && latest.awake >= 10) {
+        html += '<div style="font-size:11px;color:var(--amber);margin-top:4px">Nettement plus que d\'habitude — souvent lié à une nuit agitée (douleur, stress, chaleur, alcool…). Sous cette forme de capteur (accéléromètre), ce chiffre capte tout mouvement, pas seulement de vrais réveils conscients — à lire en tendance, pas en valeur isolée.</div>';
+      }
+    }
     html += '<div class="muted" style="font-size:10px;margin-top:6px">Fourchettes générales pour adultes en bonne santé — varient avec l\'âge et la nuit précédente, à lire en tendance plutôt qu\'isolément.</div>';
     html += "</div>";
 
@@ -1055,7 +1064,7 @@ async function renderSommeil() {
   html += "</div>";
 
   html += '<div class="card steel"><div class="section-label">À savoir</div>';
-  html += '<div style="font-size:11px;color:var(--chalkDim);line-height:1.5">Les stades (léger/profond/paradoxal) viennent d\'un décodage du format propriétaire de ta montre, validé contre les valeurs affichées par Zepp — fiable mais non officiellement documenté. Une nuit isolée à durée très courte (ex. sieste) peut apparaître si le capteur a mal segmenté la session.</div></div>';
+  html += '<div style="font-size:11px;color:var(--chalkDim);line-height:1.5">Les stades (léger/profond/paradoxal) viennent d\'un décodage du format propriétaire de ta montre, validé contre les valeurs affichées par Zepp — fiable mais non officiellement documenté. Une nuit isolée à durée très courte (ex. sieste) peut apparaître si le capteur a mal segmenté la session.<br><br>Sur les réveils : environ 5 transitions naturelles entre cycles de sommeil sont normales chez l\'adulte sain (dont on ne se souvient généralement pas). Un accéléromètre comme ta montre capte cependant beaucoup plus de micro-mouvements que de vrais réveils conscients — le chiffre brut compte moins que sa tendance dans le temps.</div></div>';
 
   app.innerHTML = html;
 }
