@@ -111,7 +111,7 @@ const THEMES = [
   { id: "complet", label: "Mouvement complet", hint: "muscle-up, skin the cat", neural: 1.2 },
   { id: "handstand", label: "Handstand", hint: "ATR, appui tendu, presses", neural: 1.4 },
   { id: "arm_balance", label: "Arm Balance", hint: "crow, planche, figures d'appui", neural: 1.35 },
-  { id: "locomotion", label: "Locomotion", hint: "déplacements au sol, quadrupédie", neural: 1.15 },
+  { id: "locomotion", label: "Locomotion", hint: "quadrupédie, mains, arm balance, sol complexe", neural: 1.30 },
   { id: "altinha", label: "Altinha", hint: "jonglage, réactivité, coordination", neural: 1.15 },
   { id: "bas", label: "Bas du corps", hint: "jambes, mobilité", neural: 1.0 }
 ];
@@ -852,7 +852,9 @@ async function renderDashboard() {
     const recs = [];
     const total = monthSessions.length;
     if (total >= 3) {
-      const pull = themeCounts.tirage||0, push = themeCounts.poussee||0;
+      // Un mouvement complet (muscle-up, skin the cat...) sollicite à la fois
+      // le tirage et la poussée — il compte donc dans les deux pour l'équilibre.
+      const pull = (themeCounts.tirage||0) + (themeCounts.complet||0), push = (themeCounts.poussee||0) + (themeCounts.complet||0);
       if (pull+push >= 4) {
         if (push>0 && pull/push<=0.55) recs.push({tone:"warn",text:"Poussée bien plus travaillée que Tirage ("+push+" vs "+pull+")."});
         else if (pull>0 && push/pull<=0.55) recs.push({tone:"warn",text:"Tirage bien plus travaillé que Poussée ("+pull+" vs "+push+")."});
