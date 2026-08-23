@@ -116,8 +116,8 @@ const THEMES = [
   { id: "bas", label: "Bas du corps", hint: "jambes, mobilité", neural: 1.0 }
 ];
 const MODALITES = [{ id: "libre", label: "Libre" }, { id: "charge", label: "Avec charge" }];
-const GOALS = [{ id: "force", label: "Force" }, { id: "endurance_force", label: "End. force" }, { id: "endurance", label: "Endurance" }];
-const GOAL_FACTORS = { force: 1.0, endurance_force: 1.15, endurance: 1.25 };
+const GOALS = [{ id: "force", label: "Force" }, { id: "endurance_force", label: "End. force" }, { id: "endurance", label: "Endurance" }, { id: "hybride", label: "Hybride" }];
+const GOAL_FACTORS = { force: 1.0, endurance_force: 1.15, endurance: 1.25, hybride: 1.20 };
 const DURATIONS = [{ id: "30", label: "30 min", minutes: 30 }, { id: "45", label: "45 min", minutes: 45 }, { id: "60", label: "1h", minutes: 60 }, { id: "plus", label: "Plus", minutes: null }];
 const ACHIEVEMENTS = [{ id: "atteint", label: "Atteint", color: "green" }, { id: "moyen", label: "Moyennement", color: "amber" }, { id: "pas", label: "Pas atteint", color: "rust" }];
 const WARMUP_MINUTES = 22;
@@ -205,11 +205,7 @@ function computeLoad(s) {
   }, 0) / totalRpe;
   const typeFactor = active.reduce(function(sum,e){
     const ty = e[1].type || s.goal;
-    // La locomotion mêle intrinsèquement renforcement, mobilité et endurance de
-    // force — même taguée "Force", elle ne descend jamais sous ce plancher.
-    const base = GOAL_FACTORS[ty] || 1;
-    const factor = e[0] === "locomotion" ? Math.max(base, GOAL_FACTORS.endurance_force) : base;
-    return sum + factor * e[1].rpe;
+    return sum + (GOAL_FACTORS[ty] || 1) * e[1].rpe;
   }, 0) / totalRpe;
   const correctedLoad = sessionLoad !== null ? Math.round(sessionLoad * neuralFactor * typeFactor) : null;
   return { sessionLoad: sessionLoad, correctedLoad: correctedLoad };
@@ -383,7 +379,7 @@ function drawSeance() {
   html += '<div class="card">';
   html += '<div class="section-label">Discipline</div>';
   html += '<input type="text" id="discipline-input" placeholder="ex. Calisthenics, session perso…" value="' + esc(session.discipline || "") + '" style="margin-bottom:16px" />';
-  html += '<div class="section-label">Objectif de séance</div><div class="pill-row" id="goal-row" style="margin-bottom:16px">';
+  html += '<div class="section-label">Objectif de séance</div><div class="pill-row compact" id="goal-row" style="margin-bottom:16px">';
   GOALS.forEach(function(g) { html += pillHtml(g, session.goal === g.id, "goal"); });
   html += "</div>";
   html += '<div class="section-label">Durée' + (seance.workout ? ' <span class="muted" style="text-transform:none">(détectée par la montre, modifiable)</span>' : "") + '</div><div class="pill-row" id="duration-row" style="margin-bottom:' + (session.durationPreset === "plus" ? 10 : 16) + 'px">';
