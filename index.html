@@ -9,7 +9,7 @@
     --bg: #0b0b0d; --surface: #1a1a1c; --surfaceRaised: #242426;
     --chalk: #F5F3EF; --chalkDim: #B8B2A6; --rust: #F2711C; --rustDim: #9a4a10;
     --pink: #EC4899; --purple: #A855F7;
-    --steel: #5B7B8C; --green: #5C7A4A; --amber: #B08838; --muted: #9a9488; --line: #38352F;
+    --steel: #8b6fb0; --green: #5C7A4A; --amber: #B08838; --muted: #9a9488; --line: #38352F;
     --gradient: linear-gradient(90deg, var(--rust), var(--pink), var(--purple));
   }
   * { box-sizing: border-box; }
@@ -831,10 +831,10 @@ async function renderDashboard() {
     const hasHrData = hrSeries.some(function(s) { return s.val > 0; });
     if (hasHrData) {
       html += '<div class="card"><div class="section-label">FC repos (bpm) — 14 jours</div>';
-      html += barChartHtml(hrSeries, { color: "steel" });
+      html += barChartHtml(hrSeries, { unit: " bpm" });
       html += "</div>";
       html += '<div class="card"><div class="section-label">VFC (ms) — 14 jours</div>';
-      html += barChartHtml(hrvSeries, { color: "green" });
+      html += barChartHtml(hrvSeries, { unit: " ms" });
       html += "</div>";
     }
 
@@ -865,7 +865,7 @@ async function renderDashboard() {
       return { label: formatDateLabel(d).slice(0,2), val: (s && s.correctedLoad) || 0 };
     });
     html += '<div class="card"><div class="section-label">Charge d\'entraînement — 7 derniers jours</div>';
-    html += barChartHtml(bars, { color: "steel" });
+    html += barChartHtml(bars, {});
     html += '<div class="muted" style="font-size:10px;margin-top:6px">Durée × intensité, ajustées par la complexité du mouvement, le type d\'effort et le type de contraction — reflète l\'exigence réelle de la séance, pas juste sa durée.</div>';
     html += "</div>";
     const totalLoad = last7Sessions.reduce(function(s,x){return s+(x.correctedLoad||0);},0);
@@ -937,12 +937,12 @@ async function renderDashboard() {
     const hasSleep = monthWearableOverview.some(function(w){return w.sleep_total_min!=null;});
     if (hasHr) {
       html += '<div class="card"><div class="section-label">FC repos — tendance</div>';
-      html += barChartHtml(weeklyTrendBuckets("hr_resting"), { height: 56 });
+      html += barChartHtml(weeklyTrendBuckets("hr_resting"), { height: 56, unit: " bpm" });
       html += "</div>";
     }
     if (hasHrv) {
       html += '<div class="card"><div class="section-label">VFC — tendance</div>';
-      html += barChartHtml(weeklyTrendBuckets("hrv_avg"), { height: 56 });
+      html += barChartHtml(weeklyTrendBuckets("hrv_avg"), { height: 56, unit: " ms" });
       html += "</div>";
     }
     if (hasStress) {
@@ -953,7 +953,7 @@ async function renderDashboard() {
     if (hasSleep) {
       const sleepHourBuckets = weeklyTrendBuckets("sleep_total_min").map(function(b){ return { label: b.label, val: Math.round((b.val/60)*10)/10 }; });
       html += '<div class="card"><div class="section-label">Sommeil (h) — tendance</div>';
-      html += barChartHtml(sleepHourBuckets, { decimals: 1, height: 56 });
+      html += barChartHtml(sleepHourBuckets, { decimals: 1, height: 56, unit: "h" });
       html += "</div>";
     }
 
@@ -1193,11 +1193,11 @@ async function renderSommeil() {
   }
 
   html += '<div class="card"><div class="section-label">Durée de sommeil (h) — 14 jours</div>';
-  html += barChartHtml(sleepBars, { color: "steel", decimals: 1 });
+  html += barChartHtml(sleepBars, { decimals: 1, unit: "h" });
   html += "</div>";
 
   html += '<div class="card"><div class="section-label">Stress — tendance récente</div>';
-  html += barChartHtml(stressBars, { color: "amber" });
+  html += barChartHtml(stressBars, {});
   html += "</div>";
 
   html += '<div class="card"><div class="section-label">Nuits trackées</div>';
@@ -1256,6 +1256,7 @@ function barChartHtml(items, opts) {
   opts = opts || {};
   const decimals = opts.decimals || 0;
   const height = opts.height || 64;
+  const unit = opts.unit || "";
   const vals = items.map(function(i) { return i.val; });
   const max = Math.max.apply(null, vals.concat([1]));
   let html = '<div style="display:flex;align-items:flex-end;gap:6px">';
@@ -1270,7 +1271,14 @@ function barChartHtml(items, opts) {
     html += '<span style="font-size:9px;color:var(--muted)">' + (item.label || "") + "</span>";
     html += "</div>";
   });
-  return html + "</div>";
+  html += "</div>";
+  if (opts.showAvg !== false) {
+    const nonZero = vals.filter(function(v) { return v > 0; });
+    if (nonZero.length >= 2) {
+      html += '<div class="muted" style="text-align:center;font-size:11px;margin-top:8px">moyenne : <b style="color:var(--chalk)">' + avgOf(nonZero).toFixed(decimals) + unit + "</b></div>";
+    }
+  }
+  return html;
 }
 
 // ---------------- Rendu : Migraine ----------------
@@ -1554,7 +1562,7 @@ async function renderVie() {
   html += "</div>";
 
   html += '<div class="card"><div class="section-label">Tendance — 4 dernières semaines</div>';
-  html += barChartHtml(weekBars, { color: "steel", height: 56 });
+  html += barChartHtml(weekBars, { height: 56 });
   html += "</div>";
 
   html += '<div class="card steel"><div class="section-label">À savoir</div>';
