@@ -78,6 +78,7 @@
     <button class="tab" data-tab="dashboard">Dashboard</button>
     <button class="tab" data-tab="sommeil">Sommeil</button>
     <button class="tab" data-tab="migraine">Migraine</button>
+    <button class="tab" data-tab="vie">Vie</button>
   </div>
   <div id="app"></div>
 </div>
@@ -855,20 +856,6 @@ async function renderDashboard() {
     });
     html += '<div class="muted" style="font-size:10px;margin-top:4px">Interprétation indicative — ne remplace pas ton ressenti ni un avis médical. Les fluctuations de VFC de 10-20% d\'un jour à l\'autre sont normales ; seuls les écarts plus marqués ou les tendances sur plusieurs jours sont vraiment significatifs.</div></div>';
     if (todayWearable) html += wearableCardHtml(Object.assign({}, todayWearable, { day: today }));
-
-    // PAI (Personal Activity Intelligence) — indicateur hebdomadaire distinct de
-    // la Forme du jour : validé par l'étude HUNT (Norvège, >1M personnes-années),
-    // répliqué aux USA et en Chine. ≥100/semaine associé à -17 à -36% de risque
-    // de mortalité cardiovasculaire ; pas de bénéfice supplémentaire au-delà.
-    const pai7 = wearable.filter(function(w){ return w.day >= daysAgo(6) && (w.pai_low != null || w.pai_moderate != null || w.pai_high != null); });
-    if (pai7.length > 0) {
-      const weeklyPai = pai7.reduce(function(s, w){ return s + (w.pai_low||0) + (w.pai_moderate||0) + (w.pai_high||0); }, 0);
-      const paiColor = weeklyPai >= 100 ? "green" : weeklyPai >= 50 ? "amber" : "rust";
-      html += '<div class="card ' + (weeklyPai < 100 ? "amber" : "") + '"><div class="section-label">PAI — 7 derniers jours</div>';
-      html += '<div style="display:flex;align-items:baseline;gap:10px"><span style="font-size:32px;font-weight:900;color:var(--' + paiColor + ')">' + Math.round(weeklyPai) + '</span><span class="muted" style="font-size:12px">/ 100 cible</span></div>';
-      html += '<div style="height:8px;background:var(--surfaceRaised);border-radius:4px;overflow:hidden;margin-top:8px"><div style="width:' + Math.min(100, weeklyPai) + '%;height:100%;background:var(--' + paiColor + ')"></div></div>';
-      html += '<div class="muted" style="font-size:10px;margin-top:8px">Atteindre 100 PAI/semaine associé à un risque de mortalité cardiovasculaire réduit de 17-36% (étude HUNT, Norvège, répliquée aux USA et en Chine) — indicateur de santé long terme, distinct de ta récupération du jour.</div></div>';
-    }
   } else if (dashPeriod === "semaine") {
     const last7 = []; for (let i = 6; i >= 0; i--) last7.push(daysAgo(i));
     const prev7 = []; for (let i = 13; i >= 7; i--) prev7.push(daysAgo(i));
@@ -1411,6 +1398,52 @@ function wireMigraineEvents() {
   });
 }
 
+// ---------------- Rendu : Vie (indicateurs de santé long terme) ----------------
+async function renderVie() {
+  const app = document.getElementById("app");
+  app.innerHTML = '<div class="muted">Chargement…</div>';
+  let wearable = [], errorMsg = "";
+  try { wearable = await listWearable(60); } catch (e) { errorMsg = e.message; }
+
+  let html = "";
+  if (errorMsg) html += '<div class="error-banner"><b>Erreur :</b> ' + esc(errorMsg) + "</div>";
+  html += '<h1 style="margin-bottom:4px">Vie</h1>';
+  html += '<div class="muted" style="margin-bottom:18px">Indicateurs de santé à lire sur la durée, pas au jour le jour</div>';
+
+  // PAI (Personal Activity Intelligence) — validé par l'étude HUNT (Norvège,
+  // >1M personnes-années), répliqué aux USA (Aerobics Center Longitudinal
+  // Study) et en Chine (China Kadoorie Biobank, 443 792 participants).
+  // ≥100/semaine associé à -17 à -36% de risque de mortalité cardiovasculaire,
+  // sans bénéfice supplémentaire au-delà de 100 — donc pas un objectif à
+  // maximiser indéfiniment, juste à atteindre régulièrement.
+  const last28 = []; for (let i = 27; i >= 0; i--) last28.push(daysAgo(i));
+  const weeks = [[0,7],[7,14],[14,21],[21,28]];
+  const weekBars = weeks.map(function(w, idx) {
+    const days = last28.slice(w[0], w[1]);
+    const wData = wearable.filter(function(x){ return days.indexOf(x.day) !== -1; });
+    const total = wData.reduce(function(s, x){ return s + (x.pai_low||0) + (x.pai_moderate||0) + (x.pai_high||0); }, 0);
+    return { label: idx === 0 ? "cette sem." : "-" + idx + "sem", val: Math.round(total) };
+  }).reverse();
+
+  const pai7 = wearable.filter(function(w){ return w.day >= daysAgo(6); });
+  const weeklyPai = pai7.reduce(function(s, w){ return s + (w.pai_low||0) + (w.pai_moderate||0) + (w.pai_high||0); }, 0);
+  const paiColor = weeklyPai >= 100 ? "green" : weeklyPai >= 50 ? "amber" : "rust";
+
+  html += '<div class="card ' + (weeklyPai < 100 ? "amber" : "") + '"><div class="section-label">PAI — cette semaine</div>';
+  html += '<div style="display:flex;align-items:baseline;gap:10px"><span style="font-size:38px;font-weight:900;color:var(--' + paiColor + ')">' + Math.round(weeklyPai) + '</span><span class="muted" style="font-size:13px">/ 100 cible</span></div>';
+  html += '<div style="height:10px;background:var(--surfaceRaised);border-radius:5px;overflow:hidden;margin-top:10px"><div style="width:' + Math.min(100, weeklyPai) + '%;height:100%;background:var(--' + paiColor + ')"></div></div>';
+  html += "</div>";
+
+  html += '<div class="card"><div class="section-label">Tendance — 4 dernières semaines</div>';
+  html += barChartHtml(weekBars, { color: "steel", height: 56 });
+  html += "</div>";
+
+  html += '<div class="card steel"><div class="section-label">À savoir</div>';
+  html += '<div style="font-size:12px;color:var(--chalkDim);line-height:1.6">Le PAI traduit ta fréquence cardiaque pendant l\'activité en un score personnalisé sur 7 jours glissants. Atteindre <b style="color:var(--chalk)">100 PAI/semaine</b> est associé à 17-36% de réduction du risque de mortalité cardiovasculaire (étude HUNT, Norvège — plus d\'1 million de personnes-années de suivi), résultat répliqué indépendamment aux États-Unis et en Chine. Aucun bénéfice supplémentaire mesuré au-delà de 100 — l\'objectif est de l\'atteindre régulièrement, pas de le maximiser.<br><br>Contrairement au score Forme (qui reflète ta récupération du jour), le PAI est un indicateur de santé cardiovasculaire de long terme — un score bas ne veut pas dire "repose-toi", mais plutôt "bouge un peu plus cette semaine".</div></div>';
+
+  app.innerHTML = html;
+}
+
 function statHtml(label, value, color) {
   return '<div class="stat"><div class="stat-label">' + label + '</div><div class="stat-value"' + (color ? ' style="color:var(--'+color+')"' : '') + '>' + value + "</div></div>";
 }
@@ -1422,7 +1455,8 @@ function setTab(tab) {
   if (tab === "seance") loadSeance();
   else if (tab === "dashboard") renderDashboard();
   else if (tab === "sommeil") renderSommeil();
-  else renderMigraine();
+  else if (tab === "migraine") renderMigraine();
+  else renderVie();
 }
 document.querySelectorAll(".tab[data-tab]").forEach(function(t) {
   t.addEventListener("click", function() { setTab(t.dataset.tab); });
