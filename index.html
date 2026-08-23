@@ -357,6 +357,103 @@ function workoutCardHtml(w) {
   return html;
 }
 
+let seanceSubTab = "jour";
+let seanceTendancesCache = null;
+let seanceTendancesLoading = false;
+
+async function ensureSeanceTendances() {
+  if (seanceTendancesCache || seanceTendancesLoading) return;
+  seanceTendancesLoading = true;
+  try { seanceTendancesCache = await listSessions(90); }
+  catch (e) { seanceTendancesCache = []; }
+  seanceTendancesLoading = false;
+  drawSeance();
+}
+
+function renderSeanceTendancesHtml() {
+  if (seanceTendancesLoading || !seanceTendancesCache) return '<div class="muted" style="text-align:center;padding:20px 0">Chargement…</div>';
+  const allSessions = seanceTendancesCache;
+  const today = todayISO();
+  const month = []; for (let i = 29; i >= 0; i--) month.push(daysAgo(i));
+  const prevMonth = []; for (let i = 59; i >= 30; i--) prevMonth.push(daysAgo(i));
+  const monthSessions = allSessions.filter(function(s){ return month.indexOf(s.date) !== -1; });
+  const prevMonthSessions = allSessions.filter(function(s){ return prevMonth.indexOf(s.date) !== -1; });
+
+  let html = "";
+  const buckets = [];
+  for (let w = 0; w < 5; w++) {
+    const bd = month.slice(w*6, w*6+6); if (!bd.length) continue;
+    const bs = monthSessions.filter(function(s){ return bd.indexOf(s.date) !== -1; });
+    buckets.push({ label: bd[0].slice(8,10)+"-"+bd[bd.length-1].slice(8,10), val: bs.reduce(function(s,x){return s+(x.correctedLoad||0);},0) });
+  }
+  html += '<div class="card"><div class="section-label">Charge d\'entraînement — tendance</div>';
+  html += barChartHtml(buckets, { height: 72 });
+  html += '<div class="muted" style="font-size:10px;margin-top:6px">Durée × intensité, ajustées par la complexité du mouvement, le type d\'effort et le type de contraction.</div>';
+  html += "</div>";
+
+  const achieved = monthSessions.filter(function(s){return s.achievement==="atteint";}).length;
+  const withAch = monthSessions.filter(function(s){return s.achievement;}).length;
+  const monthTotalLoad = monthSessions.reduce(function(s,x){return s+(x.correctedLoad||0);},0);
+  const prevMonthTotalLoad = prevMonthSessions.reduce(function(s,x){return s+(x.correctedLoad||0);},0);
+  html += '<div class="card"><div class="stat-row">';
+  html += statHtml("Séances", monthSessions.length);
+  html += statHtml("Objectifs atteints", withAch ? achieved+"/"+withAch : "–");
+  html += statHtml("Fréquence", (monthSessions.length/4.3).toFixed(1)+"/sem");
+  if (prevMonthTotalLoad > 0) {
+    const deltaPct = Math.round(((monthTotalLoad - prevMonthTotalLoad) / prevMonthTotalLoad) * 100);
+    html += statHtml("Vs mois précédent", (deltaPct >= 0 ? "+" : "") + deltaPct + "%", deltaPct >= 30 ? "amber" : null);
+  }
+  html += "</div></div>";
+
+  const themeCounts = {};
+  monthSessions.forEach(function(s){ Object.keys(s.entries).forEach(function(t){ themeCounts[t]=(themeCounts[t]||0)+1; }); });
+  const stale = THEMES.map(function(t) {
+    const last = allSessions.filter(function(s){ return s.entries[t.id]; }).sort(function(a,b){return a.date<b.date?1:-1;})[0];
+    const days = last ? Math.round((new Date(today)-new Date(last.date))/86400000) : null;
+    return { theme: t, days: days };
+  }).filter(function(x){ return x.days === null || x.days >= 10; });
+  const recs = [];
+  const total = monthSessions.length;
+  if (total >= 3) {
+    const pull = (themeCounts.tirage||0) + (themeCounts.complet||0), push = (themeCounts.poussee||0) + (themeCounts.complet||0);
+    if (pull+push >= 4) {
+      if (push>0 && pull/push<=0.55) recs.push({tone:"warn",text:"Poussée bien plus travaillée que Tirage ("+push+" vs "+pull+")."});
+      else if (pull>0 && push/pull<=0.55) recs.push({tone:"warn",text:"Tirage bien plus travaillé que Poussée ("+pull+" vs "+push+")."});
+    }
+    THEMES.forEach(function(t){ const c=themeCounts[t.id]||0; if (total>=4 && c/total>0.55) recs.push({tone:"neutral",text:t.label+" domine largement tes séances ("+c+"/"+total+")."}); });
+  }
+  if (recs.length || stale.length) {
+    html += '<div class="card amber"><div class="section-label">Recommandations</div>';
+    recs.forEach(function(r){ html += '<div style="font-size:12px;color:var(--chalkDim);margin-bottom:8px">' + esc(r.text) + "</div>"; });
+    stale.forEach(function(s) { html += '<div style="font-size:12px;color:var(--chalkDim);margin-bottom:8px"><span style="color:var(--amber);font-weight:700">'+s.theme.label+'</span> — '+(s.days===null?"jamais travaillé":"pas travaillé depuis "+s.days+"j")+"</div>"; });
+    html += "</div>";
+  }
+
+  const discStats = {};
+  allSessions.filter(function(s){ return s.discipline && s.correctedLoad != null; }).forEach(function(s) {
+    if (!discStats[s.discipline]) discStats[s.discipline] = [];
+    discStats[s.discipline].push(s.correctedLoad);
+  });
+  const discRows = Object.keys(discStats).map(function(name) {
+    const loads = discStats[name];
+    return { name: name, count: loads.length, avg: Math.round(avgOf(loads)) };
+  }).sort(function(a,b){ return b.avg - a.avg; });
+  if (discRows.length) {
+    html += '<div class="card"><div class="section-label">Charge moyenne par discipline</div>';
+    const maxDisc = discRows[0].avg || 1;
+    discRows.forEach(function(r, i) {
+      const pct = Math.max(6, (r.avg/maxDisc)*100);
+      html += '<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-weight:700;font-size:13px">' + esc(r.name) + '</span><span style="font-size:12px;color:var(--chalkDim)">' + r.avg + ' <span class="muted">· ' + r.count + " séance(s)</span></span></div>";
+      html += '<div style="height:8px;background:var(--surfaceRaised);border-radius:4px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + (i===0?"var(--gradient)":"var(--steel)") + ';border-radius:4px"></div></div></div>';
+    });
+    html += "</div>";
+  }
+  if (!buckets.some(function(b){return b.val>0;}) && discRows.length === 0) {
+    html = '<div class="card"><div class="muted" style="text-align:center;padding:16px 0">Pas encore assez de séances enregistrées pour dégager des tendances.</div></div>';
+  }
+  return html;
+}
+
 // ---------------- Rendu : Séance (synchrone, ne touche jamais le réseau) ----------------
 function drawSeance() {
   const app = document.getElementById("app");
@@ -375,6 +472,19 @@ function drawSeance() {
   html += "<h1>" + (currentDate === todayISO() ? "Séance du jour" : "Modifier la séance") + "</h1>";
   html += '<input type="date" id="date-picker" value="' + currentDate + '" max="' + todayISO() + '" style="width:auto;font-size:16px" />';
   html += "</div></div>";
+
+  html += '<div class="pill-row compact" id="seance-subtab-row" style="margin-bottom:16px">';
+  html += '<button class="pill' + (seanceSubTab === "jour" ? " active" : "") + '" data-subtab="jour">Log du jour</button>';
+  html += '<button class="pill' + (seanceSubTab === "tendances" ? " active" : "") + '" data-subtab="tendances">Tendances</button>';
+  html += "</div>";
+
+  if (seanceSubTab === "tendances") {
+    html += renderSeanceTendancesHtml();
+    app.innerHTML = html;
+    wireSeanceEvents();
+    window.scrollTo(0, scrollY);
+    return;
+  }
 
   if (classes.length) {
     html += '<div class="card steel"><div class="section-label">Cours prévu ce jour</div>';
@@ -509,6 +619,15 @@ function saveInBackground() {
 function wireSeanceEvents() {
   const session = seance.session;
   const update = function() { drawSeance(); saveInBackground(); };
+
+  document.querySelectorAll('#seance-subtab-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      seanceSubTab = btn.dataset.subtab;
+      if (seanceSubTab === "tendances") { drawSeance(); ensureSeanceTendances(); }
+      else { drawSeance(); }
+    });
+  });
+  if (seanceSubTab === "tendances") return;
 
   const dp = document.getElementById("date-picker");
   if (dp) dp.addEventListener("change", function() { if (dp.value) { currentDate = dp.value; loadSeance(); } });
@@ -817,6 +936,17 @@ async function renderDashboard() {
     html += '<div style="padding:10px 0">' + circleGaugeHtml(score, 100, { sublabel: tier }) + "</div>";
     html += '<div style="text-align:center;padding-top:10px;border-top:1px solid var(--line);font-size:12px">Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div></div>";
 
+    if (todayWearable && todayWearable.stress_avg != null) {
+      const sv = todayWearable.stress_avg;
+      const sLabel = sv >= 50 ? "Élevé" : sv >= 30 ? "Modéré" : "Faible";
+      html += '<div class="card"><div class="section-label">Stress</div>';
+      html += stressGaugeHtml(sv, sLabel);
+      if (stressDiff != null) {
+        html += '<div class="muted" style="text-align:center;font-size:11px;margin-top:6px">' + (stressDiff >= 0 ? "+" : "") + stressDiff.toFixed(0) + " vs ta moyenne des 7 derniers jours</div>";
+      }
+      html += "</div>";
+    }
+
     html += '<div class="card"><div class="section-label">Comment tu te sens aujourd\'hui ?</div>';
     html += '<select id="lifeload-select" style="width:100%;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:7px;color:var(--chalk);font-size:16px;padding:10px 12px">';
     const LIFELOAD_OPTIONS = [
@@ -844,16 +974,6 @@ async function renderDashboard() {
       html += "</div>";
     }
 
-    if (todayWearable && todayWearable.stress_avg != null) {
-      const sv = todayWearable.stress_avg;
-      const sLabel = sv >= 50 ? "Élevé" : sv >= 30 ? "Modéré" : "Faible";
-      html += '<div class="card"><div class="section-label">Stress</div>';
-      html += '<div style="padding:6px 0">' + circleGaugeHtml(sv, 100, { sublabel: sLabel, invert: true }) + "</div>";
-      if (stressDiff != null) {
-        html += '<div class="muted" style="text-align:center;font-size:11px;margin-top:6px">' + (stressDiff >= 0 ? "+" : "") + stressDiff.toFixed(0) + " vs ta moyenne des 7 derniers jours</div>";
-      }
-      html += "</div>";
-    }
     html += '<div class="card"><div class="section-label">Interprétation du jour</div>';
     lines.forEach(function(l) {
       const dotColor = l.tone === "warn" ? "red" : l.tone === "good" ? "green" : "steel";
@@ -913,17 +1033,7 @@ async function renderDashboard() {
     }
   } else if (dashPeriod === "mois") {
     const month = []; for (let i = 29; i >= 0; i--) month.push(daysAgo(i));
-    const prevMonth = []; for (let i = 59; i >= 30; i--) prevMonth.push(daysAgo(i));
     const monthSessions = sessions.filter(function(s){ return month.indexOf(s.date) !== -1; });
-    const buckets = [];
-    for (let w = 0; w < 5; w++) {
-      const bd = month.slice(w*6, w*6+6); if (!bd.length) continue;
-      const bs = monthSessions.filter(function(s){ return bd.indexOf(s.date) !== -1; });
-      buckets.push({ label: bd[0].slice(8,10)+"-"+bd[bd.length-1].slice(8,10), val: bs.reduce(function(s,x){return s+(x.correctedLoad||0);},0) });
-    }
-    html += '<div class="card"><div class="section-label">Charge d\'entraînement — tendance</div>';
-    html += barChartHtml(buckets, { height: 72 });
-    html += "</div>";
 
     // Tendances physiologiques : moyenne par tranche de ~6 jours plutôt qu'un
     // chiffre unique — pour voir l'évolution, pas juste l'état actuel.
@@ -962,21 +1072,9 @@ async function renderDashboard() {
       html += barChartHtml(sleepHourBuckets, { decimals: 1, height: 56, unit: "h" });
       html += "</div>";
     }
-
-    const achieved = monthSessions.filter(function(s){return s.achievement==="atteint";}).length;
-    const withAch = monthSessions.filter(function(s){return s.achievement;}).length;
-    const monthTotalLoad = monthSessions.reduce(function(s,x){return s+(x.correctedLoad||0);},0);
-    const prevMonthSessions = sessions.filter(function(s){ return prevMonth.indexOf(s.date) !== -1; });
-    const prevMonthTotalLoad = prevMonthSessions.reduce(function(s,x){return s+(x.correctedLoad||0);},0);
-    html += '<div class="card"><div class="stat-row">';
-    html += statHtml("Séances", monthSessions.length);
-    html += statHtml("Objectifs atteints", withAch ? achieved+"/"+withAch : "–");
-    html += statHtml("Fréquence", (monthSessions.length/4.3).toFixed(1)+"/sem");
-    if (prevMonthTotalLoad > 0) {
-      const deltaPct = Math.round(((monthTotalLoad - prevMonthTotalLoad) / prevMonthTotalLoad) * 100);
-      html += statHtml("Vs mois précédent", (deltaPct >= 0 ? "+" : "") + deltaPct + "%", deltaPct >= 30 ? "amber" : null);
+    if (!hasHr && !hasHrv && !hasStress && !hasSleep) {
+      html += '<div class="card"><div class="muted" style="text-align:center;padding:16px 0">Pas encore assez de données montre ce mois-ci.</div></div>';
     }
-    html += "</div></div>";
 
     // Migraines du mois
     const monthMig = monthMigraines.filter(function(m){ return month.indexOf(m.day) !== -1; });
@@ -1005,52 +1103,7 @@ async function renderDashboard() {
       html += "</div>";
     }
 
-    const themeCounts = {};
-    monthSessions.forEach(function(s){ Object.keys(s.entries).forEach(function(t){ themeCounts[t]=(themeCounts[t]||0)+1; }); });
-    const stale = THEMES.map(function(t) {
-      const last = sessions.filter(function(s){ return s.entries[t.id]; }).sort(function(a,b){return a.date<b.date?1:-1;})[0];
-      const days = last ? Math.round((new Date(today)-new Date(last.date))/86400000) : null;
-      return { theme: t, days: days };
-    }).filter(function(x){ return x.days === null || x.days >= 10; });
-    const recs = [];
-    const total = monthSessions.length;
-    if (total >= 3) {
-      // Un mouvement complet (muscle-up, skin the cat...) sollicite à la fois
-      // le tirage et la poussée — il compte donc dans les deux pour l'équilibre.
-      const pull = (themeCounts.tirage||0) + (themeCounts.complet||0), push = (themeCounts.poussee||0) + (themeCounts.complet||0);
-      if (pull+push >= 4) {
-        if (push>0 && pull/push<=0.55) recs.push({tone:"warn",text:"Poussée bien plus travaillée que Tirage ("+push+" vs "+pull+")."});
-        else if (pull>0 && push/pull<=0.55) recs.push({tone:"warn",text:"Tirage bien plus travaillé que Poussée ("+pull+" vs "+push+")."});
-      }
-      THEMES.forEach(function(t){ const c=themeCounts[t.id]||0; if (total>=4 && c/total>0.55) recs.push({tone:"neutral",text:t.label+" domine largement tes séances ("+c+"/"+total+")."}); });
-    }
-    if (recs.length || stale.length) {
-      html += '<div class="card amber"><div class="section-label">Recommandations</div>';
-      recs.forEach(function(r){ html += '<div style="font-size:12px;color:var(--chalkDim);margin-bottom:8px">' + esc(r.text) + "</div>"; });
-      stale.forEach(function(s) { html += '<div style="font-size:12px;color:var(--chalkDim);margin-bottom:8px"><span style="color:var(--amber);font-weight:700">'+s.theme.label+'</span> — '+(s.days===null?"jamais travaillé":"pas travaillé depuis "+s.days+"j")+"</div>"; });
-      html += "</div>";
-    }
-
-    // Comparaison par discipline (ex-onglet "Comparer", fusionné ici)
-    const discStats = {};
-    sessions.filter(function(s){ return s.discipline && s.correctedLoad != null; }).forEach(function(s) {
-      if (!discStats[s.discipline]) discStats[s.discipline] = [];
-      discStats[s.discipline].push(s.correctedLoad);
-    });
-    const discRows = Object.keys(discStats).map(function(name) {
-      const loads = discStats[name];
-      return { name: name, count: loads.length, avg: Math.round(avgOf(loads)) };
-    }).sort(function(a,b){ return b.avg - a.avg; });
-    if (discRows.length) {
-      html += '<div class="card"><div class="section-label">Charge moyenne par discipline</div>';
-      const maxDisc = discRows[0].avg || 1;
-      discRows.forEach(function(r, i) {
-        const pct = Math.max(6, (r.avg/maxDisc)*100);
-        html += '<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-weight:700;font-size:13px">' + esc(r.name) + '</span><span style="font-size:12px;color:var(--chalkDim)">' + r.avg + ' <span class="muted">· ' + r.count + " séance(s)</span></span></div>";
-        html += '<div style="height:8px;background:var(--surfaceRaised);border-radius:4px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + (i===0?"var(--gradient)":"var(--steel)") + ';border-radius:4px"></div></div></div>';
-      });
-      html += "</div>";
-    }
+    html += '<div class="card steel"><div class="muted" style="font-size:12px;text-align:center">Les données d\'entraînement (charge, recommandations, comparaison par discipline) sont désormais dans l\'onglet <b style="color:var(--chalk)">Séance → Tendances</b>.</div></div>';
   }
 
   app.innerHTML = html;
@@ -1243,6 +1296,31 @@ function scoreTierGradient(tier) {
   return stops[tier] || stops.green;
 }
 let gaugeIdCounter = 0;
+// Jauge horizontale façon Zepp : repère triangulaire sur une échelle de
+// graduations, plutôt qu'un anneau — pour le stress notamment.
+function stressGaugeHtml(value, sublabel) {
+  const pct = Math.max(0, Math.min(1, value / 100));
+  const tier = scoreTierColor(pct, true);
+  const color = "var(--" + tier + ")";
+  const tickCount = 24;
+  const pointerLeft = pct * 100;
+  let html = '<div style="padding:16px 2px 4px">';
+  html += '<div style="position:relative;height:10px"><div style="position:absolute;left:calc(' + pointerLeft + '% - 6px);top:0;width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:9px solid ' + color + ';filter:drop-shadow(0 0 5px ' + color + ')"></div></div>';
+  html += '<div style="display:flex;justify-content:space-between;align-items:flex-end;height:26px;gap:2px;margin-top:2px">';
+  for (let i = 0; i < tickCount; i++) {
+    const tickPct = i / (tickCount - 1);
+    const active = Math.abs(tickPct - pct) < (1 / tickCount);
+    html += '<div style="flex:1;height:' + (active ? "100%" : "50%") + ';background:' + (active ? color : "var(--line)") + ';border-radius:2px"></div>';
+  }
+  html += "</div>";
+  html += '<div style="display:flex;justify-content:space-between;margin-top:6px"><span class="muted" style="font-size:10px;text-transform:uppercase">Faible</span><span class="muted" style="font-size:10px;text-transform:uppercase">Élevé</span></div>';
+  html += "</div>";
+  html += '<div style="text-align:center;margin-top:4px"><span style="font-size:34px;font-weight:900;color:' + color + ';text-shadow:0 0 14px ' + color + '55">' + Math.round(value) + "</span>";
+  if (sublabel) html += ' <span style="font-size:12px;font-weight:800;text-transform:uppercase;color:' + color + '">' + sublabel + "</span>";
+  html += "</div>";
+  return html;
+}
+
 function circleGaugeHtml(value, max, opts) {
   opts = opts || {};
   const size = opts.size || 140, stroke = opts.strokeWidth || 12;
