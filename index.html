@@ -1022,10 +1022,10 @@ async function renderDashboard() {
     const hasHrData = hrSeries.some(function(s) { return s.val > 0; });
     if (hasHrData) {
       html += '<div class="card"><div class="section-label">FC repos (bpm) — 14 jours</div>';
-      html += barChartHtml(hrSeries, { unit: " bpm" });
+      html += barChartHtml(hrSeries, { unit: " bpm", qualify: qualifyRHR });
       html += "</div>";
       html += '<div class="card"><div class="section-label">VFC (ms) — 14 jours</div>';
-      html += barChartHtml(hrvSeries, { unit: " ms" });
+      html += barChartHtml(hrvSeries, { unit: " ms", qualify: qualifyHRV });
       html += "</div>";
     }
 
@@ -1051,12 +1051,12 @@ async function renderDashboard() {
     const hasSleepW = week7Wearable.some(function(w){return w.sleep_total_min!=null;});
     if (hasHrW) {
       html += '<div class="card"><div class="section-label">FC repos — 7 derniers jours</div>';
-      html += barChartHtml(dailyTrendBars("hr_resting"), { unit: " bpm" });
+      html += barChartHtml(dailyTrendBars("hr_resting"), { unit: " bpm", qualify: qualifyRHR });
       html += "</div>";
     }
     if (hasHrvW) {
       html += '<div class="card"><div class="section-label">VFC — 7 derniers jours</div>';
-      html += barChartHtml(dailyTrendBars("hrv_avg"), { unit: " ms" });
+      html += barChartHtml(dailyTrendBars("hrv_avg"), { unit: " ms", qualify: qualifyHRV });
       html += "</div>";
     }
     if (hasStressW) {
@@ -1110,12 +1110,12 @@ async function renderDashboard() {
     const hasSleep = monthWearableOverview.some(function(w){return w.sleep_total_min!=null;});
     if (hasHr) {
       html += '<div class="card"><div class="section-label">FC repos — tendance</div>';
-      html += barChartHtml(weeklyTrendBuckets("hr_resting"), { height: 56, unit: " bpm" });
+      html += barChartHtml(weeklyTrendBuckets("hr_resting"), { height: 56, unit: " bpm", qualify: qualifyRHR });
       html += "</div>";
     }
     if (hasHrv) {
       html += '<div class="card"><div class="section-label">VFC — tendance</div>';
-      html += barChartHtml(weeklyTrendBuckets("hrv_avg"), { height: 56, unit: " ms" });
+      html += barChartHtml(weeklyTrendBuckets("hrv_avg"), { height: 56, unit: " ms", qualify: qualifyHRV });
       html += "</div>";
     }
     if (hasStress) {
@@ -1438,6 +1438,11 @@ function barChartHtml(items, opts) {
 // Seuils déjà utilisés ailleurs dans l'appli (stress 0-100 Zepp ; sommeil 7-9h
 // optimal) — réutilisés ici pour rester cohérent, pas de nouveau seuil inventé.
 function qualifyStress(v) { return v >= 50 ? "red" : v >= 30 ? "amber" : "green"; }
+// Seuils calibrés pour un homme de 42 ans (profil connu), croisés sur deux
+// tableaux normatifs indépendants (population US, revues cliniques). Pas
+// universels — recalibrer si le profil change.
+function qualifyRHR(v) { return v >= 83 ? "red" : v >= 71 ? "amber" : "green"; }
+function qualifyHRV(v) { return v < 20 ? "red" : v < 40 ? "amber" : "green"; }
 function qualifySleepHours(v) { return v < 6 ? "red" : (v < 7 || v > 9.5) ? "amber" : "green"; }
 
 // ---------------- Rendu : Migraine ----------------
