@@ -200,9 +200,22 @@ def build_sleep_stages(db_path, days=30):
         rows.append({
             "day": day, "sleep_total_min": total, "sleep_light_min": light,
             "sleep_deep_min": deep, "sleep_rem_min": rem, "sleep_awake_count": awake,
+            "_ts": ts,
         })
     conn.close()
-    return rows
+
+    # Déduplique par jour (garde l'entrée la plus récente si plusieurs sessions
+    # tombent sur la même date) — sinon Postgres refuse le upsert (ON CONFLICT
+    # ne peut pas affecter la même ligne deux fois dans un même envoi).
+    by_day = {}
+    for r in rows:
+        d = r["day"]
+        if d not in by_day or r["_ts"] > by_day[d]["_ts"]:
+            by_day[d] = r
+    for r in by_day.values():
+        del r["_ts"]
+
+    return list(by_day.values())
 
 
 def push_sleep_stages(rows):
