@@ -349,17 +349,16 @@ function workoutCardHtml(w) {
     html += '<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>' + label + '</span><span class="muted">' + Math.round(min) + ' min</span></div>';
     html += '<div style="height:6px;background:var(--surfaceRaised);border-radius:3px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + color + '"></div></div></div>';
   });
-  if (w.te_aerobic != null || w.te_anaerobic != null || w.hrr_1min != null) {
+  const hrrReliable = w.hrr_1min != null && w.duration_min >= 15 && ((w.te_aerobic||0) + (w.te_anaerobic||0)) >= 1.0;
+  if (w.te_aerobic != null || w.te_anaerobic != null || hrrReliable) {
     html += '<div style="display:flex;gap:16px;margin-top:12px;padding-top:10px;border-top:1px solid var(--line);flex-wrap:wrap">';
     if (w.te_aerobic != null) html += '<div style="flex:1;min-width:80px"><div class="muted" style="font-size:10px;text-transform:uppercase">Effet aérobie</div><div style="font-size:18px;font-weight:900">' + w.te_aerobic.toFixed(1) + '</div><div style="font-size:11px;color:var(--green)">' + teLabel(w.te_aerobic) + "</div></div>";
     if (w.te_anaerobic != null) html += '<div style="flex:1;min-width:80px"><div class="muted" style="font-size:10px;text-transform:uppercase">Effet anaérobie</div><div style="font-size:18px;font-weight:900">' + w.te_anaerobic.toFixed(1) + '</div><div style="font-size:11px;color:var(--amber)">' + teLabel(w.te_anaerobic) + "</div></div>";
-    if (w.hrr_1min != null) {
-      const hrrTier = w.hrr_1min < 12 ? "red" : w.hrr_1min <= 25 ? "amber" : "green";
-      const hrrLabel = w.hrr_1min < 12 ? "Faible" : w.hrr_1min <= 25 ? "Normale" : "Bonne";
-      html += '<div style="flex:1;min-width:80px"><div class="muted" style="font-size:10px;text-transform:uppercase">Récup. FC (1min)</div><div style="font-size:18px;font-weight:900;color:var(--' + hrrTier + ')">-' + w.hrr_1min + ' bpm</div><div style="font-size:11px;color:var(--' + hrrTier + ')">' + hrrLabel + "</div></div>";
+    if (hrrReliable) {
+      html += '<div style="flex:1;min-width:80px"><div class="muted" style="font-size:10px;text-transform:uppercase">Récup. FC (1min)</div><div style="font-size:18px;font-weight:900">-' + w.hrr_1min + ' bpm</div></div>';
     }
     html += "</div>";
-    if (w.hrr_1min != null) html += '<div class="muted" style="font-size:10px;margin-top:8px">Récupération cardiaque approximée (capteur poignet, moins précis qu\'une ceinture ECG) — une chute ≤12 bpm en 1 min est le seuil clinique généralement associé à un risque cardiovasculaire accru (NEJM, méta-analyse 2017).</div>';
+    if (hrrReliable) html += '<div class="muted" style="font-size:10px;margin-top:8px">Récupération cardiaque approximative — capteur poignet moins précis qu\'une ceinture ECG, et on ne sait pas si tu es resté immobile juste après l\'effort (sinon la mesure est faussée). À prendre comme indicatif, pas comme un chiffre clinique.</div>';
   }
   html += "</div>";
   return html;
@@ -1461,7 +1460,6 @@ function qualifyHRV(v) { return v < 20 ? "red" : v < 40 ? "amber" : "green"; }
 // direction de la tendance a du sens — hausse soutenue = progression, plat/
 // baisse = stagnation ou surcharge à surveiller selon le contexte.
 function qualifySleepHours(v) { return v < 6 ? "red" : (v < 7 || v > 9.5) ? "amber" : "green"; }
-function qualifyHRR(v) { return v < 12 ? "red" : v <= 25 ? "amber" : "green"; }
 
 // ---------------- Rendu : Migraine ----------------
 const TRIGGERS = [
@@ -1726,7 +1724,7 @@ async function renderVie() {
   app.innerHTML = '<div class="muted">Chargement…</div>';
   let wearable = [], workouts = [], errorMsg = "";
   try { wearable = await listWearable(60); } catch (e) { errorMsg = e.message; }
-  try { workouts = await sb("workout_sessions?select=start_time,hrr_1min&order=start_time.asc&limit=200") || []; } catch (e) {}
+  try { workouts = await sb("workout_sessions?select=start_time,hrr_1min,duration_min,training_effect_aerobic,training_effect_anaerobic&order=start_time.asc&limit=200") || []; } catch (e) {}
 
   let html = "";
   if (errorMsg) html += '<div class="error-banner"><b>Erreur :</b> ' + esc(errorMsg) + "</div>";
@@ -1762,19 +1760,26 @@ async function renderVie() {
   html += "</div>";
 
   // HRR (heart rate recovery) — validée depuis 1999 (NEJM, 2428 patients,
-  // 6 ans de suivi) et confirmée par méta-analyse (Qiu et al. 2017) : chaque
-  // 10 bpm de récupération en moins associé à +13% de risque d'événement
-  // cardiovasculaire et +9% de mortalité toutes causes.
-  const hrrRows = workouts.filter(function(w){ return w.hrr_1min != null; });
+  // 6 ans de suivi) et confirmée par méta-analyse (Qiu et al. 2017). Mais deux
+  // conditions ne sont pas vérifiables avec nos données : que l'effort qui
+  // précède soit réel (pas juste une activité brève/légère), et que la
+  // personne reste immobile juste après (sinon la FC reste artificiellement
+  // haute). On filtre la première condition ; la seconde reste un vrai angle
+  // mort — d'où l'absence de code couleur clinique ici.
+  const hrrRows = workouts.filter(function(w){
+    if (w.hrr_1min == null) return false;
+    const te = (Number(w.training_effect_aerobic) || 0) + (Number(w.training_effect_anaerobic) || 0);
+    return w.duration_min >= 15 && te >= 1.0;
+  });
   if (hrrRows.length >= 3) {
     const hrrTrendBars = hrrRows.slice(-12).map(function(w) {
       return { label: formatDateLabel(w.start_time.slice(0,10)).slice(0,2), val: w.hrr_1min };
     });
-    const avgHrr = avgOf(hrrRows.map(function(w){return w.hrr_1min;}));
-    const hrrTier = avgHrr < 12 ? "red" : avgHrr <= 25 ? "amber" : "green";
-    html += '<div class="card"><div class="section-label">Récupération cardiaque (HRR, 1min) — par séance</div>';
-    html += barChartHtml(hrrTrendBars, { unit: " bpm", qualify: qualifyHRR });
-    html += '<div class="muted" style="font-size:10px;margin-top:8px">Approximée via capteur poignet (moins précis qu\'une ceinture ECG). ≤12 bpm = seuil clinique généralement associé à un risque cardiovasculaire accru.</div></div>';
+    html += '<div class="card"><div class="section-label">Récupération cardiaque (HRR, 1min) — après effort réel</div>';
+    html += barChartHtml(hrrTrendBars, { unit: " bpm" });
+    html += '<div class="muted" style="font-size:10px;margin-top:8px">Séances courtes/sans effet d\'entraînement exclues. Reste approximatif : capteur poignet moins précis qu\'une ceinture ECG, et on ne sait pas si tu es resté immobile juste après l\'effort (sinon la FC reste artificiellement haute et fausse la mesure) — à ne pas surinterpréter sans un vrai protocole (effort soutenu puis arrêt complet 2 min).</div></div>';
+  } else if (hrrRows.length > 0 || workouts.some(function(w){return w.hrr_1min != null;})) {
+    html += '<div class="card"><div class="section-label">Récupération cardiaque (HRR)</div><div class="muted" style="font-size:12px;text-align:center;padding:8px 0">Pas encore assez de séances avec un effort réel et un signal fiable pour en tirer une tendance.</div></div>';
   }
 
   html += '<div class="card steel"><div class="section-label">À savoir</div>';
