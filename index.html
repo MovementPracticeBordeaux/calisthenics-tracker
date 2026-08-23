@@ -78,7 +78,7 @@
     <button class="tab" data-tab="dashboard">Dashboard</button>
     <button class="tab" data-tab="sommeil">Sommeil</button>
     <button class="tab" data-tab="migraine">Migraine</button>
-    <button class="tab" data-tab="vie">Vie</button>
+    <button class="tab" data-tab="vie">Santé</button>
   </div>
   <div id="app"></div>
 </div>
@@ -1517,7 +1517,7 @@ async function renderVie() {
 
   let html = "";
   if (errorMsg) html += '<div class="error-banner"><b>Erreur :</b> ' + esc(errorMsg) + "</div>";
-  html += '<h1 style="margin-bottom:4px">Vie</h1>';
+  html += '<h1 style="margin-bottom:4px">Santé</h1>';
   html += '<div class="muted" style="margin-bottom:18px">Indicateurs de santé à lire sur la durée, pas au jour le jour</div>';
 
   // PAI (Personal Activity Intelligence) — validé par l'étude HUNT (Norvège,
