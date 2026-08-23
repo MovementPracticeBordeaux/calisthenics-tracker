@@ -1187,20 +1187,28 @@ async function getWearableForDate2(dateStr) {
   return rows && rows[0] ? rows[0] : null;
 }
 
-async function renderMigraine() {
+let migraineState = { history: [], allWearable: [], sessions: [], errorMsg: "" };
+
+async function loadMigraine() {
   const app = document.getElementById("app");
   app.innerHTML = '<div class="muted">Chargement…</div>';
-  let history = [], errorMsg = "", allWearable = [];
+  migraineState.errorMsg = "";
   try {
-    history = await sb("migraines?select=*&order=day.desc&limit=60") || [];
-  } catch (e) { errorMsg = e.message; }
-  try { allWearable = await listWearable(90); } catch (e) {}
+    migraineState.history = await sb("migraines?select=*&order=day.desc&limit=60") || [];
+  } catch (e) { migraineState.errorMsg = e.message; }
+  try { migraineState.allWearable = await listWearable(90); } catch (e) {}
+  try { migraineState.sessions = await listSessions(90); } catch (e) {}
+  drawMigraine();
+}
+
+function drawMigraine() {
+  const app = document.getElementById("app");
+  const history = migraineState.history, allWearable = migraineState.allWearable, errorMsg = migraineState.errorMsg;
 
   // Contexte automatique du jour sélectionné dans le formulaire
-  let ctx = null;
   const formDay = migraineForm.startDateTime.slice(0, 10);
-  try { ctx = await getWearableForDate2(formDay); } catch (e) {}
-  const sessionCtx = (await listSessions(90)).find(function(s) { return s.date === formDay; });
+  const ctx = allWearable.find(function(w) { return w.day === formDay; }) || null;
+  const sessionCtx = migraineState.sessions.find(function(s) { return s.date === formDay; });
 
   // Fréquence des déclencheurs déclarés
   const triggerCounts = {};
@@ -1334,7 +1342,7 @@ async function renderMigraine() {
 
 function wireMigraineEvents() {
   const startInput = document.getElementById("mig-start");
-  if (startInput) startInput.addEventListener("change", function() { migraineForm.startDateTime = startInput.value; renderMigraine(); });
+  if (startInput) startInput.addEventListener("change", function() { migraineForm.startDateTime = startInput.value; drawMigraine(); });
   const endInput = document.getElementById("mig-end");
   if (endInput) endInput.addEventListener("change", function() { migraineForm.endDateTime = endInput.value; });
 
@@ -1344,7 +1352,7 @@ function wireMigraineEvents() {
       const id = btn.dataset.id;
       btn.textContent = "…";
       sb("migraines?id=eq." + id, { method: "DELETE", headers: { Prefer: "return=minimal" } })
-        .then(function() { renderMigraine(); })
+        .then(function() { loadMigraine(); })
         .catch(function(e) { alert("Erreur : " + e.message); });
     });
   });
@@ -1352,7 +1360,7 @@ function wireMigraineEvents() {
   document.querySelectorAll('.rpe-ladder[data-scope="migraine"] .rpe-bar').forEach(function(btn) {
     btn.addEventListener("click", function() {
       migraineForm.intensity = Number(btn.dataset.n);
-      renderMigraine();
+      drawMigraine();
     });
   });
 
@@ -1361,7 +1369,7 @@ function wireMigraineEvents() {
       const id = btn.dataset.id;
       const idx = migraineForm.triggers.indexOf(id);
       if (idx === -1) migraineForm.triggers.push(id); else migraineForm.triggers.splice(idx, 1);
-      renderMigraine();
+      drawMigraine();
     });
   });
 
@@ -1390,7 +1398,7 @@ function wireMigraineEvents() {
       }),
     }).then(function() {
       migraineForm = { startDateTime: nowForDatetimeInput(), endDateTime: "", intensity: 5, triggers: [], notes: "" };
-      renderMigraine();
+      loadMigraine();
     }).catch(function(e) {
       saveBtn.textContent = "Erreur : " + e.message;
     });
@@ -1454,13 +1462,13 @@ function setTab(tab) {
   if (tab === "seance") loadSeance();
   else if (tab === "dashboard") renderDashboard();
   else if (tab === "sommeil") renderSommeil();
-  else if (tab === "migraine") renderMigraine();
+  else if (tab === "migraine") loadMigraine();
   else renderVie();
 }
 document.querySelectorAll(".tab[data-tab]").forEach(function(t) {
   t.addEventListener("click", function() { setTab(t.dataset.tab); });
 });
-setTab("seance");
+setTab("dashboard");
 </script>
 </body>
 </html>
