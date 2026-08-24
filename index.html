@@ -943,7 +943,21 @@ async function renderDashboard() {
   if (hrvPct != null) { signals++; if (hrvPct <= -30) score -= 25; else if (hrvPct <= -20) score -= 15; else if (hrvPct <= -10) score -= 5; else if (hrvPct >= 15) score += 10; }
   if (stressDiff != null) { signals++; if (stressDiff >= 10) score -= 25; else if (stressDiff >= 5) score -= 10; }
   if (loadRatio != null) { signals++; if (loadRatio > 1.5) score -= 20; else if (loadRatio > 1.3) score -= 10; else if (loadRatio < 0.7) score += 5; }
-  if (sleepMin != null) { signals++; if (sleepMin < 300) score -= 25; else if (sleepMin < 360) score -= 15; else if (sleepMin < 420) score -= 5; else if (sleepMin > 600) score -= 5; }
+  if (sleepMin != null) {
+    signals++;
+    if (sleepMin < 300) score -= 25; else if (sleepMin < 360) score -= 15; else if (sleepMin < 420) score -= 5; else if (sleepMin > 600) score -= 5;
+    // Qualité des stades, pas juste la durée — mêmes seuils que l'onglet
+    // Sommeil (AASM/CDC) : profond <13% ou paradoxal <15% pénalisent, même
+    // avec une durée totale correcte.
+    if (todayWearable && todayWearable.sleep_deep_min != null && sleepMin > 0) {
+      const deepPct = (todayWearable.sleep_deep_min / sleepMin) * 100;
+      if (deepPct < 10) { score -= 8; lines.push({ tone: "neutral", text: "Sommeil profond faible (" + Math.round(deepPct) + "%) malgré une durée correcte — pèse un peu sur le score." }); }
+      if (todayWearable.sleep_rem_min != null) {
+        const remPct = (todayWearable.sleep_rem_min / sleepMin) * 100;
+        if (remPct < 15) { score -= 8; lines.push({ tone: "neutral", text: "Sommeil paradoxal faible (" + Math.round(remPct) + "%) — à surveiller si ça se répète." }); }
+      }
+    }
+  }
   if (respDiff != null) { signals++; if (respDiff >= 3) score -= 20; else if (respDiff >= 2) score -= 10; }
   if (todayMigraine != null) { signals++; score -= (10 + todayMigraine * 4); }
   if (todayMigraine != null) lines.unshift({ tone: "warn", text: "Migraine enregistrée aujourd'hui (intensité " + todayMigraine + "/10) — pèse sur le score et la récupération recommandée." });
