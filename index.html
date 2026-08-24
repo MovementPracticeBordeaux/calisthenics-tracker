@@ -25,6 +25,7 @@
     --green: #39FF8A; --greenDark: #0FA85A;
     --amber: #FFB020; --amberDark: #E0791A;
     --red: #FF3366; --redDark: #C41E52;
+    --vigilance: #FF3EC8; --vigilanceDark: #A6157F;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); font-family: system-ui, -apple-system, sans-serif; color: var(--chalk); }
@@ -1079,8 +1080,37 @@ async function renderDashboard() {
       html += "</select></div>";
     }
 
-    html += '<div class="card"><div class="section-label">Forme</div>';
-    html += '<div style="padding:10px 0">' + circleGaugeHtml(score, 100, { sublabel: tier }) + "</div>";
+    // Vigilance — 3 points de contrôle réels dans la journée (VFC mesurée sur
+    // ce créneau précis, comparée à ta moyenne sur ce même créneau les jours
+    // précédents). Une vraie baisse de VFC en temps réel est associée à la
+    // somnolence dans la littérature (études de détection de somnolence au
+    // volant, validées contre des mesures oculaires). On calcule ici le
+    // dernier créneau atteint pour l'imbriquer dans l'anneau Forme.
+    const nowHour = new Date().getHours() + new Date().getMinutes() / 60;
+    const VIG_WINDOWS = [
+      { label: "Matin", hrvKey: "hrv_morning", lo: 6, hi: 9 },
+      { label: "Après-midi", hrvKey: "hrv_afternoon", lo: 13, hi: 15 },
+      { label: "Soir", hrvKey: "hrv_evening", lo: 19, hi: 21 },
+    ];
+    let vigPct = null, vigWindowLabel = null;
+    VIG_WINDOWS.slice().reverse().forEach(function(w) {
+      if (vigPct != null) return;
+      const todayHrv = todayWearable ? todayWearable[w.hrvKey] : null;
+      if (todayHrv == null) return;
+      const baseVals = wearable.filter(function(x){ return x.day !== today && x[w.hrvKey] != null; }).map(function(x){ return x[w.hrvKey]; });
+      const baseHrv = baseVals.length >= 3 ? avgOf(baseVals) : null;
+      if (baseHrv == null || baseHrv <= 0) return;
+      vigPct = Math.round(((todayHrv - baseHrv) / baseHrv) * 100);
+      vigWindowLabel = w.label;
+    });
+    const vigScore = vigPct != null ? Math.max(0, Math.min(100, Math.round(85 + vigPct * 1.5))) : null;
+
+    html += '<div class="card"><div class="section-label">Forme <span style="color:var(--vigilance)">+ Vigilance</span></div>';
+    html += '<div style="padding:10px 0">' + circleGaugeHtml(score, 100, {
+      sublabel: tier,
+      inner: vigScore != null ? { value: vigScore, max: 100, sublabel: vigWindowLabel + (vigPct >= 0 ? " +" : " ") + vigPct + "%" } : null,
+    }) + "</div>";
+    if (vigScore == null) html += '<div class="muted" style="text-align:center;font-size:11px;margin-top:-4px;margin-bottom:8px">Vigilance : pas encore de créneau comparable aujourd\'hui</div>';
     html += '<div style="text-align:center;padding-top:10px;border-top:1px solid var(--line);font-size:12px">Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div></div>";
 
     if (todayWearable && todayWearable.stress_avg != null) {
@@ -1094,18 +1124,7 @@ async function renderDashboard() {
       html += "</div>";
     }
 
-    // Vigilance — 3 points de contrôle réels dans la journée (VFC/stress
-    // mesurés sur ce créneau précis, comparés à ta moyenne sur ce même
-    // créneau les jours précédents). Une vraie baisse de VFC en temps réel
-    // est associée à la somnolence dans la littérature (études de détection
-    // de somnolence au volant, validées contre des mesures oculaires).
-    const nowHour = new Date().getHours() + new Date().getMinutes() / 60;
-    const VIG_WINDOWS = [
-      { label: "Matin", hrvKey: "hrv_morning", lo: 6, hi: 9 },
-      { label: "Après-midi", hrvKey: "hrv_afternoon", lo: 13, hi: 15 },
-      { label: "Soir", hrvKey: "hrv_evening", lo: 19, hi: 21 },
-    ];
-    html += '<div class="card"><div class="section-label">Vigilance — points de contrôle du jour</div>';
+    html += '<div class="card"><div class="section-label">Vigilance — détail des points de contrôle</div>';
     VIG_WINDOWS.forEach(function(w) {
       const todayHrv = todayWearable ? todayWearable[w.hrvKey] : null;
       const baseVals = wearable.filter(function(x){ return x.day !== today && x[w.hrvKey] != null; }).map(function(x){ return x[w.hrvKey]; });
@@ -1114,13 +1133,13 @@ async function renderDashboard() {
       html += '<div style="display:flex;justify-content:space-between;align-items:center">';
       html += '<span style="font-size:13px;font-weight:700">' + w.label + '</span>';
       if (todayHrv != null) {
-        let tier = "steel", note = "Pas encore assez d'historique pour comparer";
+        let tier2 = "steel", note = "Pas encore assez d'historique pour comparer";
         if (baseHrv != null && baseHrv > 0) {
           const pct = Math.round(((todayHrv - baseHrv) / baseHrv) * 100);
-          tier = pct <= -20 ? "red" : pct <= -10 ? "amber" : "green";
+          tier2 = pct <= -20 ? "red" : pct <= -10 ? "amber" : "green";
           note = (pct >= 0 ? "+" : "") + pct + "% vs ta moyenne sur ce créneau";
         }
-        html += '<span style="font-size:13px;font-weight:800;color:var(--' + tier + ')">' + todayHrv.toFixed(0) + ' ms</span></div>';
+        html += '<span style="font-size:13px;font-weight:800;color:var(--' + tier2 + ')">' + todayHrv.toFixed(0) + ' ms</span></div>';
         html += '<div class="muted" style="font-size:11px;margin-top:2px">' + note + '</div>';
       } else if (nowHour < w.lo) {
         html += '<span class="muted" style="font-size:12px">À venir</span></div>';
@@ -1569,10 +1588,30 @@ function circleGaugeHtml(value, max, opts) {
   html += '</linearGradient></defs>';
   html += '<circle cx="' + size/2 + '" cy="' + size/2 + '" r="' + r + '" fill="none" stroke="var(--surfaceRaised)" stroke-width="' + stroke + '"/>';
   html += '<circle cx="' + size/2 + '" cy="' + size/2 + '" r="' + r + '" fill="none" stroke="url(#' + gid + ')" stroke-width="' + stroke + '" stroke-dasharray="' + c + '" stroke-dashoffset="' + offset + '" stroke-linecap="round" style="transition:stroke-dashoffset 0.4s;filter:drop-shadow(0 0 6px ' + solidColor + ')"/>';
+
+  // Anneau intérieur optionnel (ex : Vigilance imbriquée dans Forme) — rose
+  // fluo dédié pour bien le distinguer visuellement du rouge/orange/vert
+  // utilisé pour les scores de récupération.
+  if (opts.inner) {
+    const gap = opts.inner.gap != null ? opts.inner.gap : 8;
+    const stroke2 = opts.inner.strokeWidth || Math.round(stroke * 0.75);
+    const r2 = r - stroke / 2 - gap - stroke2 / 2;
+    const c2 = 2 * Math.PI * r2;
+    const innerPct = Math.max(0, Math.min(1, opts.inner.value / opts.inner.max));
+    const offset2 = c2 * (1 - innerPct);
+    const gid2 = "gauge-grad-" + (gaugeIdCounter++);
+    html += '<defs><linearGradient id="' + gid2 + '" x1="0%" y1="0%" x2="100%" y2="100%">';
+    html += '<stop offset="0%" stop-color="var(--vigilanceDark)"/><stop offset="100%" stop-color="var(--vigilance)"/>';
+    html += '</linearGradient></defs>';
+    html += '<circle cx="' + size/2 + '" cy="' + size/2 + '" r="' + r2 + '" fill="none" stroke="var(--surfaceRaised)" stroke-width="' + stroke2 + '"/>';
+    html += '<circle cx="' + size/2 + '" cy="' + size/2 + '" r="' + r2 + '" fill="none" stroke="url(#' + gid2 + ')" stroke-width="' + stroke2 + '" stroke-dasharray="' + c2 + '" stroke-dashoffset="' + offset2 + '" stroke-linecap="round" style="transition:stroke-dashoffset 0.4s;filter:drop-shadow(0 0 5px var(--vigilance))"/>';
+  }
+
   html += '</svg>';
   html += '<div style="position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center">';
   html += '<span style="font-size:' + Math.round(size*0.26) + 'px;font-weight:900;color:var(--chalk);line-height:1;text-shadow:0 0 14px ' + solidColor + '55">' + Math.round(value) + "</span>";
   if (opts.sublabel) html += '<span style="font-size:11px;font-weight:800;text-transform:uppercase;color:' + solidColor + ';margin-top:2px">' + opts.sublabel + "</span>";
+  if (opts.inner && opts.inner.sublabel) html += '<span style="font-size:9px;font-weight:800;text-transform:uppercase;color:var(--vigilance);margin-top:4px">' + opts.inner.sublabel + "</span>";
   html += "</div></div>";
   return html;
 }
