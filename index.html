@@ -308,6 +308,7 @@ async function listWearable(limit) {
 
 // ---------------- État global ----------------
 let currentTab = "seance";
+let napQuality = "moyenne";
 let currentDate = todayISO();
 
 // ---------------- État séance (séparé du réseau pour un rendu instantané) ----------------
@@ -911,10 +912,12 @@ async function renderDashboard() {
     if (rows && rows[0]) lifeload = rows[0].state;
   } catch (e) {}
 
-  let todayNapMin = 0;
+  let todayNapMin = 0, todayNapEffective = 0;
   try {
-    const napRows = await sb("naps?day=eq." + today + "&select=duration_min") || [];
+    const napRows = await sb("naps?day=eq." + today + "&select=duration_min,quality") || [];
+    const qWeight = { bonne: 1.0, moyenne: 0.6, mauvaise: 0.2 };
     todayNapMin = napRows.reduce(function(s, n) { return s + n.duration_min; }, 0);
+    todayNapEffective = napRows.reduce(function(s, n) { return s + n.duration_min * (qWeight[n.quality] != null ? qWeight[n.quality] : 0.6); }, 0);
   } catch (e) {}
 
   let todayMigraine = null;
@@ -967,11 +970,13 @@ async function renderDashboard() {
   if (respDiff != null) { signals++; if (respDiff >= 3) score -= 20; else if (respDiff >= 2) score -= 10; }
   if (todayMigraine != null) { signals++; score -= (10 + todayMigraine * 4); }
   // Sieste : bénéfice réel mais modéré sur la récupération (littérature sommeil),
-  // plafonné pour ne pas compenser artificiellement un vrai déficit de sommeil.
+  // pondéré par la qualité déclarée et plafonné pour ne pas compenser
+  // artificiellement un vrai déficit de sommeil.
   if (todayNapMin > 0) {
-    const napBonus = Math.min(8, Math.round(todayNapMin / 5));
+    const napBonus = Math.min(8, Math.round(todayNapEffective / 5));
     score += napBonus;
-    lines.push({ tone: "good", text: "Sieste de " + todayNapMin + " min aujourd'hui — coup de pouce à la récupération." });
+    const qualNote = napBonus <= 1 ? " (qualité perçue faible, bénéfice limité)" : "";
+    lines.push({ tone: napBonus >= 4 ? "good" : "neutral", text: "Sieste de " + todayNapMin + " min aujourd'hui" + qualNote + "." });
   }
   if (todayMigraine != null) lines.unshift({ tone: "warn", text: "Migraine enregistrée aujourd'hui (intensité " + todayMigraine + "/10) — pèse sur le score et la récupération recommandée." });
 
@@ -1353,14 +1358,24 @@ async function renderSommeil() {
     const totalNapMin = todayNaps.reduce(function(s, n) { return s + n.duration_min; }, 0);
     html += '<div class="card"><div class="section-label">Sieste aujourd\'hui</div>';
     if (todayNaps.length) {
+      const qLabels = { bonne: "Bonne", moyenne: "Moyenne", mauvaise: "Mauvaise" };
+      const qColors = { bonne: "green", moyenne: "amber", mauvaise: "red" };
       todayNaps.forEach(function(n) {
+        const q = n.quality || "moyenne";
         html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
-        html += '<span style="font-size:13px">' + n.duration_min + ' min</span>';
+        html += '<span style="font-size:13px">' + n.duration_min + ' min <span style="color:var(--' + (qColors[q]||"steel") + ');font-size:11px;font-weight:700">· ' + (qLabels[q]||q) + '</span></span>';
         html += '<button class="nap-delete" data-id="' + n.id + '" style="background:none;border:none;color:var(--muted);font-size:15px;cursor:pointer;padding:2px 4px">✕</button></div>';
       });
       html += '<div class="muted" style="font-size:11px;margin-top:6px">Total : ' + totalNapMin + ' min</div>';
     }
-    html += '<div class="pill-row compact" style="margin-top:10px">';
+    html += '<div class="section-label" style="margin-top:12px">Qualité</div>';
+    html += '<div class="pill-row compact" id="nap-quality-row">';
+    [["bonne","Bonne"],["moyenne","Moyenne"],["mauvaise","Mauvaise"]].forEach(function(q) {
+      html += '<button class="pill' + (napQuality === q[0] ? " active" : "") + '" data-quality="' + q[0] + '">' + q[1] + "</button>";
+    });
+    html += "</div>";
+    html += '<div class="section-label" style="margin-top:10px">Durée</div>';
+    html += '<div class="pill-row compact">';
     [20, 30, 45, 60].forEach(function(m) {
       html += '<button class="pill nap-add" data-min="' + m + '">' + m + ' min</button>';
     });
@@ -1426,12 +1441,15 @@ async function renderSommeil() {
 
   app.innerHTML = html;
 
+  document.querySelectorAll("#nap-quality-row .pill").forEach(function(btn) {
+    btn.addEventListener("click", function() { napQuality = btn.dataset.quality; renderSommeil(); });
+  });
   document.querySelectorAll(".nap-add").forEach(function(btn) {
     btn.addEventListener("click", function() {
       sb("naps", {
         method: "POST",
         headers: { Prefer: "return=minimal" },
-        body: JSON.stringify({ day: todayISO(), duration_min: Number(btn.dataset.min) }),
+        body: JSON.stringify({ day: todayISO(), duration_min: Number(btn.dataset.min), quality: napQuality }),
       }).then(function() { renderSommeil(); }).catch(function(e) { alert("Erreur : " + e.message); });
     });
   });
