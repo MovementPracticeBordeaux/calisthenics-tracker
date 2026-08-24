@@ -911,6 +911,12 @@ async function renderDashboard() {
     if (rows && rows[0]) lifeload = rows[0].state;
   } catch (e) {}
 
+  let todayNapMin = 0;
+  try {
+    const napRows = await sb("naps?day=eq." + today + "&select=duration_min") || [];
+    todayNapMin = napRows.reduce(function(s, n) { return s + n.duration_min; }, 0);
+  } catch (e) {}
+
   let todayMigraine = null;
   let history_migraines_count = 0, migraine_signature = null;
   try {
@@ -960,6 +966,13 @@ async function renderDashboard() {
   }
   if (respDiff != null) { signals++; if (respDiff >= 3) score -= 20; else if (respDiff >= 2) score -= 10; }
   if (todayMigraine != null) { signals++; score -= (10 + todayMigraine * 4); }
+  // Sieste : bénéfice réel mais modéré sur la récupération (littérature sommeil),
+  // plafonné pour ne pas compenser artificiellement un vrai déficit de sommeil.
+  if (todayNapMin > 0) {
+    const napBonus = Math.min(8, Math.round(todayNapMin / 5));
+    score += napBonus;
+    lines.push({ tone: "good", text: "Sieste de " + todayNapMin + " min aujourd'hui — coup de pouce à la récupération." });
+  }
   if (todayMigraine != null) lines.unshift({ tone: "warn", text: "Migraine enregistrée aujourd'hui (intensité " + todayMigraine + "/10) — pèse sur le score et la récupération recommandée." });
 
   // Effet d'entraînement officiel (aérobie/anaérobie, données Zepp/Firstbeat) —
@@ -1255,8 +1268,9 @@ async function renderDashboard() {
 async function renderSommeil() {
   const app = document.getElementById("app");
   app.innerHTML = '<div class="muted">Chargement…</div>';
-  let wearable = [], errorMsg = "";
+  let wearable = [], errorMsg = "", todayNaps = [];
   try { wearable = await listWearable(21); } catch (e) { errorMsg = e.message; }
+  try { todayNaps = await sb("naps?day=eq." + todayISO() + "&select=*&order=created_at.asc") || []; } catch (e) {}
 
   const last14 = []; for (let i = 13; i >= 0; i--) last14.push(daysAgo(i));
   const nights = last14.map(function(d) {
@@ -1334,7 +1348,23 @@ async function renderSommeil() {
     html += '<div class="muted" style="font-size:10px;margin-top:6px">Fourchettes générales pour adultes en bonne santé — varient avec l\'âge et la nuit précédente, à lire en tendance plutôt qu\'isolément.</div>';
     html += "</div>";
 
-    const sleepLines = [];
+    // Sieste — non détectable automatiquement par la montre (pas de mécanisme
+    // dédié sur Amazfit/Huami), saisie manuelle avec durées rapides.
+    const totalNapMin = todayNaps.reduce(function(s, n) { return s + n.duration_min; }, 0);
+    html += '<div class="card"><div class="section-label">Sieste aujourd\'hui</div>';
+    if (todayNaps.length) {
+      todayNaps.forEach(function(n) {
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
+        html += '<span style="font-size:13px">' + n.duration_min + ' min</span>';
+        html += '<button class="nap-delete" data-id="' + n.id + '" style="background:none;border:none;color:var(--muted);font-size:15px;cursor:pointer;padding:2px 4px">✕</button></div>';
+      });
+      html += '<div class="muted" style="font-size:11px;margin-top:6px">Total : ' + totalNapMin + ' min</div>';
+    }
+    html += '<div class="pill-row compact" style="margin-top:10px">';
+    [20, 30, 45, 60].forEach(function(m) {
+      html += '<button class="pill nap-add" data-min="' + m + '">' + m + ' min</button>';
+    });
+    html += "</div></div>";
     if (totalH < 6) sleepLines.push({ tone: "warn", text: "Moins de 6h cette nuit — sous le seuil généralement associé à une récupération incomplète." });
     else if (totalH >= 7 && totalH <= 9) sleepLines.push({ tone: "good", text: "Dans la fourchette recommandée de 7-9h." });
     else if (totalH > 9) sleepLines.push({ tone: "neutral", text: "Plus long que d'habitude — peut refléter un vrai besoin de récupération après une charge élevée." });
@@ -1392,9 +1422,25 @@ async function renderSommeil() {
   html += "</div>";
 
   html += '<div class="card steel"><div class="section-label">À savoir</div>';
-  html += '<div style="font-size:11px;color:var(--chalkDim);line-height:1.5">Les stades (léger/profond/paradoxal) viennent d\'un décodage du format propriétaire de ta montre, validé contre les valeurs affichées par Zepp — fiable mais non officiellement documenté. Une nuit isolée à durée très courte (ex. sieste) peut apparaître si le capteur a mal segmenté la session.<br><br>Sur les réveils : environ 5 transitions naturelles entre cycles de sommeil sont normales chez l\'adulte sain (dont on ne se souvient généralement pas). Un accéléromètre comme ta montre capte cependant beaucoup plus de micro-mouvements que de vrais réveils conscients — le chiffre brut compte moins que sa tendance dans le temps.</div></div>';
+  html += '<div style="font-size:11px;color:var(--chalkDim);line-height:1.5">Les stades (léger/profond/paradoxal) viennent d\'un décodage du format propriétaire de ta montre, validé contre les valeurs affichées par Zepp — fiable mais non officiellement documenté. Une nuit isolée à durée très courte (ex. sieste) peut apparaître si le capteur a mal segmenté la session.<br><br>Sur les réveils : environ 5 transitions naturelles entre cycles de sommeil sont normales chez l\'adulte sain (dont on ne se souvient généralement pas). Un accéléromètre comme ta montre capte cependant beaucoup plus de micro-mouvements que de vrais réveils conscients — le chiffre brut compte moins que sa tendance dans le temps.<br><br>Les siestes ne sont pas détectées automatiquement par ta montre (pas de mécanisme dédié sur Amazfit/Huami) — saisie manuelle nécessaire ci-dessus.</div></div>';
 
   app.innerHTML = html;
+
+  document.querySelectorAll(".nap-add").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      sb("naps", {
+        method: "POST",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ day: todayISO(), duration_min: Number(btn.dataset.min) }),
+      }).then(function() { renderSommeil(); }).catch(function(e) { alert("Erreur : " + e.message); });
+    });
+  });
+  document.querySelectorAll(".nap-delete").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      sb("naps?id=eq." + btn.dataset.id, { method: "DELETE", headers: { Prefer: "return=minimal" } })
+        .then(function() { renderSommeil(); }).catch(function(e) { alert("Erreur : " + e.message); });
+    });
+  });
 }
 
 // Graphique en barres lisible : valeur numérique au-dessus de chaque barre,
