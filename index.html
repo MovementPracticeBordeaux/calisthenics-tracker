@@ -309,6 +309,7 @@ async function listWearable(limit) {
 // ---------------- État global ----------------
 let currentTab = "seance";
 let napQuality = "moyenne";
+let napDuration = 30;
 let currentDate = todayISO();
 
 // ---------------- État séance (séparé du réseau pour un rendu instantané) ----------------
@@ -1375,26 +1376,30 @@ async function renderSommeil() {
     if (todayNaps.length) {
       const qLabels = { bonne: "Bonne", moyenne: "Moyenne", mauvaise: "Mauvaise" };
       const qColors = { bonne: "green", moyenne: "amber", mauvaise: "red" };
+      html += '<div style="margin-bottom:14px">';
       todayNaps.forEach(function(n) {
         const q = n.quality || "moyenne";
-        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
-        html += '<span style="font-size:13px">' + n.duration_min + ' min <span style="color:var(--' + (qColors[q]||"steel") + ');font-size:11px;font-weight:700">· ' + (qLabels[q]||q) + '</span></span>';
-        html += '<button class="nap-delete" data-id="' + n.id + '" style="background:none;border:none;color:var(--muted);font-size:15px;cursor:pointer;padding:2px 4px">✕</button></div>';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">';
+        html += '<span style="font-size:13px">✓ ' + n.duration_min + ' min <span style="color:var(--' + (qColors[q]||"steel") + ');font-size:11px;font-weight:700">· ' + (qLabels[q]||q) + '</span></span>';
+        html += '<button class="nap-delete" data-id="' + n.id + '" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--red);font-size:11px;font-weight:700;cursor:pointer;padding:4px 10px">Supprimer</button></div>';
       });
-      html += '<div class="muted" style="font-size:11px;margin-top:6px">Total : ' + totalNapMin + ' min</div>';
+      html += '<div class="muted" style="font-size:11px;margin-top:8px">Total loggé aujourd\'hui : ' + totalNapMin + ' min</div>';
+      html += "</div>";
     }
-    html += '<div class="section-label" style="margin-top:12px">Qualité</div>';
-    html += '<div class="pill-row compact" id="nap-quality-row">';
+    html += '<div class="section-label" style="margin-bottom:6px">Qualité</div>';
+    html += '<div class="pill-row compact" id="nap-quality-row" style="margin-bottom:16px">';
     [["bonne","Bonne"],["moyenne","Moyenne"],["mauvaise","Mauvaise"]].forEach(function(q) {
       html += '<button class="pill' + (napQuality === q[0] ? " active" : "") + '" data-quality="' + q[0] + '">' + q[1] + "</button>";
     });
     html += "</div>";
-    html += '<div class="section-label" style="margin-top:10px">Durée</div>';
-    html += '<div class="pill-row compact">';
+    html += '<div class="section-label" style="margin-bottom:6px">Durée</div>';
+    html += '<div class="pill-row compact" id="nap-duration-row" style="margin-bottom:16px">';
     [20, 30, 45, 60].forEach(function(m) {
-      html += '<button class="pill nap-add" data-min="' + m + '">' + m + ' min</button>';
+      html += '<button class="pill' + (napDuration === m ? " active" : "") + '" data-duration="' + m + '">' + m + ' min</button>';
     });
-    html += "</div></div>";
+    html += "</div>";
+    html += '<button id="nap-validate" style="width:100%;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Valider la sieste</button>';
+    html += "</div>";
     const sleepLines = [];
     if (totalH < 6) sleepLines.push({ tone: "warn", text: "Moins de 6h cette nuit — sous le seuil généralement associé à une récupération incomplète." });
     else if (totalH >= 7 && totalH <= 9) sleepLines.push({ tone: "good", text: "Dans la fourchette recommandée de 7-9h." });
@@ -1461,17 +1466,21 @@ async function renderSommeil() {
   document.querySelectorAll("#nap-quality-row .pill").forEach(function(btn) {
     btn.addEventListener("click", function() { napQuality = btn.dataset.quality; renderSommeil(); });
   });
-  document.querySelectorAll(".nap-add").forEach(function(btn) {
-    btn.addEventListener("click", function() {
-      sb("naps", {
-        method: "POST",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify({ day: todayISO(), duration_min: Number(btn.dataset.min), quality: napQuality }),
-      }).then(function() { renderSommeil(); }).catch(function(e) { alert("Erreur : " + e.message); });
-    });
+  document.querySelectorAll("#nap-duration-row .pill").forEach(function(btn) {
+    btn.addEventListener("click", function() { napDuration = Number(btn.dataset.duration); renderSommeil(); });
+  });
+  const napValidateBtn = document.getElementById("nap-validate");
+  if (napValidateBtn) napValidateBtn.addEventListener("click", function() {
+    napValidateBtn.textContent = "Enregistrement…";
+    sb("naps", {
+      method: "POST",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({ day: todayISO(), duration_min: napDuration, quality: napQuality }),
+    }).then(function() { renderSommeil(); }).catch(function(e) { alert("Erreur : " + e.message); napValidateBtn.textContent = "Valider la sieste"; });
   });
   document.querySelectorAll(".nap-delete").forEach(function(btn) {
     btn.addEventListener("click", function() {
+      btn.textContent = "…";
       sb("naps?id=eq." + btn.dataset.id, { method: "DELETE", headers: { Prefer: "return=minimal" } })
         .then(function() { renderSommeil(); }).catch(function(e) { alert("Erreur : " + e.message); });
     });
