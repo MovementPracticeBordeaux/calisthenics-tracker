@@ -1079,6 +1079,21 @@ async function renderDashboard() {
       html += "</div>";
     }
 
+    // Vigilance cognitive — indicateur séparé de Forme, basé sur l'heure de
+    // réveil réelle du jour si connue (sinon estimation 7h par défaut).
+    const nowDate = new Date();
+    const nowHour = nowDate.getHours() + nowDate.getMinutes() / 60;
+    const wakeHourToday = (todayWearable && todayWearable.wake_hour != null) ? todayWearable.wake_hour : 7;
+    const poorSleepToday = sleepMin != null && sleepMin < 360;
+    const vigLevel = vigilanceEstimate(wakeHourToday, nowHour, poorSleepToday);
+    const vigTier = vigLevel >= 70 ? "green" : vigLevel >= 40 ? "amber" : "red";
+    const hoursSinceWake = ((nowHour - wakeHourToday) + 24) % 24;
+    html += '<div class="card"><div class="section-label">Vigilance cognitive (estimation)</div>';
+    html += '<div style="display:flex;align-items:baseline;gap:10px"><span style="font-size:28px;font-weight:900;color:var(--' + vigTier + ')">' + vigilanceLabel(vigLevel) + '</span></div>';
+    html += '<div style="height:6px;background:var(--surfaceRaised);border-radius:3px;overflow:hidden;margin-top:8px"><div style="width:' + vigLevel + '%;height:100%;background:var(--' + vigTier + ')"></div></div>';
+    html += '<div class="muted" style="font-size:11px;margin-top:8px">' + vigilanceReason(hoursSinceWake) + (todayWearable && todayWearable.wake_hour != null ? " · réveil vers " + Math.floor(wakeHourToday) + "h" + Math.round((wakeHourToday%1)*60).toString().padStart(2,'0') : " · heure de réveil non encore synchronisée, estimation par défaut") + "</div>";
+    html += '<div class="muted" style="font-size:10px;margin-top:6px">Estimation qualitative basée sur les rythmes circadiens généraux (modèle à deux processus), pas une mesure directe — distincte du score Forme qui reflète ta récupération, pas le moment de la journée.</div></div>';
+
     if (!lifeload) {
       html += '<div class="card"><div class="section-label">Comment tu te sens aujourd\'hui ?</div>';
       html += '<select id="lifeload-select" style="width:100%;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:7px;color:var(--chalk);font-size:16px;padding:10px 12px">';
@@ -1466,6 +1481,38 @@ async function renderSommeil() {
 // libellé de jour en dessous, barre du jour le plus récent mise en valeur.
 // Anneau circulaire qui se remplit selon le score — même logique de couleur
 // (rouge/orange/vert) réutilisée partout où un score apparaît dans l'appli.
+// Estimation de la vigilance cognitive dans la journée — inspirée du modèle
+// à deux processus de régulation du sommeil (Borbély) et du "creux
+// post-déjeuner" documenté dans la littérature sur les rythmes circadiens.
+// Approximation qualitative, pas une mesure physiologique directe comme la
+// VFC — volontairement séparée du score Forme (récupération) plutôt que d'y
+// être mêlée, car ce sont deux questions différentes : "suis-je récupéré ?"
+// vs "est-ce le bon moment de la journée ?".
+function vigilanceEstimate(wakeHour, nowHour, poorSleep) {
+  let h = nowHour - wakeHour;
+  if (h < 0) h += 24;
+  let level;
+  if (h < 1) level = 40;
+  else if (h < 5) level = 40 + (h - 1) * 15;
+  else if (h < 8) level = 100 - (h - 5) * 13;
+  else if (h < 11) level = 61 + (h - 8) * 8;
+  else level = Math.max(15, 85 - (h - 11) * 9);
+  if (poorSleep) level -= 15;
+  return Math.max(5, Math.min(100, Math.round(level)));
+}
+function vigilanceLabel(v) {
+  if (v >= 70) return "Bonne";
+  if (v >= 40) return "Modérée";
+  return "Faible";
+}
+function vigilanceReason(h) {
+  if (h < 1) return "Inertie du réveil";
+  if (h < 5) return "Montée normale en matinée";
+  if (h < 8) return "Creux post-déjeuner habituel";
+  if (h < 11) return "Second pic de fin d'après-midi";
+  return "Déclin normal en soirée";
+}
+
 function scoreTierColor(pct, invert) {
   if (invert) pct = 1 - pct;
   if (pct >= 0.7) return "green";
