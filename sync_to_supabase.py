@@ -142,6 +142,35 @@ def build_daily_summary(db_path):
             days[d]["hr_avg"] = round(sum(hr_by_day[d]) / len(hr_by_day[d]), 1)
             days[d]["hr_max_activity"] = max(hr_by_day[d])
 
+    # Vigilance par fenêtres horaires (matin/après-midi/soir) : moyennes VFC et
+    # stress sur des créneaux fixes, pour comparer chaque jour à sa propre
+    # référence sur le même créneau plutôt qu'une courbe théorique générique.
+    WINDOWS = [("morning", 6, 9), ("afternoon", 13, 15), ("evening", 19, 21)]
+    cur.execute("SELECT TIMESTAMP, VALUE FROM GENERIC_HRV_VALUE_SAMPLE WHERE TIMESTAMP >= ?", (cutoff_ms,))
+    hrv_rows = cur.fetchall()
+    cur.execute("SELECT TIMESTAMP, STRESS FROM HUAMI_STRESS_SAMPLE WHERE TIMESTAMP >= ?", (cutoff_ms,))
+    stress_rows = cur.fetchall()
+    for label, lo, hi in WINDOWS:
+        hrv_buckets, stress_buckets = {}, {}
+        for ts, v in hrv_rows:
+            if v is None or v <= 0:
+                continue
+            dt = datetime.datetime.fromtimestamp(ts / 1000)
+            if lo <= dt.hour < hi:
+                hrv_buckets.setdefault(dt.strftime("%Y-%m-%d"), []).append(v)
+        for ts, v in stress_rows:
+            if v is None or v < 0:
+                continue
+            dt = datetime.datetime.fromtimestamp(ts / 1000)
+            if lo <= dt.hour < hi:
+                stress_buckets.setdefault(dt.strftime("%Y-%m-%d"), []).append(v)
+        for d, vals in hrv_buckets.items():
+            ensure_day(d)
+            days[d]["hrv_" + label] = round(sum(vals) / len(vals), 1)
+        for d, vals in stress_buckets.items():
+            ensure_day(d)
+            days[d]["stress_" + label] = round(sum(vals) / len(vals), 1)
+
     conn.close()
 
     # PostgREST exige que tous les objets d'un même envoi aient exactement les
