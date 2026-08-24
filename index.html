@@ -1065,6 +1065,20 @@ async function renderDashboard() {
     if (migraineAlert) {
       html += '<div class="error-banner" style="background:rgba(242,113,28,0.15);border-color:var(--rust)"><b>⚠ Signaux similaires à une migraine passée :</b> ' + esc(migraineAlert) + "</div>";
     }
+
+    if (!lifeload) {
+      html += '<div class="card"><div class="section-label">Comment tu te sens aujourd\'hui ?</div>';
+      html += '<select id="lifeload-select" style="width:100%;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:7px;color:var(--chalk);font-size:16px;padding:10px 12px">';
+      const LIFELOAD_OPTIONS = [
+        ["", "— Choisir —"], ["bien", "Bien"], ["neutre", "Neutre"], ["stresse", "Stressé"],
+        ["fatigue", "Fatigué"], ["courbature", "Courbaturé"], ["malade", "Malade"],
+      ];
+      LIFELOAD_OPTIONS.forEach(function(o) {
+        html += '<option value="' + o[0] + '"' + (o[0] === "" ? " selected" : "") + '>' + o[1] + "</option>";
+      });
+      html += "</select></div>";
+    }
+
     html += '<div class="card"><div class="section-label">Forme</div>';
     html += '<div style="padding:10px 0">' + circleGaugeHtml(score, 100, { sublabel: tier }) + "</div>";
     html += '<div style="text-align:center;padding-top:10px;border-top:1px solid var(--line);font-size:12px">Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div></div>";
@@ -1094,19 +1108,6 @@ async function renderDashboard() {
     html += '<div style="height:6px;background:var(--surfaceRaised);border-radius:3px;overflow:hidden;margin-top:8px"><div style="width:' + vigLevel + '%;height:100%;background:var(--' + vigTier + ')"></div></div>';
     html += '<div class="muted" style="font-size:11px;margin-top:8px">' + vigilanceReason(hoursSinceWake) + (todayWearable && todayWearable.wake_hour != null ? " · réveil vers " + Math.floor(wakeHourToday) + "h" + Math.round((wakeHourToday%1)*60).toString().padStart(2,'0') : " · heure de réveil non encore synchronisée, estimation par défaut") + "</div>";
     html += '<div class="muted" style="font-size:10px;margin-top:6px">Estimation qualitative basée sur les rythmes circadiens généraux (modèle à deux processus), pas une mesure directe — distincte du score Forme qui reflète ta récupération, pas le moment de la journée.</div></div>';
-
-    if (!lifeload) {
-      html += '<div class="card"><div class="section-label">Comment tu te sens aujourd\'hui ?</div>';
-      html += '<select id="lifeload-select" style="width:100%;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:7px;color:var(--chalk);font-size:16px;padding:10px 12px">';
-      const LIFELOAD_OPTIONS = [
-        ["", "— Choisir —"], ["bien", "Bien"], ["neutre", "Neutre"], ["stresse", "Stressé"],
-        ["fatigue", "Fatigué"], ["courbature", "Courbaturé"], ["malade", "Malade"],
-      ];
-      LIFELOAD_OPTIONS.forEach(function(o) {
-        html += '<option value="' + o[0] + '"' + (o[0] === "" ? " selected" : "") + '>' + o[1] + "</option>";
-      });
-      html += "</select></div>";
-    }
 
     // Tendance FC repos + VFC sur 14 jours
     const trend14 = []; for (let i = 13; i >= 0; i--) trend14.push(daysAgo(i));
