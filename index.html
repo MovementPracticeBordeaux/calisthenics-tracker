@@ -1395,6 +1395,7 @@ async function renderSommeil() {
       html += '<button class="pill nap-add" data-min="' + m + '">' + m + ' min</button>';
     });
     html += "</div></div>";
+    const sleepLines = [];
     if (totalH < 6) sleepLines.push({ tone: "warn", text: "Moins de 6h cette nuit — sous le seuil généralement associé à une récupération incomplète." });
     else if (totalH >= 7 && totalH <= 9) sleepLines.push({ tone: "good", text: "Dans la fourchette recommandée de 7-9h." });
     else if (totalH > 9) sleepLines.push({ tone: "neutral", text: "Plus long que d'habitude — peut refléter un vrai besoin de récupération après une charge élevée." });
