@@ -1108,10 +1108,15 @@ async function renderDashboard() {
     html += '<div class="card"><div class="section-label">Forme <span style="color:var(--vigilance)">+ Vigilance</span></div>';
     html += '<div style="padding:10px 0">' + circleGaugeHtml(score, 100, {
       sublabel: tier,
-      inner: vigScore != null ? { value: vigScore, max: 100, sublabel: vigWindowLabel + (vigPct >= 0 ? " +" : " ") + vigPct + "%" } : null,
+      inner: vigScore != null ? { value: vigScore, max: 100 } : null,
     }) + "</div>";
-    if (vigScore == null) html += '<div class="muted" style="text-align:center;font-size:11px;margin-top:-4px;margin-bottom:8px">Vigilance : pas encore de créneau comparable aujourd\'hui</div>';
-    html += '<div style="text-align:center;padding-top:10px;border-top:1px solid var(--line);font-size:12px">Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div></div>";
+    html += '<div style="text-align:center;padding-top:10px;border-top:1px solid var(--line);font-size:12px">Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div>";
+    if (vigScore != null) {
+      html += '<div style="text-align:center;padding-top:8px;font-size:12px">Vigilance (' + vigWindowLabel + ') : <b style="color:var(--vigilance)">' + (vigPct >= 0 ? "+" : "") + vigPct + '%</b> vs ta moyenne sur ce créneau</div>';
+    } else {
+      html += '<div class="muted" style="text-align:center;font-size:11px;padding-top:8px">Vigilance : pas encore de créneau comparable aujourd\'hui</div>';
+    }
+    html += "</div>";
 
     if (todayWearable && todayWearable.stress_avg != null) {
       const sv = todayWearable.stress_avg;
@@ -1611,7 +1616,8 @@ function circleGaugeHtml(value, max, opts) {
   html += '<div style="position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center">';
   html += '<span style="font-size:' + Math.round(size*0.26) + 'px;font-weight:900;color:var(--chalk);line-height:1;text-shadow:0 0 14px ' + solidColor + '55">' + Math.round(value) + "</span>";
   if (opts.sublabel) html += '<span style="font-size:11px;font-weight:800;text-transform:uppercase;color:' + solidColor + ';margin-top:2px">' + opts.sublabel + "</span>";
-  if (opts.inner && opts.inner.sublabel) html += '<span style="font-size:9px;font-weight:800;text-transform:uppercase;color:var(--vigilance);margin-top:4px">' + opts.inner.sublabel + "</span>";
+  // (le sous-libellé de l'anneau intérieur n'est plus affiché au centre —
+  // trop chargé visuellement, déplacé sous "Besoin de repos" par l'appelant)
   html += "</div></div>";
   return html;
 }
