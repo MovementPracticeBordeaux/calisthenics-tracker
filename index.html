@@ -75,6 +75,33 @@
 </style>
 </head>
 <body>
+<div id="auth-gate" style="position:fixed;inset:0;background:var(--bg);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px">
+  <div style="font-size:11px;font-weight:800;letter-spacing:2px;text-transform:uppercase;margin-bottom:24px">
+    <span style="color:var(--chalkDim)">MOVEMENT </span><span style="background:var(--gradient);-webkit-background-clip:text;background-clip:text;color:transparent">PRACTICE ✦ SUIVI</span>
+  </div>
+  <input type="password" id="auth-input" placeholder="Mot de passe" style="width:100%;max-width:280px;margin-bottom:12px;text-align:center" autocomplete="off" />
+  <button id="auth-submit" style="width:100%;max-width:280px;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Accéder</button>
+  <div id="auth-error" class="muted" style="margin-top:10px;font-size:12px;color:var(--red);display:none">Mot de passe incorrect</div>
+</div>
+<script>
+(function() {
+  var PASS = "Rut57Refund15Startling1";
+  var gate = document.getElementById("auth-gate");
+  if (localStorage.getItem("mpb_auth") === "ok") { gate.style.display = "none"; return; }
+  function tryAuth() {
+    var val = document.getElementById("auth-input").value;
+    if (val === PASS) {
+      localStorage.setItem("mpb_auth", "ok");
+      gate.style.display = "none";
+    } else {
+      document.getElementById("auth-error").style.display = "block";
+    }
+  }
+  document.getElementById("auth-submit").addEventListener("click", tryAuth);
+  document.getElementById("auth-input").addEventListener("keydown", function(e) { if (e.key === "Enter") tryAuth(); });
+})();
+</script>
+
 <div class="wrap">
   <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:10px">
     <div style="text-align:center;font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase">
