@@ -213,6 +213,11 @@ def build_sleep_stages(db_path, days=30):
         if d not in by_day or r["_ts"] > by_day[d]["_ts"]:
             by_day[d] = r
     for r in by_day.values():
+        # L'horodatage du blob correspond approximativement à l'heure de
+        # finalisation de la session (proche du réveil) — utile pour estimer
+        # la vigilance cognitive dans la journée (heures écoulées depuis le réveil).
+        dt = datetime.datetime.fromtimestamp(r["_ts"] / 1000)
+        r["wake_hour"] = round(dt.hour + dt.minute / 60, 2)
         del r["_ts"]
 
     return list(by_day.values())
