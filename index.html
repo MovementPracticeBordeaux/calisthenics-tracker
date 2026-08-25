@@ -345,6 +345,8 @@ function teLabel(v) {
 
 async function loadSeance() {
   historyOpen = false;
+  themeDraftId = null;
+  disciplineOtherMode = false;
   seance.error = "";
   seance.wearable = null;
   seance.workout = null;
@@ -406,6 +408,9 @@ function workoutCardHtml(w) {
 }
 
 let seanceSubTab = "jour";
+let themeDraftId = null;
+let themeDraft = { contraction: "dynamique", type: null, rpe: 0 };
+let disciplineOtherMode = false;
 let seanceTendancesCache = null;
 let seanceTendancesLoading = false;
 
@@ -590,34 +595,33 @@ function drawSeance() {
   }
 
   if (classes.length) {
-    html += '<div class="card steel"><div class="section-label">Cours prévu ce jour</div>';
-    classes.forEach(function(c, i) {
-      const suggested = DISCIPLINE_TO_THEMES[c.discipline];
-      html += '<div style="margin-bottom:' + (i < classes.length - 1 ? 10 : 0) + 'px">';
-      html += '<div style="display:flex;justify-content:space-between;align-items:center">';
-      html += '<span style="font-weight:800;font-size:14px">' + esc(c.discipline) + "</span>";
-      html += '<span class="muted">' + c.heure_debut.slice(0, 5) + "–" + c.heure_fin.slice(0, 5) + "</span></div>";
-      if (suggested) {
-        const labels = THEMES.filter(function(t) { return suggested.indexOf(t.id) !== -1; }).map(function(t) { return t.label; }).join(", ");
-        html += '<button class="apply-schedule-theme" data-themes="' + suggested.join(",") + '" style="margin-top:6px;background:none;border:1px dashed var(--steel);border-radius:6px;color:var(--steel);font-size:11px;font-weight:700;padding:5px 10px;cursor:pointer">Cocher ' + esc(labels) + " →</button>";
-      } else {
-        html += '<div class="muted" style="font-size:11px;margin-top:2px">Pas d\'équivalent direct — à sélectionner manuellement.</div>';
-      }
-      html += "</div>";
-    });
+    const c0 = classes[0];
+    const suggested0 = DISCIPLINE_TO_THEMES[c0.discipline];
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:9px 12px;margin-bottom:14px;font-size:12px">';
+    html += '<span><b>Cours prévu :</b> ' + esc(c0.discipline) + ' <span class="muted">(' + c0.heure_debut.slice(0,5) + '–' + c0.heure_fin.slice(0,5) + ')</span></span>';
+    if (suggested0) html += '<button class="apply-schedule-theme" data-themes="' + suggested0.join(",") + '" style="background:none;border:1px dashed var(--steel);border-radius:6px;color:var(--steel);font-size:11px;font-weight:700;padding:4px 8px;cursor:pointer;white-space:nowrap;margin-left:8px">Pré-remplir →</button>';
     html += "</div>";
+    if (classes.length > 1) {
+      html += '<div class="muted" style="font-size:11px;margin:-8px 0 14px">+ ' + (classes.length - 1) + ' autre(s) cours ce jour</div>';
+    }
   }
-
-  if (seance.wearable) html += wearableCardHtml(seance.wearable);
-  if (seance.workout) html += workoutCardHtml(seance.workout);
 
   html += '<div class="card">';
   html += '<div class="section-label">Discipline</div>';
-  html += '<input type="text" id="discipline-input" placeholder="ex. Calisthenics, session perso…" value="' + esc(session.discipline || "") + '" style="margin-bottom:16px" />';
+  html += '<select id="discipline-input" style="margin-bottom:16px">';
+  html += '<option value=""' + (!session.discipline ? " selected" : "") + '>— Choisir —</option>';
+  Object.keys(DISCIPLINE_TO_THEMES).forEach(function(d) {
+    html += '<option value="' + esc(d) + '"' + (session.discipline === d ? " selected" : "") + '>' + esc(d) + "</option>";
+  });
+  html += '<option value="__autre__"' + (disciplineOtherMode || (session.discipline && !DISCIPLINE_TO_THEMES[session.discipline]) ? " selected" : "") + '>Autre…</option>';
+  html += "</select>";
+  if (disciplineOtherMode || (session.discipline && !DISCIPLINE_TO_THEMES[session.discipline])) {
+    html += '<input type="text" id="discipline-other" placeholder="Précise la discipline" value="' + esc(session.discipline && !DISCIPLINE_TO_THEMES[session.discipline] ? session.discipline : "") + '" style="margin-top:8px;margin-bottom:16px" />';
+  }
   html += '<div class="section-label">Objectif de séance</div><div class="pill-row compact" id="goal-row" style="margin-bottom:16px">';
   GOALS.forEach(function(g) { html += pillHtml(g, session.goal === g.id, "goal"); });
   html += "</div>";
-  html += '<div class="section-label">Durée' + (seance.workout ? ' <span class="muted" style="text-transform:none">(détectée par la montre, modifiable)</span>' : "") + '</div><div class="pill-row" id="duration-row" style="margin-bottom:' + (session.durationPreset === "plus" ? 10 : 16) + 'px">';
+  html += '<div class="section-label">Durée</div><div class="pill-row" id="duration-row" style="margin-bottom:' + (session.durationPreset === "plus" ? 10 : 16) + 'px">';
   DURATIONS.forEach(function(d) { html += pillHtml(d, session.durationPreset === d.id, "duration"); });
   html += "</div>";
   if (session.durationPreset === "plus") {
@@ -640,11 +644,54 @@ function drawSeance() {
   }
   html += "</div>";
 
-  THEMES.forEach(function(t) { html += themeCardHtml(t, session.entries[t.id]); });
+  // Thèmes travaillés — liste compacte de ce qui est déjà loggé, ajout via
+  // menu déroulant avec validation explicite plutôt que 8 cartes toujours
+  // dépliées prenant toute la place.
+  html += '<div class="card"><div class="section-label">Thèmes travaillés</div>';
+  const loggedIds = Object.keys(session.entries);
+  if (loggedIds.length === 0) {
+    html += '<div class="muted" style="font-size:12px;margin-bottom:12px">Aucun thème loggé pour l\'instant.</div>';
+  } else {
+    loggedIds.forEach(function(tid) {
+      const t = THEMES.find(function(x) { return x.id === tid; });
+      const d = session.entries[tid];
+      const contractionLabel = (CONTRACTIONS.find(function(c){return c.id===d.contraction;})||{label:"Dynamique"}).label;
+      const typeLabel = (GOALS.find(function(g){return g.id===d.type;})||{}).label || "–";
+      html += '<div class="theme-logged-row" data-theme="' + tid + '" style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);cursor:pointer">';
+      html += '<div><div style="font-weight:700;font-size:13px">' + esc(t ? t.label : tid) + '</div><div class="muted" style="font-size:11px">' + contractionLabel + " · " + typeLabel + " · RPE " + (d.rpe || "–") + "</div></div>";
+      html += '<button class="theme-remove" data-theme="' + tid + '" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--red);font-size:11px;font-weight:700;cursor:pointer;padding:4px 10px">Retirer</button></div>';
+    });
+  }
 
-  const activeCount = Object.keys(session.entries).length;
-  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:18px;min-height:20px">';
-  html += '<span class="muted">' + (activeCount > 0 ? activeCount + " thème(s) sélectionné(s)" : "Coche les thèmes travaillés") + '</span><span class="status" id="save-status"></span></div>';
+  const remainingThemes = THEMES.filter(function(t) { return loggedIds.indexOf(t.id) === -1; });
+  if (remainingThemes.length > 0 || themeDraftId) {
+    html += '<div class="section-label" style="margin-top:14px">Ajouter un thème</div>';
+    html += '<select id="theme-select" style="margin-bottom:' + (themeDraftId ? "14px" : "0") + '">';
+    html += '<option value=""' + (!themeDraftId ? " selected" : "") + '>— Choisir un thème —</option>';
+    THEMES.forEach(function(t) {
+      const already = loggedIds.indexOf(t.id) !== -1 && t.id !== themeDraftId;
+      if (already) return;
+      html += '<option value="' + t.id + '"' + (themeDraftId === t.id ? " selected" : "") + '>' + esc(t.label) + " — " + esc(t.hint) + "</option>";
+    });
+    html += "</select>";
+
+    if (themeDraftId) {
+      html += '<div class="pill-row compact" id="draft-contraction-row" style="margin-bottom:14px">';
+      CONTRACTIONS.forEach(function(c) { html += '<button class="pill' + (themeDraft.contraction === c.id ? " active" : "") + '" data-id="' + c.id + '">' + c.label + "</button>"; });
+      html += "</div>";
+      html += '<div class="section-label">Type d\'effort</div><div class="pill-row compact" id="draft-type-row" style="margin-bottom:14px">';
+      GOALS.forEach(function(g) { html += '<button class="pill' + (themeDraft.type === g.id ? " active" : "") + '" data-id="' + g.id + '">' + g.label + "</button>"; });
+      html += "</div>";
+      html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><span class="section-label" style="margin:0">Intensité (RPE)</span><span class="rpe-value">' + (themeDraft.rpe > 0 ? themeDraft.rpe : "–") + "</span></div>";
+      html += rpeLadderHtml("draft", themeDraft.rpe || 0);
+      html += '<button id="theme-draft-confirm" style="width:100%;margin-top:14px;padding:12px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Ajouter ce thème</button>';
+    }
+  }
+  html += "</div>";
+
+  const activeCount = loggedIds.length;
+  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:-4px;margin-bottom:18px;min-height:20px">';
+  html += '<span class="muted">' + (activeCount > 0 ? activeCount + " thème(s) loggé(s)" : "Aucun thème loggé") + '</span><span class="status" id="save-status"></span></div>';
 
   html += '<button class="btn-outline" id="toggle-history">Voir l\'historique (' + seance.history.length + ")</button>";
   html += '<div id="history-list" style="display:' + (historyOpen ? "block" : "none") + ';margin-top:14px">';
@@ -688,28 +735,6 @@ function wearableCardHtml(w) {
   if (w.steps_total != null) html += "<span>Pas <b style='color:var(--chalk)'>" + w.steps_total + "</b></span>";
   return html + "</div></div>";
 }
-function themeCardHtml(theme, data) {
-  const on = !!data;
-  let html = '<div class="theme-card' + (on ? " on" : "") + '" data-theme="' + theme.id + '">';
-  html += '<button class="theme-head" data-action="toggle-theme" data-theme="' + theme.id + '">';
-  html += '<div><div class="theme-label">' + esc(theme.label) + '</div><div class="theme-hint">' + esc(theme.hint) + "</div></div>";
-  html += '<div class="checkbox' + (on ? " on" : "") + '">' + (on ? "✓" : "") + "</div></button>";
-  if (on) {
-    html += '<div class="theme-body">';
-    html += '<div class="pill-row compact" style="margin-bottom:14px" data-theme-group="contraction" data-theme="' + theme.id + '">';
-    CONTRACTIONS.forEach(function(c) { html += '<button class="pill' + (data.contraction === c.id ? " active" : "") + '" data-id="' + c.id + '">' + c.label + "</button>"; });
-    html += "</div>";
-    html += '<div class="section-label">Type d\'effort</div><div class="pill-row compact" style="margin-bottom:14px" data-theme-group="type" data-theme="' + theme.id + '">';
-    GOALS.forEach(function(g) { html += '<button class="pill' + (data.type === g.id ? " active" : "") + '" data-id="' + g.id + '">' + g.label + "</button>"; });
-    html += "</div>";
-    html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><span class="section-label" style="margin:0">Intensité (RPE)</span><span class="rpe-value">' + (data.rpe > 0 ? data.rpe : "–") + "</span></div>";
-    html += rpeLadderHtml("theme:" + theme.id, data.rpe || 0);
-    html += "</div>";
-  }
-  html += "</div>";
-  return html;
-}
-
 // Sauvegarde en tâche de fond — ne bloque jamais le rendu, ne relance jamais
 // de rechargement réseau (fini les doubles-clics et le retour en haut de page).
 function saveInBackground() {
@@ -744,8 +769,15 @@ function wireSeanceEvents() {
     });
   });
 
-  const discInput = document.getElementById("discipline-input");
-  if (discInput) discInput.addEventListener("blur", function() { session.discipline = discInput.value; saveInBackground(); });
+  const discSelect = document.getElementById("discipline-input");
+  if (discSelect) discSelect.addEventListener("change", function() {
+    if (discSelect.value === "__autre__") { disciplineOtherMode = true; session.discipline = ""; drawSeance(); return; }
+    disciplineOtherMode = false;
+    session.discipline = discSelect.value;
+    update();
+  });
+  const discOther = document.getElementById("discipline-other");
+  if (discOther) discOther.addEventListener("blur", function() { session.discipline = discOther.value; saveInBackground(); });
 
   document.querySelectorAll('#goal-row .pill').forEach(function(btn) {
     btn.addEventListener("click", function() { session.goal = session.goal === btn.dataset.id ? null : btn.dataset.id; update(); });
@@ -773,33 +805,49 @@ function wireSeanceEvents() {
     });
   });
 
-  document.querySelectorAll('[data-action="toggle-theme"]').forEach(function(btn) {
-    btn.addEventListener("click", function() {
-      const id = btn.dataset.theme;
-      if (session.entries[id]) delete session.entries[id]; else session.entries[id] = { contraction: "dynamique", rpe: 0 };
+  // Thèmes : ajout via menu déroulant + brouillon + validation explicite.
+  document.querySelectorAll('.theme-logged-row').forEach(function(row) {
+    row.addEventListener("click", function(e) {
+      if (e.target.closest(".theme-remove")) return;
+      const id = row.dataset.theme;
+      themeDraftId = id;
+      themeDraft = Object.assign({ contraction: "dynamique", type: null, rpe: 0 }, session.entries[id]);
+      drawSeance();
+    });
+  });
+  document.querySelectorAll('.theme-remove').forEach(function(btn) {
+    btn.addEventListener("click", function(e) {
+      e.stopPropagation();
+      delete session.entries[btn.dataset.theme];
+      if (themeDraftId === btn.dataset.theme) themeDraftId = null;
       update();
     });
   });
-  document.querySelectorAll('[data-theme-group="contraction"]').forEach(function(row) {
-    row.querySelectorAll(".pill").forEach(function(btn) {
-      btn.addEventListener("click", function() { session.entries[row.dataset.theme].contraction = btn.dataset.id; update(); });
+  const themeSelect = document.getElementById("theme-select");
+  if (themeSelect) themeSelect.addEventListener("change", function() {
+    if (!themeSelect.value) { themeDraftId = null; drawSeance(); return; }
+    themeDraftId = themeSelect.value;
+    themeDraft = Object.assign({ contraction: "dynamique", type: null, rpe: 0 }, session.entries[themeDraftId]);
+    drawSeance();
+  });
+  document.querySelectorAll('#draft-contraction-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { themeDraft.contraction = btn.dataset.id; drawSeance(); });
+  });
+  document.querySelectorAll('#draft-type-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { themeDraft.type = btn.dataset.id; drawSeance(); });
+  });
+  document.querySelectorAll('.rpe-ladder[data-scope="draft"] .rpe-bar').forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      const n = Number(btn.dataset.n);
+      themeDraft.rpe = themeDraft.rpe === n ? 0 : n;
+      drawSeance();
     });
   });
-  document.querySelectorAll('[data-theme-group="type"]').forEach(function(row) {
-    row.querySelectorAll(".pill").forEach(function(btn) {
-      btn.addEventListener("click", function() { session.entries[row.dataset.theme].type = btn.dataset.id; update(); });
-    });
-  });
-  document.querySelectorAll('.rpe-ladder').forEach(function(ladder) {
-    if (ladder.dataset.scope === "global") return;
-    const themeId = ladder.dataset.scope.split(":")[1];
-    ladder.querySelectorAll(".rpe-bar").forEach(function(btn) {
-      btn.addEventListener("click", function() {
-        const n = Number(btn.dataset.n);
-        session.entries[themeId].rpe = session.entries[themeId].rpe === n ? 0 : n;
-        update();
-      });
-    });
+  const draftConfirm = document.getElementById("theme-draft-confirm");
+  if (draftConfirm) draftConfirm.addEventListener("click", function() {
+    session.entries[themeDraftId] = Object.assign({}, themeDraft);
+    themeDraftId = null;
+    update();
   });
 
   const toggleHist = document.getElementById("toggle-history");
@@ -1399,7 +1447,7 @@ async function renderSommeil() {
       const pct = Math.round((s[1]/stageTotal)*100);
       const sh = Math.floor(s[1]/60), sm = s[1]%60;
       const q = stageQualifier(pct, s[3], s[4], s[5]);
-      html += '<div style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px"><span>' + s[0] + '</span><span class="muted">' + sh + 'h' + (sm<10?'0':'') + sm + ' · ' + pct + '%</span></div>';
+      html += '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span>' + s[0] + '</span><span class="muted">' + sh + 'h' + (sm<10?'0':'') + sm + ' · ' + pct + '%</span></div>';
       html += '<div style="height:8px;background:var(--surfaceRaised);border-radius:4px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:var(--' + s[2] + ')"></div></div>';
       html += '<div style="text-align:right;font-size:10px;color:var(--' + q.color + ');font-weight:700;margin-top:2px">' + q.label + "</div></div>";
     });
@@ -1418,37 +1466,35 @@ async function renderSommeil() {
 
     // Sieste — non détectable automatiquement par la montre (pas de mécanisme
     // dédié sur Amazfit/Huami), saisie manuelle avec durées rapides.
-    // Carte construite ici mais insérée plus bas (après "Lecture"), pour ne
-    // pas s'intercaler entre les données de la nuit et leur analyse.
     const totalNapMin = todayNaps.reduce(function(s, n) { return s + n.duration_min; }, 0);
-    let napCardHtml = '<div class="card"><div class="section-label" style="margin-bottom:14px">Sieste aujourd\'hui</div>';
+    html += '<div class="card"><div class="section-label">Sieste aujourd\'hui</div>';
     if (todayNaps.length) {
       const qLabels = { bonne: "Bonne", moyenne: "Moyenne", mauvaise: "Mauvaise" };
       const qColors = { bonne: "green", moyenne: "amber", mauvaise: "red" };
-      napCardHtml += '<div style="margin-bottom:18px">';
+      html += '<div style="margin-bottom:14px">';
       todayNaps.forEach(function(n) {
         const q = n.quality || "moyenne";
-        napCardHtml += '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)">';
-        napCardHtml += '<span style="font-size:13px">✓ ' + n.duration_min + ' min <span style="color:var(--' + (qColors[q]||"steel") + ');font-size:11px;font-weight:700">· ' + (qLabels[q]||q) + '</span></span>';
-        napCardHtml += '<button class="nap-delete" data-id="' + n.id + '" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--red);font-size:11px;font-weight:700;cursor:pointer;padding:4px 10px">Supprimer</button></div>';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">';
+        html += '<span style="font-size:13px">✓ ' + n.duration_min + ' min <span style="color:var(--' + (qColors[q]||"steel") + ');font-size:11px;font-weight:700">· ' + (qLabels[q]||q) + '</span></span>';
+        html += '<button class="nap-delete" data-id="' + n.id + '" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--red);font-size:11px;font-weight:700;cursor:pointer;padding:4px 10px">Supprimer</button></div>';
       });
-      napCardHtml += '<div class="muted" style="font-size:11px;margin-top:10px">Total loggé aujourd\'hui : ' + totalNapMin + ' min</div>';
-      napCardHtml += "</div>";
+      html += '<div class="muted" style="font-size:11px;margin-top:8px">Total loggé aujourd\'hui : ' + totalNapMin + ' min</div>';
+      html += "</div>";
     }
-    napCardHtml += '<div class="section-label" style="margin-bottom:8px">Qualité</div>';
-    napCardHtml += '<div class="pill-row compact" id="nap-quality-row" style="margin-bottom:20px">';
+    html += '<div class="section-label" style="margin-bottom:6px">Qualité</div>';
+    html += '<div class="pill-row compact" id="nap-quality-row" style="margin-bottom:16px">';
     [["bonne","Bonne"],["moyenne","Moyenne"],["mauvaise","Mauvaise"]].forEach(function(q) {
-      napCardHtml += '<button class="pill' + (napQuality === q[0] ? " active" : "") + '" data-quality="' + q[0] + '">' + q[1] + "</button>";
+      html += '<button class="pill' + (napQuality === q[0] ? " active" : "") + '" data-quality="' + q[0] + '">' + q[1] + "</button>";
     });
-    napCardHtml += "</div>";
-    napCardHtml += '<div class="section-label" style="margin-bottom:8px">Durée</div>';
-    napCardHtml += '<div class="pill-row compact" id="nap-duration-row" style="margin-bottom:20px">';
+    html += "</div>";
+    html += '<div class="section-label" style="margin-bottom:6px">Durée</div>';
+    html += '<div class="pill-row compact" id="nap-duration-row" style="margin-bottom:16px">';
     [20, 30, 45, 60].forEach(function(m) {
-      napCardHtml += '<button class="pill' + (napDuration === m ? " active" : "") + '" data-duration="' + m + '">' + m + ' min</button>';
+      html += '<button class="pill' + (napDuration === m ? " active" : "") + '" data-duration="' + m + '">' + m + ' min</button>';
     });
-    napCardHtml += "</div>";
-    napCardHtml += '<button id="nap-validate" style="width:100%;padding:14px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Valider la sieste</button>';
-    napCardHtml += "</div>";
+    html += "</div>";
+    html += '<button id="nap-validate" style="width:100%;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Valider la sieste</button>';
+    html += "</div>";
     const sleepLines = [];
     if (totalH < 6) sleepLines.push({ tone: "warn", text: "Moins de 6h cette nuit — sous le seuil généralement associé à une récupération incomplète." });
     else if (totalH >= 7 && totalH <= 9) sleepLines.push({ tone: "good", text: "Dans la fourchette recommandée de 7-9h." });
@@ -1473,17 +1519,13 @@ async function renderSommeil() {
       }
     }
     if (sleepLines.length) {
-      html += '<div class="card"><div class="section-label" style="margin-bottom:12px">Lecture</div>';
+      html += '<div class="card"><div class="section-label">Lecture</div>';
       sleepLines.forEach(function(l) {
         const dotColor = l.tone === "warn" ? "red" : l.tone === "good" ? "green" : "steel";
-        html += '<div style="display:flex;align-items:flex-start;margin-bottom:10px;font-size:13px;color:var(--chalkDim)"><span style="display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--' + dotColor + ');margin-right:8px;margin-top:5px;flex-shrink:0"></span><span>' + esc(l.text) + "</span></div>";
+        html += '<div style="display:flex;align-items:flex-start;margin-bottom:8px;font-size:13px;color:var(--chalkDim)"><span style="display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--' + dotColor + ');margin-right:8px;margin-top:5px;flex-shrink:0"></span><span>' + esc(l.text) + "</span></div>";
       });
-      html += '<div class="muted" style="font-size:10px;margin-top:6px">Fourchettes de référence générales (littérature sommeil), pas un diagnostic personnalisé.</div></div>';
+      html += '<div class="muted" style="font-size:10px;margin-top:4px">Fourchettes de référence générales (littérature sommeil), pas un diagnostic personnalisé.</div></div>';
     }
-
-    // Carte Sieste positionnée après l'analyse, pas entre les données brutes
-    // de la nuit et leur lecture.
-    html += napCardHtml;
   }
 
   html += '<div class="card"><div class="section-label">Durée de sommeil (h) — 14 jours</div>';
