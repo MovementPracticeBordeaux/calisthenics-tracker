@@ -258,10 +258,23 @@ function sessionFromSchedule(classes) {
 }
 function emptySession() { return { entries: {}, goal: null, durationPreset: null, duration: "", achievement: null, intensity: 0, discipline: null, time: "" }; }
 
+// Entrées "effectives" pour le calcul de charge et la sauvegarde — dérivées
+// à la demande, sans jamais muter session.entries pendant l'affichage.
+function getEffectiveEntries(s) {
+  if (s.discipline === "Calisthenics") return s.entries || {};
+  const singleThemeId = s.discipline ? SINGLE_THEME_DISCIPLINES[s.discipline] : null;
+  if (singleThemeId) {
+    const e = {};
+    e[singleThemeId] = { contraction: "dynamique", rpe: s.intensity || 0 };
+    return e;
+  }
+  return {};
+}
+
 function computeLoad(s) {
   if (!s) return { sessionLoad: null, correctedLoad: null };
   const sessionLoad = s.intensity > 0 && s.duration ? Math.round(s.intensity * Number(s.duration)) : null;
-  const active = Object.entries(s.entries || {}).filter(function(e){ return e[1].rpe > 0; });
+  const active = Object.entries(getEffectiveEntries(s)).filter(function(e){ return e[1].rpe > 0; });
   const totalRpe = active.reduce(function(sum,e){ return sum + e[1].rpe; }, 0);
   if (active.length === 0) return { sessionLoad: sessionLoad, correctedLoad: sessionLoad };
   const neuralFactor = active.reduce(function(sum,e){
@@ -684,13 +697,9 @@ function drawSeance() {
       html += "</div>";
     });
   } else if (singleThemeId) {
-    // Synchronise silencieusement l'entrée unique avec le RPE global — la
-    // charge d'entraînement continue de bénéficier du coefficient de
-    // complexité propre à ce thème, sans UI redondante à afficher.
-    session.entries = {};
-    session.entries[singleThemeId] = { contraction: "dynamique", rpe: session.intensity || 0 };
-  } else {
-    session.entries = {};
+    // Rien à afficher ici — l'entrée unique est calculée au moment de la
+    // sauvegarde (getEffectiveEntries), jamais en mutant l'état pendant
+    // l'affichage : c'est justement ça qui a causé la perte de données.
   }
 
   const activeCount = Object.keys(session.entries).length;
