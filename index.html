@@ -794,6 +794,10 @@ function wireSeanceEvents() {
   if (discSelect) discSelect.addEventListener("change", function() {
     if (discSelect.value === "__autre__") { disciplineOtherMode = true; session.discipline = ""; drawSeance(); return; }
     disciplineOtherMode = false;
+    // Changement explicite de discipline (action utilisateur, pas un effet de
+    // bord du rendu) : on vide les thèmes cochés pour éviter qu'une entrée
+    // d'une autre discipline reste accrochée par erreur.
+    session.entries = {};
     session.discipline = discSelect.value;
     update();
   });
