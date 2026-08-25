@@ -181,8 +181,15 @@ const ACHIEVEMENTS = [{ id: "atteint", label: "Atteint", color: "green" }, { id:
 const WARMUP_MINUTES = 22;
 const DISCIPLINE_TO_THEMES = {
   Handstand: ["handstand"], "Mobilité": ["bas"], Locomotion: ["locomotion"],
-  "Arm Balance": ["arm_balance"], Altinha: ["altinha"], Calisthenics: ["altinha"]
+  "Arm Balance": ["arm_balance"], Altinha: ["altinha"], Calisthenics: ["tirage", "poussee", "complet"]
 };
+// Seule la Calisthenics se décompose en plusieurs thèmes (tirage/poussée/
+// complet), avec leurs propres nuances de contraction (isométrique/excentrique)
+// — pertinentes pour ce travail de force précis. Les autres disciplines
+// (Handstand, Arm Balance, Locomotion, Altinha, Mobilité) correspondent à un
+// seul thème identique à la discipline elle-même : pas besoin d'un second
+// menu qui ne ferait que dupliquer ce que le RPE global indique déjà.
+const SINGLE_THEME_DISCIPLINES = { Handstand: "handstand", "Mobilité": "bas", Locomotion: "locomotion", "Arm Balance": "arm_balance", Altinha: "altinha" };
 const CLASS_SCHEDULE = [
   { discipline: "Altinha", jour_semaine: 1, semaine: "B", heure_debut: "11:00", heure_fin: "12:00" },
   { discipline: "Locomotion", jour_semaine: 1, semaine: "B", heure_debut: "12:15", heure_fin: "13:15" },
@@ -646,36 +653,53 @@ function drawSeance() {
     }
   }
 
-  // Thèmes travaillés — liste compacte à cocher, chaque thème ne prend de la
-  // place que s'il est sélectionné. Pas de menu déroulant, pas d'étape
-  // d'ajout séparée : tout se fait dans cette même liste.
-  html += '<div class="section-label" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">Thèmes travaillés</div>';
-  THEMES.forEach(function(t) {
-    const data = session.entries[t.id];
-    const on = !!data;
-    html += '<div class="theme-card' + (on ? " on" : "") + '" data-theme="' + t.id + '" style="margin-bottom:8px">';
-    html += '<button class="theme-head" data-action="toggle-theme" data-theme="' + t.id + '">';
-    html += '<div><div class="theme-label">' + esc(t.label) + '</div><div class="theme-hint">' + esc(t.hint) + "</div></div>";
-    html += '<div class="checkbox' + (on ? " on" : "") + '">' + (on ? "✓" : "") + "</div></button>";
-    if (on) {
-      html += '<div class="theme-body">';
-      html += '<div class="pill-row compact" style="margin-bottom:14px" data-theme-group="contraction" data-theme="' + t.id + '">';
-      CONTRACTIONS.forEach(function(c) { html += '<button class="pill' + (data.contraction === c.id ? " active" : "") + '" data-id="' + c.id + '">' + c.label + "</button>"; });
+  // Thèmes travaillés — uniquement pour la Calisthenics (tirage/poussée/
+  // complet), où le détail contraction/type a un vrai sens. Pour les autres
+  // disciplines (1 thème = 1 discipline), l'entrée se synchronise seule en
+  // coulisse à partir du RPE global, sans dupliquer l'info dans une UI à part.
+  const isCalisthenics = session.discipline === "Calisthenics";
+  const singleThemeId = session.discipline ? SINGLE_THEME_DISCIPLINES[session.discipline] : null;
+  if (isCalisthenics) {
+    html += '<div class="section-label" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">Thèmes travaillés</div>';
+    const CALI_THEMES = THEMES.filter(function(t) { return ["tirage", "poussee", "complet"].indexOf(t.id) !== -1; });
+    CALI_THEMES.forEach(function(t) {
+      const data = session.entries[t.id];
+      const on = !!data;
+      html += '<div class="theme-card' + (on ? " on" : "") + '" data-theme="' + t.id + '" style="margin-bottom:8px">';
+      html += '<button class="theme-head" data-action="toggle-theme" data-theme="' + t.id + '">';
+      html += '<div><div class="theme-label">' + esc(t.label) + '</div><div class="theme-hint">' + esc(t.hint) + "</div></div>";
+      html += '<div class="checkbox' + (on ? " on" : "") + '">' + (on ? "✓" : "") + "</div></button>";
+      if (on) {
+        html += '<div class="theme-body">';
+        html += '<div class="pill-row compact" style="margin-bottom:14px" data-theme-group="contraction" data-theme="' + t.id + '">';
+        CONTRACTIONS.forEach(function(c) { html += '<button class="pill' + (data.contraction === c.id ? " active" : "") + '" data-id="' + c.id + '">' + c.label + "</button>"; });
+        html += "</div>";
+        html += '<div class="section-label">Type d\'effort</div><div class="pill-row compact" style="margin-bottom:14px" data-theme-group="type" data-theme="' + t.id + '">';
+        GOALS.forEach(function(g) { html += '<button class="pill' + (data.type === g.id ? " active" : "") + '" data-id="' + g.id + '">' + g.label + "</button>"; });
+        html += "</div>";
+        html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><span class="section-label" style="margin:0">Intensité (RPE)</span><span class="rpe-value">' + (data.rpe > 0 ? data.rpe : "–") + "</span></div>";
+        html += rpeLadderHtml("theme:" + t.id, data.rpe || 0);
+        html += "</div>";
+      }
       html += "</div>";
-      html += '<div class="section-label">Type d\'effort</div><div class="pill-row compact" style="margin-bottom:14px" data-theme-group="type" data-theme="' + t.id + '">';
-      GOALS.forEach(function(g) { html += '<button class="pill' + (data.type === g.id ? " active" : "") + '" data-id="' + g.id + '">' + g.label + "</button>"; });
-      html += "</div>";
-      html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><span class="section-label" style="margin:0">Intensité (RPE)</span><span class="rpe-value">' + (data.rpe > 0 ? data.rpe : "–") + "</span></div>";
-      html += rpeLadderHtml("theme:" + t.id, data.rpe || 0);
-      html += "</div>";
-    }
-    html += "</div>";
-  });
+    });
+  } else if (singleThemeId) {
+    // Synchronise silencieusement l'entrée unique avec le RPE global — la
+    // charge d'entraînement continue de bénéficier du coefficient de
+    // complexité propre à ce thème, sans UI redondante à afficher.
+    session.entries = {};
+    session.entries[singleThemeId] = { contraction: "dynamique", rpe: session.intensity || 0 };
+  } else {
+    session.entries = {};
+  }
 
   const activeCount = Object.keys(session.entries).length;
+  let countLabel = "Aucun thème loggé";
+  if (isCalisthenics) countLabel = activeCount > 0 ? activeCount + " thème(s) loggé(s)" : "Aucun thème loggé";
+  else if (singleThemeId) countLabel = "Séance enregistrée";
   html += '<button id="validate-session" style="width:100%;margin-top:12px;padding:14px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:14px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Valider le log du jour</button>';
   html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">';
-  html += '<span class="muted">' + (activeCount > 0 ? activeCount + " thème(s) loggé(s)" : "Aucun thème loggé") + '</span><span class="status" id="save-status"></span></div>';
+  html += '<span class="muted">' + countLabel + '</span><span class="status" id="save-status"></span></div>';
   html += "</div>";
 
   html += '<button class="btn-outline" id="toggle-history">Voir l\'historique (' + seance.history.length + ")</button>";
