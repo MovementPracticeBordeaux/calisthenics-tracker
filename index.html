@@ -1399,7 +1399,7 @@ async function renderSommeil() {
       const pct = Math.round((s[1]/stageTotal)*100);
       const sh = Math.floor(s[1]/60), sm = s[1]%60;
       const q = stageQualifier(pct, s[3], s[4], s[5]);
-      html += '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span>' + s[0] + '</span><span class="muted">' + sh + 'h' + (sm<10?'0':'') + sm + ' · ' + pct + '%</span></div>';
+      html += '<div style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px"><span>' + s[0] + '</span><span class="muted">' + sh + 'h' + (sm<10?'0':'') + sm + ' · ' + pct + '%</span></div>';
       html += '<div style="height:8px;background:var(--surfaceRaised);border-radius:4px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:var(--' + s[2] + ')"></div></div>';
       html += '<div style="text-align:right;font-size:10px;color:var(--' + q.color + ');font-weight:700;margin-top:2px">' + q.label + "</div></div>";
     });
@@ -1418,35 +1418,37 @@ async function renderSommeil() {
 
     // Sieste — non détectable automatiquement par la montre (pas de mécanisme
     // dédié sur Amazfit/Huami), saisie manuelle avec durées rapides.
+    // Carte construite ici mais insérée plus bas (après "Lecture"), pour ne
+    // pas s'intercaler entre les données de la nuit et leur analyse.
     const totalNapMin = todayNaps.reduce(function(s, n) { return s + n.duration_min; }, 0);
-    html += '<div class="card"><div class="section-label">Sieste aujourd\'hui</div>';
+    let napCardHtml = '<div class="card"><div class="section-label" style="margin-bottom:14px">Sieste aujourd\'hui</div>';
     if (todayNaps.length) {
       const qLabels = { bonne: "Bonne", moyenne: "Moyenne", mauvaise: "Mauvaise" };
       const qColors = { bonne: "green", moyenne: "amber", mauvaise: "red" };
-      html += '<div style="margin-bottom:14px">';
+      napCardHtml += '<div style="margin-bottom:18px">';
       todayNaps.forEach(function(n) {
         const q = n.quality || "moyenne";
-        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">';
-        html += '<span style="font-size:13px">✓ ' + n.duration_min + ' min <span style="color:var(--' + (qColors[q]||"steel") + ');font-size:11px;font-weight:700">· ' + (qLabels[q]||q) + '</span></span>';
-        html += '<button class="nap-delete" data-id="' + n.id + '" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--red);font-size:11px;font-weight:700;cursor:pointer;padding:4px 10px">Supprimer</button></div>';
+        napCardHtml += '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)">';
+        napCardHtml += '<span style="font-size:13px">✓ ' + n.duration_min + ' min <span style="color:var(--' + (qColors[q]||"steel") + ');font-size:11px;font-weight:700">· ' + (qLabels[q]||q) + '</span></span>';
+        napCardHtml += '<button class="nap-delete" data-id="' + n.id + '" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--red);font-size:11px;font-weight:700;cursor:pointer;padding:4px 10px">Supprimer</button></div>';
       });
-      html += '<div class="muted" style="font-size:11px;margin-top:8px">Total loggé aujourd\'hui : ' + totalNapMin + ' min</div>';
-      html += "</div>";
+      napCardHtml += '<div class="muted" style="font-size:11px;margin-top:10px">Total loggé aujourd\'hui : ' + totalNapMin + ' min</div>';
+      napCardHtml += "</div>";
     }
-    html += '<div class="section-label" style="margin-bottom:6px">Qualité</div>';
-    html += '<div class="pill-row compact" id="nap-quality-row" style="margin-bottom:16px">';
+    napCardHtml += '<div class="section-label" style="margin-bottom:8px">Qualité</div>';
+    napCardHtml += '<div class="pill-row compact" id="nap-quality-row" style="margin-bottom:20px">';
     [["bonne","Bonne"],["moyenne","Moyenne"],["mauvaise","Mauvaise"]].forEach(function(q) {
-      html += '<button class="pill' + (napQuality === q[0] ? " active" : "") + '" data-quality="' + q[0] + '">' + q[1] + "</button>";
+      napCardHtml += '<button class="pill' + (napQuality === q[0] ? " active" : "") + '" data-quality="' + q[0] + '">' + q[1] + "</button>";
     });
-    html += "</div>";
-    html += '<div class="section-label" style="margin-bottom:6px">Durée</div>';
-    html += '<div class="pill-row compact" id="nap-duration-row" style="margin-bottom:16px">';
+    napCardHtml += "</div>";
+    napCardHtml += '<div class="section-label" style="margin-bottom:8px">Durée</div>';
+    napCardHtml += '<div class="pill-row compact" id="nap-duration-row" style="margin-bottom:20px">';
     [20, 30, 45, 60].forEach(function(m) {
-      html += '<button class="pill' + (napDuration === m ? " active" : "") + '" data-duration="' + m + '">' + m + ' min</button>';
+      napCardHtml += '<button class="pill' + (napDuration === m ? " active" : "") + '" data-duration="' + m + '">' + m + ' min</button>';
     });
-    html += "</div>";
-    html += '<button id="nap-validate" style="width:100%;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Valider la sieste</button>';
-    html += "</div>";
+    napCardHtml += "</div>";
+    napCardHtml += '<button id="nap-validate" style="width:100%;padding:14px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Valider la sieste</button>';
+    napCardHtml += "</div>";
     const sleepLines = [];
     if (totalH < 6) sleepLines.push({ tone: "warn", text: "Moins de 6h cette nuit — sous le seuil généralement associé à une récupération incomplète." });
     else if (totalH >= 7 && totalH <= 9) sleepLines.push({ tone: "good", text: "Dans la fourchette recommandée de 7-9h." });
@@ -1471,13 +1473,17 @@ async function renderSommeil() {
       }
     }
     if (sleepLines.length) {
-      html += '<div class="card"><div class="section-label">Lecture</div>';
+      html += '<div class="card"><div class="section-label" style="margin-bottom:12px">Lecture</div>';
       sleepLines.forEach(function(l) {
         const dotColor = l.tone === "warn" ? "red" : l.tone === "good" ? "green" : "steel";
-        html += '<div style="display:flex;align-items:flex-start;margin-bottom:8px;font-size:13px;color:var(--chalkDim)"><span style="display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--' + dotColor + ');margin-right:8px;margin-top:5px;flex-shrink:0"></span><span>' + esc(l.text) + "</span></div>";
+        html += '<div style="display:flex;align-items:flex-start;margin-bottom:10px;font-size:13px;color:var(--chalkDim)"><span style="display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--' + dotColor + ');margin-right:8px;margin-top:5px;flex-shrink:0"></span><span>' + esc(l.text) + "</span></div>";
       });
-      html += '<div class="muted" style="font-size:10px;margin-top:4px">Fourchettes de référence générales (littérature sommeil), pas un diagnostic personnalisé.</div></div>';
+      html += '<div class="muted" style="font-size:10px;margin-top:6px">Fourchettes de référence générales (littérature sommeil), pas un diagnostic personnalisé.</div></div>';
     }
+
+    // Carte Sieste positionnée après l'analyse, pas entre les données brutes
+    // de la nuit et leur lecture.
+    html += napCardHtml;
   }
 
   html += '<div class="card"><div class="section-label">Durée de sommeil (h) — 14 jours</div>';
