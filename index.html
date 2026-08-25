@@ -646,52 +646,34 @@ function drawSeance() {
     }
   }
 
-  // Thèmes travaillés — même carte que le reste du log, pas un bloc à part.
-  // Ajout via menu déroulant avec validation explicite plutôt que 8 cartes
-  // toujours dépliées prenant toute la place.
+  // Thèmes travaillés — liste compacte à cocher, chaque thème ne prend de la
+  // place que s'il est sélectionné. Pas de menu déroulant, pas d'étape
+  // d'ajout séparée : tout se fait dans cette même liste.
   html += '<div class="section-label" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">Thèmes travaillés</div>';
-  const loggedIds = Object.keys(session.entries);
-  if (loggedIds.length === 0) {
-    html += '<div class="muted" style="font-size:12px;margin-bottom:12px">Aucun thème loggé pour l\'instant.</div>';
-  } else {
-    loggedIds.forEach(function(tid) {
-      const t = THEMES.find(function(x) { return x.id === tid; });
-      const d = session.entries[tid];
-      const contractionLabel = (CONTRACTIONS.find(function(c){return c.id===d.contraction;})||{label:"Dynamique"}).label;
-      const typeLabel = (GOALS.find(function(g){return g.id===d.type;})||{}).label || "–";
-      html += '<div class="theme-logged-row" data-theme="' + tid + '" style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);cursor:pointer">';
-      html += '<div><div style="font-weight:700;font-size:13px">' + esc(t ? t.label : tid) + '</div><div class="muted" style="font-size:11px">' + contractionLabel + " · " + typeLabel + " · RPE " + (d.rpe || "–") + "</div></div>";
-      html += '<button class="theme-remove" data-theme="' + tid + '" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--red);font-size:11px;font-weight:700;cursor:pointer;padding:4px 10px">Retirer</button></div>';
-    });
-  }
-
-  const remainingThemes = THEMES.filter(function(t) { return loggedIds.indexOf(t.id) === -1; });
-  if (remainingThemes.length > 0 || themeDraftId) {
-    html += '<div class="section-label" style="margin-top:14px">Ajouter un thème</div>';
-    html += '<select id="theme-select" style="margin-bottom:' + (themeDraftId ? "14px" : "0") + '">';
-    html += '<option value=""' + (!themeDraftId ? " selected" : "") + '>— Choisir un thème —</option>';
-    THEMES.forEach(function(t) {
-      const already = loggedIds.indexOf(t.id) !== -1 && t.id !== themeDraftId;
-      if (already) return;
-      html += '<option value="' + t.id + '"' + (themeDraftId === t.id ? " selected" : "") + '>' + esc(t.label) + " — " + esc(t.hint) + "</option>";
-    });
-    html += "</select>";
-
-    if (themeDraftId) {
-      html += '<div class="pill-row compact" id="draft-contraction-row" style="margin-bottom:14px">';
-      CONTRACTIONS.forEach(function(c) { html += '<button class="pill' + (themeDraft.contraction === c.id ? " active" : "") + '" data-id="' + c.id + '">' + c.label + "</button>"; });
+  THEMES.forEach(function(t) {
+    const data = session.entries[t.id];
+    const on = !!data;
+    html += '<div class="theme-card' + (on ? " on" : "") + '" data-theme="' + t.id + '" style="margin-bottom:8px">';
+    html += '<button class="theme-head" data-action="toggle-theme" data-theme="' + t.id + '">';
+    html += '<div><div class="theme-label">' + esc(t.label) + '</div><div class="theme-hint">' + esc(t.hint) + "</div></div>";
+    html += '<div class="checkbox' + (on ? " on" : "") + '">' + (on ? "✓" : "") + "</div></button>";
+    if (on) {
+      html += '<div class="theme-body">';
+      html += '<div class="pill-row compact" style="margin-bottom:14px" data-theme-group="contraction" data-theme="' + t.id + '">';
+      CONTRACTIONS.forEach(function(c) { html += '<button class="pill' + (data.contraction === c.id ? " active" : "") + '" data-id="' + c.id + '">' + c.label + "</button>"; });
       html += "</div>";
-      html += '<div class="section-label">Type d\'effort</div><div class="pill-row compact" id="draft-type-row" style="margin-bottom:14px">';
-      GOALS.forEach(function(g) { html += '<button class="pill' + (themeDraft.type === g.id ? " active" : "") + '" data-id="' + g.id + '">' + g.label + "</button>"; });
+      html += '<div class="section-label">Type d\'effort</div><div class="pill-row compact" style="margin-bottom:14px" data-theme-group="type" data-theme="' + t.id + '">';
+      GOALS.forEach(function(g) { html += '<button class="pill' + (data.type === g.id ? " active" : "") + '" data-id="' + g.id + '">' + g.label + "</button>"; });
       html += "</div>";
-      html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><span class="section-label" style="margin:0">Intensité (RPE)</span><span class="rpe-value">' + (themeDraft.rpe > 0 ? themeDraft.rpe : "–") + "</span></div>";
-      html += rpeLadderHtml("draft", themeDraft.rpe || 0);
-      html += '<button id="theme-draft-confirm" style="width:100%;margin-top:14px;padding:12px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Ajouter ce thème</button>';
+      html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><span class="section-label" style="margin:0">Intensité (RPE)</span><span class="rpe-value">' + (data.rpe > 0 ? data.rpe : "–") + "</span></div>";
+      html += rpeLadderHtml("theme:" + t.id, data.rpe || 0);
+      html += "</div>";
     }
-  }
+    html += "</div>";
+  });
 
-  const activeCount = loggedIds.length;
-  html += '<button id="validate-session" style="width:100%;margin-top:20px;padding:14px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:14px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Valider le log du jour</button>';
+  const activeCount = Object.keys(session.entries).length;
+  html += '<button id="validate-session" style="width:100%;margin-top:12px;padding:14px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:14px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Valider le log du jour</button>';
   html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">';
   html += '<span class="muted">' + (activeCount > 0 ? activeCount + " thème(s) loggé(s)" : "Aucun thème loggé") + '</span><span class="status" id="save-status"></span></div>';
   html += "</div>";
@@ -811,49 +793,35 @@ function wireSeanceEvents() {
     });
   });
 
-  // Thèmes : ajout via menu déroulant + brouillon + validation explicite.
-  document.querySelectorAll('.theme-logged-row').forEach(function(row) {
-    row.addEventListener("click", function(e) {
-      if (e.target.closest(".theme-remove")) return;
-      const id = row.dataset.theme;
-      themeDraftId = id;
-      themeDraft = Object.assign({ contraction: "dynamique", type: null, rpe: 0 }, session.entries[id]);
-      drawSeance();
-    });
-  });
-  document.querySelectorAll('.theme-remove').forEach(function(btn) {
-    btn.addEventListener("click", function(e) {
-      e.stopPropagation();
-      delete session.entries[btn.dataset.theme];
-      if (themeDraftId === btn.dataset.theme) themeDraftId = null;
+  // Thèmes : liste à cocher directement, pas d'étape d'ajout séparée.
+  document.querySelectorAll('[data-action="toggle-theme"]').forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      const id = btn.dataset.theme;
+      if (session.entries[id]) delete session.entries[id]; else session.entries[id] = { contraction: "dynamique", rpe: 0 };
       update();
     });
   });
-  const themeSelect = document.getElementById("theme-select");
-  if (themeSelect) themeSelect.addEventListener("change", function() {
-    if (!themeSelect.value) { themeDraftId = null; drawSeance(); return; }
-    themeDraftId = themeSelect.value;
-    themeDraft = Object.assign({ contraction: "dynamique", type: null, rpe: 0 }, session.entries[themeDraftId]);
-    drawSeance();
-  });
-  document.querySelectorAll('#draft-contraction-row .pill').forEach(function(btn) {
-    btn.addEventListener("click", function() { themeDraft.contraction = btn.dataset.id; drawSeance(); });
-  });
-  document.querySelectorAll('#draft-type-row .pill').forEach(function(btn) {
-    btn.addEventListener("click", function() { themeDraft.type = btn.dataset.id; drawSeance(); });
-  });
-  document.querySelectorAll('.rpe-ladder[data-scope="draft"] .rpe-bar').forEach(function(btn) {
-    btn.addEventListener("click", function() {
-      const n = Number(btn.dataset.n);
-      themeDraft.rpe = themeDraft.rpe === n ? 0 : n;
-      drawSeance();
+  document.querySelectorAll('[data-theme-group="contraction"]').forEach(function(row) {
+    row.querySelectorAll(".pill").forEach(function(btn) {
+      btn.addEventListener("click", function() { session.entries[row.dataset.theme].contraction = btn.dataset.id; update(); });
     });
   });
-  const draftConfirm = document.getElementById("theme-draft-confirm");
-  if (draftConfirm) draftConfirm.addEventListener("click", function() {
-    session.entries[themeDraftId] = Object.assign({}, themeDraft);
-    themeDraftId = null;
-    update();
+  document.querySelectorAll('[data-theme-group="type"]').forEach(function(row) {
+    row.querySelectorAll(".pill").forEach(function(btn) {
+      btn.addEventListener("click", function() { session.entries[row.dataset.theme].type = btn.dataset.id; update(); });
+    });
+  });
+  document.querySelectorAll('.rpe-ladder').forEach(function(ladder) {
+    if (ladder.dataset.scope === "global") return;
+    const themeId = ladder.dataset.scope.split(":")[1];
+    if (!themeId) return;
+    ladder.querySelectorAll(".rpe-bar").forEach(function(btn) {
+      btn.addEventListener("click", function() {
+        const n = Number(btn.dataset.n);
+        session.entries[themeId].rpe = session.entries[themeId].rpe === n ? 0 : n;
+        update();
+      });
+    });
   });
 
   const validateBtn = document.getElementById("validate-session");
