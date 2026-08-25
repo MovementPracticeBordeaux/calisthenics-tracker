@@ -1,5 +1,5 @@
-const CACHE_NAME = "mpb-suivi-v1";
-const SHELL = ["./", "./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png"];
+const CACHE_NAME = "mpb-suivi-v2";
+const SHELL = ["./manifest.json", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", function(event) {
   event.waitUntil(
@@ -17,9 +17,16 @@ self.addEventListener("activate", function(event) {
   self.clients.claim();
 });
 
-// Réseau d'abord (données fraîches prioritaires), secours sur le cache hors-ligne
 self.addEventListener("fetch", function(event) {
   if (event.request.method !== "GET") return;
+  const url = new URL(event.request.url);
+  // La page HTML elle-même et les appels à Supabase ne sont JAMAIS mis en
+  // cache — toujours du réseau frais. Seuls les vrais fichiers statiques
+  // (icônes, manifest) sont mis en cache, pour un secours hors-ligne minimal.
+  if (url.hostname.indexOf("supabase.co") !== -1 || event.request.mode === "navigate") {
+    event.respondWith(fetch(event.request).catch(function() { return caches.match(event.request); }));
+    return;
+  }
   event.respondWith(
     fetch(event.request)
       .then(function(response) {
