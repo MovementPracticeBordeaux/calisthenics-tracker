@@ -645,12 +645,11 @@ function drawSeance() {
       html += '<span style="font-size:12px;color:var(--chalkDim)">Charge d\'entraînement</span><span style="font-size:20px;font-weight:900;color:var(--rust)">' + load.correctedLoad + "</span></div>";
     }
   }
-  html += "</div>";
 
-  // Thèmes travaillés — liste compacte de ce qui est déjà loggé, ajout via
-  // menu déroulant avec validation explicite plutôt que 8 cartes toujours
-  // dépliées prenant toute la place.
-  html += '<div class="card"><div class="section-label">Thèmes travaillés</div>';
+  // Thèmes travaillés — même carte que le reste du log, pas un bloc à part.
+  // Ajout via menu déroulant avec validation explicite plutôt que 8 cartes
+  // toujours dépliées prenant toute la place.
+  html += '<div class="section-label" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">Thèmes travaillés</div>';
   const loggedIds = Object.keys(session.entries);
   if (loggedIds.length === 0) {
     html += '<div class="muted" style="font-size:12px;margin-bottom:12px">Aucun thème loggé pour l\'instant.</div>';
@@ -690,12 +689,12 @@ function drawSeance() {
       html += '<button id="theme-draft-confirm" style="width:100%;margin-top:14px;padding:12px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Ajouter ce thème</button>';
     }
   }
-  html += "</div>";
 
   const activeCount = loggedIds.length;
-  html += '<button id="validate-session" style="width:100%;padding:14px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:14px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase;margin-bottom:10px">Valider le log du jour</button>';
-  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;min-height:20px">';
+  html += '<button id="validate-session" style="width:100%;margin-top:20px;padding:14px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:14px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Valider le log du jour</button>';
+  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">';
   html += '<span class="muted">' + (activeCount > 0 ? activeCount + " thème(s) loggé(s)" : "Aucun thème loggé") + '</span><span class="status" id="save-status"></span></div>';
+  html += "</div>";
 
   html += '<button class="btn-outline" id="toggle-history">Voir l\'historique (' + seance.history.length + ")</button>";
   html += '<div id="history-list" style="display:' + (historyOpen ? "block" : "none") + ';margin-top:14px">';
