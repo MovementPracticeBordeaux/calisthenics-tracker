@@ -247,9 +247,9 @@ function sessionFromSchedule(classes) {
     (DISCIPLINE_TO_THEMES[c.discipline] || []).forEach(function(id) { entries[id] = { contraction: "dynamique", rpe: 0 }; });
   });
   return { entries: entries, goal: null, duration: totalMinutes, durationPreset: deriveDurationPreset(totalMinutes),
-    achievement: null, intensity: 0, discipline: classes.map(function(c){return c.discipline;}).join(" + ") };
+    achievement: null, intensity: 0, discipline: classes.map(function(c){return c.discipline;}).join(" + "), time: classes[0].heure_debut.slice(0,5) };
 }
-function emptySession() { return { entries: {}, goal: null, durationPreset: null, duration: "", achievement: null, intensity: 0, discipline: null }; }
+function emptySession() { return { entries: {}, goal: null, durationPreset: null, duration: "", achievement: null, intensity: 0, discipline: null, time: "" }; }
 
 function computeLoad(s) {
   if (!s) return { sessionLoad: null, correctedLoad: null };
@@ -277,12 +277,13 @@ function rowToSession(row) {
   if (!row) return emptySession();
   return { entries: row.entries || {}, goal: row.goal || null, duration: row.duration_minutes || "",
     durationPreset: deriveDurationPreset(row.duration_minutes), achievement: row.achievement || null,
-    intensity: row.intensity || 0, discipline: row.discipline || null };
+    intensity: row.intensity || 0, discipline: row.discipline || null, time: row.session_time || "" };
 }
 function sessionToRow(dateStr, s) {
   const load = computeLoad(s);
   return { session_date: dateStr, goal: s.goal, duration_minutes: s.duration ? Number(s.duration) : null,
     achievement: s.achievement, intensity: s.intensity || null, entries: s.entries || {}, discipline: s.discipline || null,
+    session_time: s.time || null,
     session_load: load.sessionLoad, corrected_load: load.correctedLoad, updated_at: new Date().toISOString() };
 }
 async function loadSession(dateStr) {
@@ -607,6 +608,8 @@ function drawSeance() {
   }
 
   html += '<div class="card">';
+  html += '<div class="section-label">Heure de la séance</div>';
+  html += '<input type="time" id="session-time-input" value="' + esc(session.time || "") + '" style="margin-bottom:16px" />';
   html += '<div class="section-label">Discipline</div>';
   html += '<select id="discipline-input" style="margin-bottom:16px">';
   html += '<option value=""' + (!session.discipline ? " selected" : "") + '>— Choisir —</option>';
@@ -690,7 +693,8 @@ function drawSeance() {
   html += "</div>";
 
   const activeCount = loggedIds.length;
-  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:-4px;margin-bottom:18px;min-height:20px">';
+  html += '<button id="validate-session" style="width:100%;padding:14px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:14px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase;margin-bottom:10px">Valider le log du jour</button>';
+  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;min-height:20px">';
   html += '<span class="muted">' + (activeCount > 0 ? activeCount + " thème(s) loggé(s)" : "Aucun thème loggé") + '</span><span class="status" id="save-status"></span></div>';
 
   html += '<button class="btn-outline" id="toggle-history">Voir l\'historique (' + seance.history.length + ")</button>";
@@ -768,6 +772,9 @@ function wireSeanceEvents() {
       update();
     });
   });
+
+  const sessionTimeInput = document.getElementById("session-time-input");
+  if (sessionTimeInput) sessionTimeInput.addEventListener("change", function() { session.time = sessionTimeInput.value; saveInBackground(); });
 
   const discSelect = document.getElementById("discipline-input");
   if (discSelect) discSelect.addEventListener("change", function() {
@@ -848,6 +855,18 @@ function wireSeanceEvents() {
     session.entries[themeDraftId] = Object.assign({}, themeDraft);
     themeDraftId = null;
     update();
+  });
+
+  const validateBtn = document.getElementById("validate-session");
+  if (validateBtn) validateBtn.addEventListener("click", function() {
+    validateBtn.textContent = "Enregistrement…";
+    saveSession(currentDate, session).then(function() {
+      seance.isNew = false;
+      validateBtn.textContent = "✓ Log enregistré";
+      setTimeout(function() { validateBtn.textContent = "Valider le log du jour"; }, 1800);
+    }).catch(function(e) {
+      validateBtn.textContent = "Erreur : " + e.message;
+    });
   });
 
   const toggleHist = document.getElementById("toggle-history");
