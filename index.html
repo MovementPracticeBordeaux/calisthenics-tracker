@@ -1452,7 +1452,7 @@ async function renderSommeil() {
   const nights = last14.map(function(d) {
     const w = wearable.find(function(x) { return x.day === d; });
     return {
-      date: d, tracked: !!(w && w.sleep_session_recorded), stress: w ? w.stress_avg : null,
+      date: d, tracked: !!(w && w.sleep_session_recorded),
       total: w ? w.sleep_total_min : null, light: w ? w.sleep_light_min : null,
       deep: w ? w.sleep_deep_min : null, rem: w ? w.sleep_rem_min : null, awake: w ? w.sleep_awake_count : null,
     };
@@ -1461,7 +1461,6 @@ async function renderSommeil() {
   const latest = withSleep.length ? withSleep[withSleep.length - 1] : null;
   const avgTotal = withSleep.length ? avgOf(withSleep.map(function(n){return n.total;})) : null;
 
-  const stressBars = nights.map(function(n) { return { label: formatDateLabel(n.date).slice(0,2), val: n.stress || 0 }; });
   const sleepBars = nights.map(function(n) { return { label: formatDateLabel(n.date).slice(0,2), val: n.total ? Math.round(n.total/60*10)/10 : 0 }; });
 
   let html = "";
@@ -1590,10 +1589,6 @@ async function renderSommeil() {
 
   html += '<div class="card"><div class="section-label">Durée de sommeil (h) — 14 jours</div>';
   html += barChartHtml(sleepBars, { decimals: 1, unit: "h", qualify: qualifySleepHours });
-  html += "</div>";
-
-  html += '<div class="card"><div class="section-label">Stress — tendance récente</div>';
-  html += barChartHtml(stressBars, { qualify: qualifyStress });
   html += "</div>";
 
   html += '<details class="card"><summary class="section-label" style="cursor:pointer;list-style:none">Nuits trackées</summary>';
