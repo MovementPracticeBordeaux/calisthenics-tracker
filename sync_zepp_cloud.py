@@ -19,19 +19,22 @@ Ne JAMAIS committer d'email/mot de passe en dur dans ce fichier — toujours
 via variables d'environnement.
 
 LIMITATIONS CONNUES (voir README) :
-- stress_avg / stress_max : PAS ENCORE DÉCODÉS. Le blob cloud (stressInfo)
-  n'est pas au même format que les autres champs (dense, ~3000 échantillons/
-  jour, ressemble à un flux interne de l'algorithme plutôt qu'au score
-  affiché). Ce script n'écrit donc PAS ces colonnes, pour ne pas écraser les
-  valeurs correctes déjà poussées par sync_to_supabase.py (Gadgetbridge).
-- hrv_avg / hrv_morning / hrv_afternoon / hrv_evening : l'endpoint testé
-  (hrv_sdnn/real_data) ne renvoie que 2 à 4 mesures par jour, concentrées la
-  nuit — insuffisant pour reconstituer une moyenne journalière ou les
-  fenêtres horaires jour (6-9h/13-15h/19-21h) qu'utilise la Vigilance.
-  Colonnes non écrites pour la même raison que le stress.
-Tant que ces deux points ne sont pas résolus, faire tourner ce script EN
-PARALLÈLE de sync_to_supabase.py (pas à sa place), et laisser Gadgetbridge
-alimenter stress/VFC.
+- stress_avg / stress_max : PAS DÉCODABLES avec un effort raisonnable.
+  L'eventType "Charge/stress_data" (celui qui semblait le bon candidat) est
+  un protobuf imbriqué (sans schéma public) contenant l'état interne brut de
+  l'algorithme de stress (features PPG/mouvement) — aucun des champs décodés
+  ne corrèle avec stress_avg/stress_max réels (testé sur 3 jours, tous les
+  champs numériques extraits, aucune corrélation). Aucun eventType candidat
+  plus simple trouvé (Stress, StressHealthInfo, StressInfo, AllDayStress,
+  StressScore testés : tous vides). Ce script n'écrit donc PAS ces colonnes,
+  pour ne pas écraser les valeurs correctes déjà poussées par
+  sync_to_supabase.py (Gadgetbridge).
+Tant que ce point n'est pas résolu, faire tourner ce script EN PARALLÈLE de
+sync_to_supabase.py (pas à sa place), et laisser Gadgetbridge alimenter le
+stress. La VFC (hrv_avg + fenêtres matin/après-midi/soir), elle, EST
+décodée et validée ci-dessous (endpoint HRVRMSSD/real_data, ~800-1000
+mesures/jour — l'endpoint hrv_sdnn/real_data initialement essayé était le
+mauvais candidat, il ne renvoie que 2-4 mesures nocturnes).
 """
 import argparse
 import base64
@@ -237,6 +240,49 @@ def fetch_respiratory(host, app_token, from_ms: int, to_ms: int) -> dict:
     return rows
 
 
+HRV_WINDOWS = [("morning", 6, 9), ("afternoon", 13, 15), ("evening", 19, 21)]
+
+
+def fetch_hrv(host, app_token, from_ms: int, to_ms: int) -> dict:
+    """VFC (RMSSD) : ~800-1000 mesures/jour, une par minute environ.
+    Validé : moyenne journalière à ~1 unité près de wearable_daily.hrv_avg
+    sur 4 jours testés. Comme en prod actuellement, les échantillons sont
+    concentrés le matin (le capteur ne mesure pas en continu l'après-midi/
+    soir) — les fenêtres afternoon/evening resteront donc creuses ici aussi,
+    ce n'est pas un défaut du décodage.
+    Piège evité : l'eventType 'hrv_sdnn/real_data' (testé en premier, plus
+    intuitif vu son nom) ne renvoie que 2-4 mesures nocturnes/jour — c'est
+    'HRVRMSSD/real_data' qui est la bonne source, découvert en comparant
+    plusieurs presets d'un autre outil (zepp-health-cli)."""
+    data = zepp_get(host, app_token, "/v2/users/me/events", {
+        "eventType": "HRVRMSSD", "subType": "real_data",
+        "from": from_ms, "to": to_ms, "limit": 200, "reverse": 1,
+    })
+    by_day = {}
+    for item in data.get("items", []):
+        start = item.get("value", {}).get("startTime")
+        if not start:
+            continue
+        for s in item["value"].get("samples", []):
+            hrv = s.get("hrv")
+            if not hrv:
+                continue
+            dt = datetime.fromtimestamp((start + s["s"]) / 1000, tz=LOCAL_TZ)
+            day = dt.strftime("%Y-%m-%d")
+            by_day.setdefault(day, []).append((dt.hour, hrv))
+
+    rows = {}
+    for day, samples in by_day.items():
+        vals = [v for _, v in samples]
+        row = {"day": day, "hrv_avg": round(sum(vals) / len(vals), 1)}
+        for label, lo, hi in HRV_WINDOWS:
+            w = [v for h, v in samples if lo <= h < hi]
+            if w:
+                row[f"hrv_{label}"] = round(sum(w) / len(w), 1)
+        rows[day] = row
+    return rows
+
+
 def push_to_supabase(rows: list[dict]) -> None:
     if not rows:
         print("Aucune donnée à envoyer.")
@@ -287,9 +333,10 @@ def main():
     band = fetch_band_data(host, app_token, user_id, from_d, today)
     pai = fetch_pai(host, app_token, user_id, from_ms, to_ms)
     resp = fetch_respiratory(host, app_token, from_ms, to_ms)
+    hrv = fetch_hrv(host, app_token, from_ms, to_ms)
 
     merged = {}
-    for source in (band, pai, resp):
+    for source in (band, pai, resp, hrv):
         for day, fields in source.items():
             merged.setdefault(day, {"day": day}).update(fields)
 
