@@ -423,15 +423,18 @@ let themeDraft = { contraction: "dynamique", type: null, rpe: 0 };
 let disciplineOtherMode = false;
 let seanceTendancesCache = null;
 let seanceTendancesWorkouts = null;
+let trainingCoefficients = null;
 let seanceTendancesLoading = false;
 
 async function ensureSeanceTendances() {
-  if (seanceTendancesCache || seanceTendancesLoading) return;
+  if ((seanceTendancesCache && trainingCoefficients) || seanceTendancesLoading) return;
   seanceTendancesLoading = true;
   try { seanceTendancesCache = await listSessions(90); }
   catch (e) { seanceTendancesCache = []; }
   try { seanceTendancesWorkouts = await sb("workout_sessions?select=*&order=start_time.desc&limit=60") || []; }
   catch (e) { seanceTendancesWorkouts = []; }
+  try { trainingCoefficients = await sb("training_coefficients?select=*&order=category,label") || []; }
+  catch (e) { trainingCoefficients = []; }
   seanceTendancesLoading = false;
   drawSeance();
 }
@@ -605,6 +608,30 @@ function renderSeanceTendancesHtml() {
   if (!buckets.some(function(b){return b.val>0;}) && discRows.length === 0) {
     html = '<div class="card"><div class="muted" style="text-align:center;padding:16px 0">Pas encore assez de séances enregistrées pour dégager des tendances.</div></div>';
   }
+
+  // Réglages des coefficients de charge — ajustables directement, sans repasser
+  // par une conversation. Modifie, tape "Enregistrer", et les futurs calculs
+  // de charge (y compris les anciens recalculés à l'affichage) en tiennent compte.
+  html += '<details class="card" style="margin-top:22px"><summary class="section-label" style="cursor:pointer;list-style:none">Réglages : coefficients de charge</summary>';
+  html += '<div style="margin-top:10px">';
+  html += '<div class="muted" style="font-size:11px;margin-bottom:12px">Multiplicateurs appliqués à la charge de séance selon la complexité neuromusculaire du thème, le type de contraction, et le type d\'effort visé.</div>';
+  const coefGroups = [
+    ["neural", "Complexité neurale par thème"],
+    ["contraction", "Type de contraction"],
+    ["goal", "Type d'effort"],
+  ];
+  coefGroups.forEach(function(g) {
+    html += '<div class="section-label" style="margin-top:12px">' + g[1] + '</div>';
+    (trainingCoefficients || []).filter(function(c) { return c.category === g[0]; }).forEach(function(c) {
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
+      html += '<span style="font-size:13px">' + esc(c.label) + '</span>';
+      html += '<input type="number" step="0.05" min="0.5" max="3" class="coef-input" data-key="' + c.key + '" value="' + c.value + '" style="width:70px;text-align:center;padding:6px" /></div>';
+    });
+  });
+  html += '<button id="save-coefs" style="width:100%;margin-top:14px;padding:12px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Enregistrer</button>';
+  html += '<div id="coef-status" class="muted" style="text-align:center;font-size:11px;margin-top:8px"></div>';
+  html += "</div></details>";
+
   return html;
 }
 
@@ -814,7 +841,27 @@ function wireSeanceEvents() {
       else { drawSeance(); }
     });
   });
-  if (seanceSubTab === "tendances") return;
+  if (seanceSubTab === "tendances") {
+    const saveCoefsBtn = document.getElementById("save-coefs");
+    if (saveCoefsBtn) saveCoefsBtn.addEventListener("click", function() {
+      const status = document.getElementById("coef-status");
+      const updates = Array.prototype.map.call(document.querySelectorAll(".coef-input"), function(input) {
+        return { key: input.dataset.key, value: Number(input.value) };
+      });
+      status.textContent = "Enregistrement…";
+      Promise.all(updates.map(function(u) {
+        return sb("training_coefficients?key=eq." + u.key, {
+          method: "PATCH", headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({ value: u.value, updated_at: new Date().toISOString() }),
+        });
+      })).then(function() {
+        status.textContent = "✓ Enregistré — pris en compte immédiatement";
+        seanceTendancesCache = null; // force un recalcul de la charge affichée
+        loadCoefficients().then(function() { ensureSeanceTendances(); });
+      }).catch(function(e) { status.textContent = "Erreur : " + e.message; });
+    });
+    return;
+  }
 
   const dp = document.getElementById("date-picker");
   if (dp) dp.addEventListener("change", function() { if (dp.value) { currentDate = dp.value; loadSeance(); } });
@@ -2152,6 +2199,28 @@ function setTab(tab) {
   else if (tab === "migraine") loadMigraine();
   else renderVie();
 }
+async function loadCoefficients() {
+  try {
+    const rows = await sb("training_coefficients?select=*");
+    (rows || []).forEach(function(r) {
+      if (r.category === "neural") {
+        const themeId = r.key.replace("neural_", "");
+        const t = THEMES.find(function(x) { return x.id === themeId; });
+        if (t) t.neural = Number(r.value);
+      } else if (r.category === "contraction") {
+        const id = r.key.replace("contraction_", "");
+        if (CONTRACTION_FACTORS[id] != null) CONTRACTION_FACTORS[id] = Number(r.value);
+      } else if (r.category === "goal") {
+        const id = r.key.replace("goal_", "");
+        if (GOAL_FACTORS[id] != null) GOAL_FACTORS[id] = Number(r.value);
+      }
+    });
+  } catch (e) {
+    // Repli silencieux sur les valeurs par défaut codées en dur si le réseau
+    // ou la table ne répond pas — l'appli doit rester utilisable.
+  }
+}
+
 document.querySelectorAll(".tab[data-tab]").forEach(function(t) {
   t.addEventListener("click", function() { setTab(t.dataset.tab); });
 });
@@ -2162,7 +2231,7 @@ document.getElementById("refresh-btn").addEventListener("click", function() {
   setTab(currentTab);
   setTimeout(function() { btn.style.transform = ""; }, 500);
 });
-setTab("dashboard");
+loadCoefficients().then(function() { setTab("dashboard"); });
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", function() { navigator.serviceWorker.register("sw.js").catch(function() {}); });
 }
