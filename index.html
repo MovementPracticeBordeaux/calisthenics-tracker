@@ -788,6 +788,7 @@ function wireSeanceEvents() {
   document.querySelectorAll(".apply-schedule-theme").forEach(function(btn) {
     btn.addEventListener("click", function() {
       const c = seance.classes[Number(btn.dataset.classIndex)];
+      disciplineOtherMode = false;
       editingSession = sessionFromClass(c) || emptySession();
       drawSeance();
     });
@@ -797,6 +798,7 @@ function wireSeanceEvents() {
   // ou la supprimer.
   const newBtn = document.getElementById("new-session-btn");
   if (newBtn) newBtn.addEventListener("click", function() {
+    disciplineOtherMode = false;
     editingSession = emptySession();
     drawSeance();
   });
@@ -804,7 +806,11 @@ function wireSeanceEvents() {
     row.addEventListener("click", function(e) {
       if (e.target.closest(".session-remove")) return;
       const found = seance.sessions.find(function(s) { return s.id === row.dataset.id; });
-      if (found) { editingSession = Object.assign({}, found); drawSeance(); }
+      if (found) {
+        disciplineOtherMode = found.discipline && !DISCIPLINE_TO_THEMES[found.discipline];
+        editingSession = Object.assign({}, found);
+        drawSeance();
+      }
     });
   });
   document.querySelectorAll(".session-remove").forEach(function(btn) {
