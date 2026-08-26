@@ -242,19 +242,14 @@ function deriveDurationPreset(minutes) {
   const match = DURATIONS.find(function(d){ return d.minutes === Number(minutes); });
   return match ? match.id : "plus";
 }
-function sessionFromSchedule(classes) {
-  if (!classes || classes.length === 0) return null;
-  let totalMinutes = WARMUP_MINUTES;
-  classes.forEach(function(c) {
-    const h1 = c.heure_debut.split(":").map(Number), h2 = c.heure_fin.split(":").map(Number);
-    totalMinutes += (h2[0]*60+h2[1]) - (h1[0]*60+h1[1]);
-  });
+function sessionFromClass(c) {
+  if (!c) return null;
+  const h1 = c.heure_debut.split(":").map(Number), h2 = c.heure_fin.split(":").map(Number);
+  const duration = WARMUP_MINUTES + ((h2[0]*60+h2[1]) - (h1[0]*60+h1[1]));
   const entries = {};
-  classes.forEach(function(c) {
-    (DISCIPLINE_TO_THEMES[c.discipline] || []).forEach(function(id) { entries[id] = { contraction: "dynamique", rpe: 0 }; });
-  });
-  return { entries: entries, goal: null, duration: totalMinutes, durationPreset: deriveDurationPreset(totalMinutes),
-    achievement: null, intensity: 0, discipline: classes.map(function(c){return c.discipline;}).join(" + "), time: classes[0].heure_debut.slice(0,5) };
+  (DISCIPLINE_TO_THEMES[c.discipline] || []).forEach(function(id) { entries[id] = { contraction: "dynamique", rpe: 0 }; });
+  return { entries: entries, goal: null, duration: duration, durationPreset: deriveDurationPreset(duration),
+    achievement: null, intensity: 0, discipline: c.discipline, time: c.heure_debut.slice(0,5) };
 }
 function emptySession() { return { entries: {}, goal: null, durationPreset: null, duration: "", achievement: null, intensity: 0, discipline: null, time: "" }; }
 
@@ -609,15 +604,12 @@ function drawSeance() {
   }
 
   if (classes.length) {
-    const c0 = classes[0];
-    const suggested0 = DISCIPLINE_TO_THEMES[c0.discipline];
-    html += '<div style="display:flex;justify-content:space-between;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:9px 12px;margin-bottom:14px;font-size:12px">';
-    html += '<span><b>Cours prévu :</b> ' + esc(c0.discipline) + ' <span class="muted">(' + c0.heure_debut.slice(0,5) + '–' + c0.heure_fin.slice(0,5) + ')</span></span>';
-    if (suggested0) html += '<button class="apply-schedule-theme" data-themes="' + suggested0.join(",") + '" style="background:none;border:1px dashed var(--steel);border-radius:6px;color:var(--steel);font-size:11px;font-weight:700;padding:4px 8px;cursor:pointer;white-space:nowrap;margin-left:8px">Pré-remplir →</button>';
-    html += "</div>";
-    if (classes.length > 1) {
-      html += '<div class="muted" style="font-size:11px;margin:-8px 0 14px">+ ' + (classes.length - 1) + ' autre(s) cours ce jour</div>';
-    }
+    classes.forEach(function(c, i) {
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:9px 12px;margin-bottom:' + (i < classes.length - 1 ? "8" : "14") + 'px;font-size:12px">';
+      html += '<span><b>Cours prévu :</b> ' + esc(c.discipline) + ' <span class="muted">(' + c.heure_debut.slice(0,5) + '–' + c.heure_fin.slice(0,5) + ')</span></span>';
+      html += '<button class="apply-schedule-theme" data-class-index="' + i + '" style="background:none;border:1px dashed var(--steel);border-radius:6px;color:var(--steel);font-size:11px;font-weight:700;padding:4px 8px;cursor:pointer;white-space:nowrap;margin-left:8px">Pré-remplir →</button>';
+      html += "</div>";
+    });
   }
 
   // Liste des séances déjà loggées ce jour — plusieurs possibles (plusieurs
@@ -795,7 +787,8 @@ function wireSeanceEvents() {
 
   document.querySelectorAll(".apply-schedule-theme").forEach(function(btn) {
     btn.addEventListener("click", function() {
-      editingSession = sessionFromSchedule(seance.classes) || emptySession();
+      const c = seance.classes[Number(btn.dataset.classIndex)];
+      editingSession = sessionFromClass(c) || emptySession();
       drawSeance();
     });
   });
