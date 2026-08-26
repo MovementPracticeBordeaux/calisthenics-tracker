@@ -723,7 +723,12 @@ function drawSeance() {
   if (seance.history.length === 0) html += '<div class="muted" style="text-align:center;padding:16px 0">Aucune séance précédente.</div>';
   seance.history.forEach(function(h) {
     const ach = ACHIEVEMENTS.find(function(a) { return a.id === h.achievement; });
-    html += '<button class="history-item" data-date="' + h.date + '"><div style="font-weight:700;font-size:13px;margin-bottom:6px">' + formatDateLabel(h.date) + "</div>";
+    html += '<button class="history-item" data-date="' + h.date + '"><div style="font-weight:700;font-size:13px;margin-bottom:4px">' + formatDateLabel(h.date) + (h.time ? " · " + esc(h.time) : "") + "</div>";
+    html += '<div class="muted" style="font-size:12px;margin-bottom:6px">' + esc(h.discipline || "Discipline non renseignée");
+    if (h.duration) html += " · " + h.duration + " min";
+    if (h.intensity) html += " · RPE " + h.intensity;
+    if (h.correctedLoad) html += " · charge " + h.correctedLoad;
+    html += "</div>";
     Object.keys(h.entries).forEach(function(tid) {
       const th = THEMES.find(function(t) { return t.id === tid; });
       const d = h.entries[tid];
