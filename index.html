@@ -306,15 +306,21 @@ function sessionToRow(dateStr, s) {
     session_time: s.time || null,
     session_load: load.sessionLoad, corrected_load: load.correctedLoad, updated_at: new Date().toISOString() };
 }
-async function loadSession(dateStr) {
-  const rows = await sb("sessions?session_date=eq." + dateStr + "&select=*");
-  return rows && rows[0] ? rowToSession(rows[0]) : null;
+async function loadSessionsForDate(dateStr) {
+  const rows = await sb("sessions?session_date=eq." + dateStr + "&select=*&order=session_time.asc");
+  return (rows || []).map(function(r) { const s = Object.assign({ id: r.id }, rowToSession(r)); return Object.assign(s, computeLoad(s)); });
 }
-async function saveSession(dateStr, s) {
-  await sb("sessions?on_conflict=session_date", {
-    method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify(sessionToRow(dateStr, s))
-  });
+async function saveSessionRow(dateStr, s) {
+  const row = sessionToRow(dateStr, s);
+  if (s.id) {
+    await sb("sessions?id=eq." + s.id, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify(row) });
+    return s.id;
+  }
+  const res = await sb("sessions", { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(row) });
+  return res && res[0] ? res[0].id : null;
+}
+async function deleteSessionRow(id) {
+  await sb("sessions?id=eq." + id, { method: "DELETE", headers: { Prefer: "return=minimal" } });
 }
 async function listSessions(limit) {
   const rows = await sb("sessions?select=*&order=session_date.desc&limit=" + (limit || 90));
@@ -335,7 +341,8 @@ let napDuration = 30;
 let currentDate = todayISO();
 
 // ---------------- État séance (séparé du réseau pour un rendu instantané) ----------------
-let seance = { session: emptySession(), history: [], classes: [], wearable: null, workout: null, error: "", isNew: true };
+let seance = { sessions: [], history: [], classes: [], error: "" };
+let editingSession = null;
 let historyOpen = false;
 
 async function getWorkoutForDate(dateStr) {
@@ -368,31 +375,18 @@ async function loadSeance() {
   historyOpen = false;
   themeDraftId = null;
   disciplineOtherMode = false;
+  editingSession = null;
   seance.error = "";
-  seance.wearable = null;
-  seance.workout = null;
   try {
     seance.classes = getScheduledClasses(currentDate);
-    const existing = await loadSession(currentDate);
-    seance.isNew = !existing;
-    seance.session = existing || sessionFromSchedule(seance.classes) || emptySession();
-    const all = await listSessions(15);
+    seance.sessions = await loadSessionsForDate(currentDate);
+    const all = await listSessions(30);
     seance.history = all.filter(function(h) { return h.date !== currentDate; }).slice(0, 14);
   } catch (e) {
     seance.error = e.message;
-    seance.session = emptySession();
+    seance.sessions = [];
   }
   drawSeance();
-
-  getWearableForDate(currentDate).then(function(w) { seance.wearable = w; drawSeance(); }).catch(function(){});
-  getWorkoutForDate(currentDate).then(function(w) {
-    seance.workout = w;
-    if (w && seance.isNew && !seance.session.duration) {
-      seance.session.duration = w.duration_min;
-      seance.session.durationPreset = deriveDurationPreset(w.duration_min);
-    }
-    drawSeance();
-  }).catch(function(){});
 }
 
 function workoutCardHtml(w) {
@@ -461,8 +455,8 @@ function renderSeanceTendancesHtml() {
   const last7Sessions = allSessions.filter(function(s){ return last7.indexOf(s.date) !== -1; });
   const prev7Sessions = allSessions.filter(function(s){ return prev7.indexOf(s.date) !== -1; });
   const weekBars = last7.map(function(d) {
-    const s = allSessions.find(function(x){ return x.date === d; });
-    return { label: formatDateLabel(d).slice(0,2), val: (s && s.correctedLoad) || 0 };
+    const total = allSessions.filter(function(x){ return x.date === d; }).reduce(function(s,x){ return s + (x.correctedLoad || 0); }, 0);
+    return { label: formatDateLabel(d).slice(0,2), val: total };
   });
   html += '<h1 style="font-size:18px;margin-bottom:10px">Cette semaine</h1>';
   html += '<div class="card"><div class="section-label">Charge d\'entraînement — 7 derniers jours</div>';
@@ -587,7 +581,6 @@ function renderSeanceTendancesHtml() {
 function drawSeance() {
   const app = document.getElementById("app");
   const scrollY = window.scrollY;
-  const session = seance.session;
   const classes = seance.classes;
   let html = "";
   if (seance.error) html += '<div class="error-banner"><b>Erreur :</b> ' + esc(seance.error) + "</div>";
@@ -627,89 +620,103 @@ function drawSeance() {
     }
   }
 
-  html += '<div class="card">';
-  html += '<div class="section-label">Heure de la séance</div>';
-  html += '<input type="time" id="session-time-input" value="' + esc(session.time || "") + '" style="margin-bottom:16px" />';
-  html += '<div class="section-label">Discipline</div>';
-  html += '<select id="discipline-input" style="margin-bottom:16px">';
-  html += '<option value=""' + (!session.discipline ? " selected" : "") + '>— Choisir —</option>';
-  Object.keys(DISCIPLINE_TO_THEMES).forEach(function(d) {
-    html += '<option value="' + esc(d) + '"' + (session.discipline === d ? " selected" : "") + '>' + esc(d) + "</option>";
-  });
-  html += '<option value="__autre__"' + (disciplineOtherMode || (session.discipline && !DISCIPLINE_TO_THEMES[session.discipline]) ? " selected" : "") + '>Autre…</option>';
-  html += "</select>";
-  if (disciplineOtherMode || (session.discipline && !DISCIPLINE_TO_THEMES[session.discipline])) {
-    html += '<input type="text" id="discipline-other" placeholder="Précise la discipline" value="' + esc(session.discipline && !DISCIPLINE_TO_THEMES[session.discipline] ? session.discipline : "") + '" style="margin-top:8px;margin-bottom:16px" />';
-  }
-  html += '<div class="section-label">Objectif de séance</div><div class="pill-row compact" id="goal-row" style="margin-bottom:16px">';
-  GOALS.forEach(function(g) { html += pillHtml(g, session.goal === g.id, "goal"); });
-  html += "</div>";
-  html += '<div class="section-label">Durée</div><div class="pill-row" id="duration-row" style="margin-bottom:' + (session.durationPreset === "plus" ? 10 : 16) + 'px">';
-  DURATIONS.forEach(function(d) { html += pillHtml(d, session.durationPreset === d.id, "duration"); });
-  html += "</div>";
-  if (session.durationPreset === "plus") {
-    html += '<input type="number" id="duration-custom" placeholder="Durée exacte en minutes" value="' + esc(session.duration) + '" style="margin-bottom:16px" />';
-  }
-  html += '<div class="section-label">Objectif atteint ?</div><div class="pill-row" id="achievement-row" style="margin-bottom:16px">';
-  ACHIEVEMENTS.forEach(function(a) { html += pillHtml(a, session.achievement === a.id, "achievement"); });
-  html += "</div>";
-  html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">';
-  html += '<span class="section-label" style="margin:0">Intensité globale ressentie</span><span class="rpe-value">' + (session.intensity > 0 ? session.intensity : "–") + "</span></div>";
-  html += rpeLadderHtml("global", session.intensity || 0);
-  const load = computeLoad(session);
-  if (load.sessionLoad !== null) {
-    html += '<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">';
-    html += '<span style="font-size:12px;color:var(--chalkDim)">Charge de séance</span><span style="font-size:20px;font-weight:900">' + load.sessionLoad + "</span></div>";
-    if (load.correctedLoad !== load.sessionLoad) {
-      html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">';
-      html += '<span style="font-size:12px;color:var(--chalkDim)">Charge d\'entraînement</span><span style="font-size:20px;font-weight:900;color:var(--rust)">' + load.correctedLoad + "</span></div>";
-    }
-  }
-
-  // Thèmes travaillés — uniquement pour la Calisthenics (tirage/poussée/
-  // complet), où le détail contraction/type a un vrai sens. Pour les autres
-  // disciplines (1 thème = 1 discipline), l'entrée se synchronise seule en
-  // coulisse à partir du RPE global, sans dupliquer l'info dans une UI à part.
-  const isCalisthenics = session.discipline === "Calisthenics";
-  const singleThemeId = session.discipline ? SINGLE_THEME_DISCIPLINES[session.discipline] : null;
-  if (isCalisthenics) {
-    html += '<div class="section-label" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">Thèmes travaillés</div>';
-    const CALI_THEMES = THEMES.filter(function(t) { return ["tirage", "poussee", "complet"].indexOf(t.id) !== -1; });
-    CALI_THEMES.forEach(function(t) {
-      const data = session.entries[t.id];
-      const on = !!data;
-      html += '<div class="theme-card' + (on ? " on" : "") + '" data-theme="' + t.id + '" style="margin-bottom:8px">';
-      html += '<button class="theme-head" data-action="toggle-theme" data-theme="' + t.id + '">';
-      html += '<div><div class="theme-label">' + esc(t.label) + '</div><div class="theme-hint">' + esc(t.hint) + "</div></div>";
-      html += '<div class="checkbox' + (on ? " on" : "") + '">' + (on ? "✓" : "") + "</div></button>";
-      if (on) {
-        html += '<div class="theme-body">';
-        html += '<div class="pill-row compact" style="margin-bottom:14px" data-theme-group="contraction" data-theme="' + t.id + '">';
-        CONTRACTIONS.forEach(function(c) { html += '<button class="pill' + (data.contraction === c.id ? " active" : "") + '" data-id="' + c.id + '">' + c.label + "</button>"; });
-        html += "</div>";
-        html += '<div class="section-label">Type d\'effort</div><div class="pill-row compact" style="margin-bottom:14px" data-theme-group="type" data-theme="' + t.id + '">';
-        GOALS.forEach(function(g) { html += '<button class="pill' + (data.type === g.id ? " active" : "") + '" data-id="' + g.id + '">' + g.label + "</button>"; });
-        html += "</div>";
-        html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><span class="section-label" style="margin:0">Intensité (RPE)</span><span class="rpe-value">' + (data.rpe > 0 ? data.rpe : "–") + "</span></div>";
-        html += rpeLadderHtml("theme:" + t.id, data.rpe || 0);
-        html += "</div>";
-      }
+  // Liste des séances déjà loggées ce jour — plusieurs possibles (plusieurs
+  // cours dans la même journée), chacune éditable ou supprimable.
+  if (!editingSession) {
+    if (seance.sessions.length > 0) {
+      html += '<div class="card"><div class="section-label">Séances loggées aujourd\'hui</div>';
+      seance.sessions.forEach(function(s) {
+        html += '<div class="logged-session-row" data-id="' + s.id + '" style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer">';
+        html += '<div><div style="font-weight:700;font-size:13px">' + (s.time ? esc(s.time) + " · " : "") + esc(s.discipline || "Sans discipline") + '</div>';
+        html += '<div class="muted" style="font-size:11px">' + (s.duration ? s.duration + " min · " : "") + "RPE " + (s.intensity || "–") + (s.correctedLoad ? " · charge " + s.correctedLoad : "") + "</div></div>";
+        html += '<button class="session-remove" data-id="' + s.id + '" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--red);font-size:11px;font-weight:700;cursor:pointer;padding:4px 10px">Supprimer</button></div>';
+      });
       html += "</div>";
+    }
+    html += '<button id="new-session-btn" style="width:100%;padding:14px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:14px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase;margin-bottom:18px">+ Nouvelle séance</button>';
+  } else {
+    const session = editingSession;
+    html += '<div class="card">';
+    html += '<div class="section-label">Heure de la séance</div>';
+    html += '<input type="time" id="session-time-input" value="' + esc(session.time || "") + '" style="margin-bottom:16px" />';
+    html += '<div class="section-label">Discipline</div>';
+    html += '<select id="discipline-input" style="margin-bottom:16px">';
+    html += '<option value=""' + (!session.discipline ? " selected" : "") + '>— Choisir —</option>';
+    Object.keys(DISCIPLINE_TO_THEMES).forEach(function(d) {
+      html += '<option value="' + esc(d) + '"' + (session.discipline === d ? " selected" : "") + '>' + esc(d) + "</option>";
     });
-  } else if (singleThemeId) {
-    // Rien à afficher ici — l'entrée unique est calculée au moment de la
-    // sauvegarde (getEffectiveEntries), jamais en mutant l'état pendant
-    // l'affichage : c'est justement ça qui a causé la perte de données.
-  }
+    html += '<option value="__autre__"' + (disciplineOtherMode || (session.discipline && !DISCIPLINE_TO_THEMES[session.discipline]) ? " selected" : "") + '>Autre…</option>';
+    html += "</select>";
+    if (disciplineOtherMode || (session.discipline && !DISCIPLINE_TO_THEMES[session.discipline])) {
+      html += '<input type="text" id="discipline-other" placeholder="Précise la discipline" value="' + esc(session.discipline && !DISCIPLINE_TO_THEMES[session.discipline] ? session.discipline : "") + '" style="margin-top:8px;margin-bottom:16px" />';
+    }
+    html += '<div class="section-label">Objectif de séance</div><div class="pill-row compact" id="goal-row" style="margin-bottom:16px">';
+    GOALS.forEach(function(g) { html += pillHtml(g, session.goal === g.id, "goal"); });
+    html += "</div>";
+    html += '<div class="section-label">Durée</div><div class="pill-row" id="duration-row" style="margin-bottom:' + (session.durationPreset === "plus" ? 10 : 16) + 'px">';
+    DURATIONS.forEach(function(d) { html += pillHtml(d, session.durationPreset === d.id, "duration"); });
+    html += "</div>";
+    if (session.durationPreset === "plus") {
+      html += '<input type="number" id="duration-custom" placeholder="Durée exacte en minutes" value="' + esc(session.duration) + '" style="margin-bottom:16px" />';
+    }
+    html += '<div class="section-label">Objectif atteint ?</div><div class="pill-row" id="achievement-row" style="margin-bottom:16px">';
+    ACHIEVEMENTS.forEach(function(a) { html += pillHtml(a, session.achievement === a.id, "achievement"); });
+    html += "</div>";
+    html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">';
+    html += '<span class="section-label" style="margin:0">Intensité globale ressentie</span><span class="rpe-value">' + (session.intensity > 0 ? session.intensity : "–") + "</span></div>";
+    html += rpeLadderHtml("global", session.intensity || 0);
+    const load = computeLoad(session);
+    if (load.sessionLoad !== null) {
+      html += '<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">';
+      html += '<span style="font-size:12px;color:var(--chalkDim)">Charge de séance</span><span style="font-size:20px;font-weight:900">' + load.sessionLoad + "</span></div>";
+      if (load.correctedLoad !== load.sessionLoad) {
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">';
+        html += '<span style="font-size:12px;color:var(--chalkDim)">Charge d\'entraînement</span><span style="font-size:20px;font-weight:900;color:var(--rust)">' + load.correctedLoad + "</span></div>";
+      }
+    }
 
-  const activeCount = Object.keys(session.entries).length;
-  let countLabel = "Aucun thème loggé";
-  if (isCalisthenics) countLabel = activeCount > 0 ? activeCount + " thème(s) loggé(s)" : "Aucun thème loggé";
-  else if (singleThemeId) countLabel = "Séance enregistrée";
-  html += '<button id="validate-session" style="width:100%;margin-top:12px;padding:14px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:14px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Valider le log du jour</button>';
-  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">';
-  html += '<span class="muted">' + countLabel + '</span><span class="status" id="save-status"></span></div>';
-  html += "</div>";
+    // Thèmes travaillés — uniquement pour la Calisthenics (tirage/poussée/
+    // complet), où le détail contraction/type a un vrai sens. Pour les autres
+    // disciplines (1 thème = 1 discipline), l'entrée se synchronise seule en
+    // coulisse à partir du RPE global, sans dupliquer l'info dans une UI à part.
+    const isCalisthenics = session.discipline === "Calisthenics";
+    const singleThemeId = session.discipline ? SINGLE_THEME_DISCIPLINES[session.discipline] : null;
+    if (isCalisthenics) {
+      html += '<div class="section-label" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">Thèmes travaillés</div>';
+      const CALI_THEMES = THEMES.filter(function(t) { return ["tirage", "poussee", "complet"].indexOf(t.id) !== -1; });
+      CALI_THEMES.forEach(function(t) {
+        const data = session.entries[t.id];
+        const on = !!data;
+        html += '<div class="theme-card' + (on ? " on" : "") + '" data-theme="' + t.id + '" style="margin-bottom:8px">';
+        html += '<button class="theme-head" data-action="toggle-theme" data-theme="' + t.id + '">';
+        html += '<div><div class="theme-label">' + esc(t.label) + '</div><div class="theme-hint">' + esc(t.hint) + "</div></div>";
+        html += '<div class="checkbox' + (on ? " on" : "") + '">' + (on ? "✓" : "") + "</div></button>";
+        if (on) {
+          html += '<div class="theme-body">';
+          html += '<div class="pill-row compact" style="margin-bottom:14px" data-theme-group="contraction" data-theme="' + t.id + '">';
+          CONTRACTIONS.forEach(function(c) { html += '<button class="pill' + (data.contraction === c.id ? " active" : "") + '" data-id="' + c.id + '">' + c.label + "</button>"; });
+          html += "</div>";
+          html += '<div class="section-label">Type d\'effort</div><div class="pill-row compact" style="margin-bottom:14px" data-theme-group="type" data-theme="' + t.id + '">';
+          GOALS.forEach(function(g) { html += '<button class="pill' + (data.type === g.id ? " active" : "") + '" data-id="' + g.id + '">' + g.label + "</button>"; });
+          html += "</div>";
+          html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><span class="section-label" style="margin:0">Intensité (RPE)</span><span class="rpe-value">' + (data.rpe > 0 ? data.rpe : "–") + "</span></div>";
+          html += rpeLadderHtml("theme:" + t.id, data.rpe || 0);
+          html += "</div>";
+        }
+        html += "</div>";
+      });
+    }
+
+    const activeCount = Object.keys(session.entries).length;
+    let countLabel = "Aucun thème loggé";
+    if (isCalisthenics) countLabel = activeCount > 0 ? activeCount + " thème(s) loggé(s)" : "Aucun thème loggé";
+    else if (singleThemeId) countLabel = "Séance prête";
+    html += '<button id="validate-session" style="width:100%;margin-top:12px;padding:14px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:14px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">' + (session.id ? "Mettre à jour cette séance" : "Valider cette séance") + '</button>';
+    html += '<button id="cancel-session" style="width:100%;margin-top:8px;padding:10px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer">Annuler</button>';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">';
+    html += '<span class="muted">' + countLabel + '</span><span class="status" id="save-status"></span></div>';
+    html += "</div>";
+  }
 
   html += '<button class="btn-outline" id="toggle-history">Voir l\'historique (' + seance.history.length + ")</button>";
   html += '<div id="history-list" style="display:' + (historyOpen ? "block" : "none") + ';margin-top:14px">';
@@ -756,14 +763,15 @@ function wearableCardHtml(w) {
 // Sauvegarde en tâche de fond — ne bloque jamais le rendu, ne relance jamais
 // de rechargement réseau (fini les doubles-clics et le retour en haut de page).
 function saveInBackground() {
+  if (!editingSession) return;
   const setStatus = function(s) { const el = document.getElementById("save-status"); if (el) el.textContent = s; };
-  saveSession(currentDate, seance.session)
-    .then(function() { seance.isNew = false; setStatus("Enregistré"); setTimeout(function() { setStatus(""); }, 1400); })
+  saveSessionRow(currentDate, editingSession)
+    .then(function(id) { if (id) editingSession.id = id; setStatus("Enregistré"); setTimeout(function() { setStatus(""); }, 1400); })
     .catch(function(e) { setStatus("Erreur : " + e.message); });
 }
 
 function wireSeanceEvents() {
-  const session = seance.session;
+  const session = editingSession;
   const update = function() { drawSeance(); saveInBackground(); };
 
   document.querySelectorAll('#seance-subtab-row .pill').forEach(function(btn) {
@@ -782,10 +790,36 @@ function wireSeanceEvents() {
 
   document.querySelectorAll(".apply-schedule-theme").forEach(function(btn) {
     btn.addEventListener("click", function() {
-      btn.dataset.themes.split(",").forEach(function(id) { if (!session.entries[id]) session.entries[id] = { contraction: "dynamique", rpe: 0 }; });
-      update();
+      editingSession = sessionFromSchedule(seance.classes) || emptySession();
+      drawSeance();
     });
   });
+
+  // Liste des séances du jour : ouvrir une nouvelle, éditer une existante,
+  // ou la supprimer.
+  const newBtn = document.getElementById("new-session-btn");
+  if (newBtn) newBtn.addEventListener("click", function() {
+    editingSession = emptySession();
+    drawSeance();
+  });
+  document.querySelectorAll(".logged-session-row").forEach(function(row) {
+    row.addEventListener("click", function(e) {
+      if (e.target.closest(".session-remove")) return;
+      const found = seance.sessions.find(function(s) { return s.id === row.dataset.id; });
+      if (found) { editingSession = Object.assign({}, found); drawSeance(); }
+    });
+  });
+  document.querySelectorAll(".session-remove").forEach(function(btn) {
+    btn.addEventListener("click", function(e) {
+      e.stopPropagation();
+      if (!confirm("Supprimer cette séance ?")) return;
+      deleteSessionRow(btn.dataset.id).then(function() { loadSeance(); }).catch(function(err) { alert("Erreur : " + err.message); });
+    });
+  });
+  const cancelBtn = document.getElementById("cancel-session");
+  if (cancelBtn) cancelBtn.addEventListener("click", function() { editingSession = null; drawSeance(); });
+
+  if (!session) return; // pas de formulaire ouvert : rien de plus à câbler
 
   const sessionTimeInput = document.getElementById("session-time-input");
   if (sessionTimeInput) sessionTimeInput.addEventListener("change", function() { session.time = sessionTimeInput.value; saveInBackground(); });
@@ -864,10 +898,9 @@ function wireSeanceEvents() {
   const validateBtn = document.getElementById("validate-session");
   if (validateBtn) validateBtn.addEventListener("click", function() {
     validateBtn.textContent = "Enregistrement…";
-    saveSession(currentDate, session).then(function() {
-      seance.isNew = false;
-      validateBtn.textContent = "✓ Log enregistré";
-      setTimeout(function() { validateBtn.textContent = "Valider le log du jour"; }, 1800);
+    saveSessionRow(currentDate, session).then(function() {
+      editingSession = null;
+      loadSeance();
     }).catch(function(e) {
       validateBtn.textContent = "Erreur : " + e.message;
     });
@@ -901,7 +934,7 @@ async function renderDashboard() {
   try { monthLifeload = await sb("lifeload?select=day,state&order=day.desc&limit=60") || []; } catch (e) {}
 
   const today = todayISO();
-  const todaySession = sessions.find(function(s){ return s.date === today; }) || null;
+  const todayTotalLoad = sessions.filter(function(s){ return s.date === today; }).reduce(function(s,x){ return s + (x.correctedLoad || 0); }, 0);
   const todayWearable = wearable.find(function(w){ return w.day === today; }) || null;
   const wearable7 = wearable.filter(function(w){ return w.day >= daysAgo(7); });
 
@@ -955,7 +988,7 @@ async function renderDashboard() {
     else if (loadRatio < 0.85) lines.push({ tone: "neutral", text: "Charge récente en retrait — phase plus légère." });
     else lines.push({ tone: "good", text: "Charge récente cohérente avec ta progression." });
   }
-  if (todaySession && todaySession.correctedLoad) lines.push({ tone: "neutral", text: "Séance loggée aujourd'hui — charge corrigée " + todaySession.correctedLoad + "." });
+  if (todayTotalLoad) lines.push({ tone: "neutral", text: "Séance loggée aujourd'hui — charge corrigée " + todayTotalLoad + "." });
   else lines.push({ tone: "neutral", text: "Pas de séance enregistrée aujourd'hui." });
 
   // Sommeil de la nuit précédente — cible générale 7-9h (littérature sommeil/performance),
@@ -1108,7 +1141,7 @@ async function renderDashboard() {
   const journal = last14.map(function(d) {
     const w = wearable.find(function(x){ return x.day === d; });
     const s = sessions.find(function(x){ return x.date === d; });
-    const hasSession = s && Object.keys(s.entries).length > 0;
+    const hasSession = sessions.some(function(x){ return x.date === d && (x.discipline || x.intensity > 0 || x.duration); });
     const signal = w && ((w.intensity_avg && w.intensity_avg > 25) || (w.hr_max_activity && w.hr_max_activity > 140));
     return { date: d, wearable: w, signal: signal && !hasSession && dismissedDates.indexOf(d) === -1 };
   });
@@ -1791,7 +1824,7 @@ function drawMigraine() {
   // Contexte automatique du jour sélectionné dans le formulaire
   const formDay = migraineForm.startDateTime.slice(0, 10);
   const ctx = allWearable.find(function(w) { return w.day === formDay; }) || null;
-  const sessionCtx = migraineState.sessions.find(function(s) { return s.date === formDay; });
+  const sessionCtxLoad = migraineState.sessions.filter(function(s) { return s.date === formDay; }).reduce(function(s,x){ return s + (x.correctedLoad || 0); }, 0);
 
   // Fréquence des déclencheurs déclarés
   const triggerCounts = {};
@@ -1838,14 +1871,14 @@ function drawMigraine() {
   html += '<div class="muted" style="font-size:10px;text-transform:uppercase;margin-bottom:4px">Fin (laisser vide si en cours)</div>';
   html += '<input type="datetime-local" id="mig-end" value="' + migraineForm.endDateTime + '" max="' + nowForDatetimeInput() + '" style="margin-bottom:14px" />';
 
-  if (ctx || sessionCtx) {
+  if (ctx || sessionCtxLoad) {
     html += '<div style="background:var(--surfaceRaised);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:11px;color:var(--chalkDim)">';
     html += '<div class="muted" style="font-size:10px;text-transform:uppercase;margin-bottom:4px">Contexte ce jour-là</div>';
     const parts = [];
     if (ctx && ctx.sleep_total_min != null) parts.push("Sommeil " + Math.floor(ctx.sleep_total_min/60) + "h" + (ctx.sleep_total_min%60).toString().padStart(2,'0'));
     if (ctx && ctx.stress_avg != null) parts.push("Stress " + Math.round(ctx.stress_avg));
     if (ctx && ctx.hrv_avg != null) parts.push("VFC " + Math.round(ctx.hrv_avg) + "ms");
-    if (sessionCtx && sessionCtx.correctedLoad) parts.push("Charge " + sessionCtx.correctedLoad);
+    if (sessionCtxLoad) parts.push("Charge " + sessionCtxLoad);
     html += parts.length ? parts.join(" · ") : "Pas de données montre pour ce jour.";
     html += "</div>";
   }
