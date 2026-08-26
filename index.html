@@ -431,7 +431,7 @@ async function ensureSeanceTendances() {
   seanceTendancesLoading = true;
   try { seanceTendancesCache = await listSessions(90); }
   catch (e) { seanceTendancesCache = []; }
-  try { seanceTendancesWorkouts = await sb("workout_sessions?select=*&order=start_time.desc&limit=60") || []; }
+  try { seanceTendancesWorkouts = await sb("workout_sessions?select=*&activity_type=eq.seance&order=start_time.desc&limit=60") || []; }
   catch (e) { seanceTendancesWorkouts = []; }
   try { trainingCoefficients = await sb("training_coefficients?select=*&order=category,label") || []; }
   catch (e) { trainingCoefficients = []; }
@@ -1015,7 +1015,7 @@ async function renderDashboard() {
     const rows = await sb("dismissed_activity_flags?select=day");
     dismissedDates = (rows || []).map(function(r) { return r.day; });
   } catch (e) {}
-  try { workouts = await sb("workout_sessions?select=day,training_effect_aerobic,training_effect_anaerobic&order=day.desc&limit=60") || []; } catch (e) {}
+  try { workouts = await sb("workout_sessions?select=day,training_effect_aerobic,training_effect_anaerobic&activity_type=eq.seance&order=day.desc&limit=60") || []; } catch (e) {}
   let monthMigraines = [], monthLifeload = [];
   try { monthMigraines = await sb("migraines?select=day,intensity&order=day.desc&limit=60") || []; } catch (e) {}
   try { monthLifeload = await sb("lifeload?select=day,state&order=day.desc&limit=60") || []; } catch (e) {}
@@ -2119,9 +2119,10 @@ function wireMigraineEvents() {
 async function renderVie() {
   const app = document.getElementById("app");
   app.innerHTML = '<div class="muted">Chargement…</div>';
-  let wearable = [], workouts = [], errorMsg = "";
+  let wearable = [], workouts = [], trips = [], errorMsg = "";
   try { wearable = await listWearable(60); } catch (e) { errorMsg = e.message; }
-  try { workouts = await sb("workout_sessions?select=start_time,hrr_1min,duration_min,training_effect_aerobic,training_effect_anaerobic&order=start_time.asc&limit=200") || []; } catch (e) {}
+  try { workouts = await sb("workout_sessions?select=start_time,hrr_1min,duration_min,training_effect_aerobic,training_effect_anaerobic&activity_type=eq.seance&order=start_time.asc&limit=200") || []; } catch (e) {}
+  try { trips = await sb("workout_sessions?select=start_time,duration_min,calories&activity_type=eq.trajet&order=start_time.desc&limit=60") || []; } catch (e) {}
 
   let html = "";
   if (errorMsg) html += '<div class="error-banner"><b>Erreur :</b> ' + esc(errorMsg) + "</div>";
@@ -2177,6 +2178,21 @@ async function renderVie() {
     html += '<div class="muted" style="font-size:10px;margin-top:8px">Séances courtes/sans effet d\'entraînement exclues. Reste approximatif : capteur poignet moins précis qu\'une ceinture ECG, et on ne sait pas si tu es resté immobile juste après l\'effort (sinon la FC reste artificiellement haute et fausse la mesure) — à ne pas surinterpréter sans un vrai protocole (effort soutenu puis arrêt complet 2 min).</div></div>';
   } else if (hrrRows.length > 0 || workouts.some(function(w){return w.hrr_1min != null;})) {
     html += '<div class="card"><div class="section-label">Récupération cardiaque (HRR)</div><div class="muted" style="font-size:12px;text-align:center;padding:8px 0">Pas encore assez de séances avec un effort réel et un signal fiable pour en tirer une tendance.</div></div>';
+  }
+
+  // Trajets actifs (vélo) — détectés automatiquement (créneaux + durée
+  // habituels), exclus des zones/effet d'entraînement (ce ne sont pas des
+  // séances), mais leur coût réel reste réel : suivi séparé, pas ignoré.
+  if (trips.length > 0) {
+    const last7Trips = trips.filter(function(t) { return t.start_time >= daysAgo(6); });
+    const totalMin = last7Trips.reduce(function(s,t){ return s + (t.duration_min||0); }, 0);
+    const totalCal = last7Trips.reduce(function(s,t){ return s + (t.calories||0); }, 0);
+    html += '<div class="card"><div class="section-label">Trajets actifs (vélo) — 7 derniers jours</div><div class="stat-row">';
+    html += statHtml("Trajets", last7Trips.length);
+    html += statHtml("Temps total", totalMin + " min");
+    html += statHtml("Calories", totalCal || "–");
+    html += "</div>";
+    html += '<div class="muted" style="font-size:10px;margin-top:8px">Détectés automatiquement (créneaux et durées habituels), exclus des zones cardiaques et de l\'effet d\'entraînement — ce ne sont pas des séances. Mais l\'effort qu\'ils représentent est réel et compte déjà dans ton PAI (calculé sur toute activité cardiaque, pas seulement l\'entraînement structuré).</div></div>';
   }
 
   html += '<div class="card steel"><div class="section-label">À savoir</div>';
