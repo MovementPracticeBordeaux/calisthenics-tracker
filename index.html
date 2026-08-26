@@ -819,6 +819,15 @@ function wireSeanceEvents() {
   const cancelBtn = document.getElementById("cancel-session");
   if (cancelBtn) cancelBtn.addEventListener("click", function() { editingSession = null; drawSeance(); });
 
+  const toggleHist = document.getElementById("toggle-history");
+  if (toggleHist) toggleHist.addEventListener("click", function() {
+    historyOpen = !historyOpen;
+    drawSeance();
+  });
+  document.querySelectorAll(".history-item").forEach(function(btn) {
+    btn.addEventListener("click", function() { currentDate = btn.dataset.date; loadSeance(); });
+  });
+
   if (!session) return; // pas de formulaire ouvert : rien de plus à câbler
 
   const sessionTimeInput = document.getElementById("session-time-input");
@@ -904,15 +913,6 @@ function wireSeanceEvents() {
     }).catch(function(e) {
       validateBtn.textContent = "Erreur : " + e.message;
     });
-  });
-
-  const toggleHist = document.getElementById("toggle-history");
-  if (toggleHist) toggleHist.addEventListener("click", function() {
-    historyOpen = !historyOpen;
-    drawSeance();
-  });
-  document.querySelectorAll(".history-item").forEach(function(btn) {
-    btn.addEventListener("click", function() { currentDate = btn.dataset.date; loadSeance(); });
   });
 }
 
