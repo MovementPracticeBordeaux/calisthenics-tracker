@@ -31,6 +31,28 @@ def karvonen_thresholds():
     return [round(HR_REST + reserve * p) for p in (0.5, 0.6, 0.7, 0.8, 0.9)]
 
 
+# Trajets à vélo connus — créneaux et durée habituels. Ces activités sont
+# détectées par la montre comme n'importe quelle autre, mais ne sont pas des
+# séances d'entraînement : à exclure des zones cardiaques et de l'effet
+# d'entraînement utilisés pour juger la charge, tout en gardant une trace de
+# leur coût réel (elles comptent quand même dans le PAI, calculé séparément
+# par la montre à partir de la FC continue).
+def is_bike_trip(start_local, duration_min):
+    if not (6 <= duration_min <= 11):
+        return False
+    h, m = start_local.hour, start_local.minute
+    if 9 <= h <= 10:
+        return True
+    if h == 13 and 15 <= m <= 45:
+        return True
+    if start_local.weekday() == 1:  # mardi
+        if h == 19 and m <= 30:
+            return True
+        if (h == 20 and m >= 50) or (h == 21 and m <= 30):
+            return True
+    return False
+
+
 def parse_fit(path):
     """Extrait une séance d'un fichier .fit, avec zones Karvonen."""
     try:
@@ -68,6 +90,10 @@ def parse_fit(path):
                 z[4] += 1
 
         end = start + datetime.timedelta(seconds=dur_s)
+        # Les horodatages FIT sont en UTC ; conversion approximative heure
+        # française d'été (+2h) pour la détection des créneaux de trajet.
+        start_local = start + datetime.timedelta(hours=2)
+        activity_type = "trajet" if is_bike_trip(start_local, dur_s / 60) else "seance"
         zones_official = s.get("time_in_hr_zone") or [0] * 6
 
         return {
@@ -94,6 +120,7 @@ def parse_fit(path):
             "calories": s.get("total_calories"),
             "hr_points": len(hrs),
             "source": "zepp_official",
+            "activity_type": activity_type,
         }
     except Exception as exc:
         print(f"  ! {os.path.basename(path)} illisible : {exc}")
