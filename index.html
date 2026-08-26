@@ -422,6 +422,7 @@ let themeDraftId = null;
 let themeDraft = { contraction: "dynamique", type: null, rpe: 0 };
 let disciplineOtherMode = false;
 let seanceTendancesCache = null;
+let seanceTendancesWorkouts = null;
 let seanceTendancesLoading = false;
 
 async function ensureSeanceTendances() {
@@ -429,6 +430,8 @@ async function ensureSeanceTendances() {
   seanceTendancesLoading = true;
   try { seanceTendancesCache = await listSessions(90); }
   catch (e) { seanceTendancesCache = []; }
+  try { seanceTendancesWorkouts = await sb("workout_sessions?select=*&order=start_time.desc&limit=60") || []; }
+  catch (e) { seanceTendancesWorkouts = []; }
   seanceTendancesLoading = false;
   drawSeance();
 }
@@ -494,6 +497,39 @@ function renderSeanceTendancesHtml() {
       html += '<div style="display:flex;align-items:flex-start;margin-bottom:8px;font-size:13px;color:var(--chalkDim)"><span style="display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--' + dotColor + ');margin-right:8px;margin-top:5px;flex-shrink:0"></span><span>' + esc(l.text) + "</span></div>";
     });
     html += "</div>";
+  }
+
+  // ---- Zones cardiaques (méthode Karvonen, recalculées seconde par seconde) ----
+  // La méthode %FCmax utilisée par défaut par les montres ignore la FC repos
+  // et applique le même pourcentage à tout le monde. Karvonen (réserve
+  // cardiaque) est recommandée par l'ACSM car elle intègre le niveau de forme
+  // individuel — d'autant plus pertinent avec une FC repos basse.
+  const kzWorkouts = (seanceTendancesWorkouts || []).filter(function(w) { return w.kz_leger_min != null; });
+  if (kzWorkouts.length > 0) {
+    const last30 = kzWorkouts.filter(function(w) { return w.day >= daysAgo(29); });
+    const pool = last30.length > 0 ? last30 : kzWorkouts;
+    const tot = { l: 0, i: 0, a: 0, an: 0, v: 0 };
+    pool.forEach(function(w) {
+      tot.l += Number(w.kz_leger_min) || 0; tot.i += Number(w.kz_intensif_min) || 0;
+      tot.a += Number(w.kz_aerobique_min) || 0; tot.an += Number(w.kz_anaerobie_min) || 0;
+      tot.v += Number(w.kz_vo2max_min) || 0;
+    });
+    const grand = tot.l + tot.i + tot.a + tot.an + tot.v;
+    if (grand > 0) {
+      const hrMax = kzWorkouts[0].kz_hrmax_used, hrRest = kzWorkouts[0].kz_hrrest_used;
+      const kzRows = [
+        ["Léger", tot.l, "steel"], ["Intensif", tot.i, "green"],
+        ["Aérobique", tot.a, "amber"], ["Anaérobie", tot.an, "rust"], ["VO2 max", tot.v, "red"],
+      ];
+      html += '<h1 style="font-size:18px;margin:22px 0 10px">Zones cardiaques</h1>';
+      html += '<div class="card"><div class="section-label">Répartition — ' + pool.length + ' séance(s) sur 30 jours</div>';
+      kzRows.forEach(function(r) {
+        const pct = Math.round((r[1] / grand) * 100);
+        html += '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>' + r[0] + '</span><span class="muted">' + Math.round(r[1]) + " min · " + pct + "%</span></div>";
+        html += '<div style="height:7px;background:var(--surfaceRaised);border-radius:4px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:var(--' + r[2] + ')"></div></div></div>';
+      });
+      html += '<div class="muted" style="font-size:10px;margin-top:8px">Méthode Karvonen (réserve cardiaque), recalculée seconde par seconde depuis les fichiers de séance — FC max ' + hrMax + ', FC repos ' + hrRest + '. Plus juste que le %FCmax des montres (qui ignore la FC repos), mais reste une estimation : seul un test d\'effort avec seuils ventilatoires donnerait tes vraies zones.</div></div>';
+    }
   }
 
   // ---- Mois ----
