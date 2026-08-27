@@ -178,6 +178,14 @@ const GOALS = [{ id: "force", label: "Force" }, { id: "endurance_force", label: 
 const GOAL_FACTORS = { force: 1.0, endurance_force: 1.15, endurance: 1.25, hybride: 1.20 };
 const DURATIONS = [{ id: "30", label: "30 min", minutes: 30 }, { id: "45", label: "45 min", minutes: 45 }, { id: "60", label: "1h", minutes: 60 }, { id: "plus", label: "Plus", minutes: null }];
 const ACHIEVEMENTS = [{ id: "atteint", label: "Atteint", color: "green" }, { id: "moyen", label: "Moyennement", color: "amber" }, { id: "pas", label: "Pas atteint", color: "red" }];
+// Coefficient de participation réelle du coach — un cours enseigné n'impose
+// pas le même volume personnel qu'une pratique complète en élève.
+const PARTICIPATION_LEVELS = [
+  { value: 0.15, label: "Démo ponctuelle" },
+  { value: 0.4, label: "Participation légère" },
+  { value: 0.65, label: "Participation active" },
+  { value: 1.0, label: "Participation complète" },
+];
 const WARMUP_MINUTES = 22;
 const DISCIPLINE_TO_THEMES = {
   Handstand: ["handstand"], "Mobilité": ["bas"], Locomotion: ["locomotion"],
@@ -251,7 +259,7 @@ function sessionFromClass(c) {
   return { entries: entries, goal: null, duration: duration, durationPreset: deriveDurationPreset(duration),
     achievement: null, intensity: 0, discipline: c.discipline, time: c.heure_debut.slice(0,5) };
 }
-function emptySession() { return { entries: {}, goal: null, durationPreset: null, duration: "", achievement: null, intensity: 0, discipline: null, time: "" }; }
+function emptySession() { return { entries: {}, goal: null, durationPreset: null, duration: "", achievement: null, intensity: 0, discipline: null, time: "", participation: 1.0 }; }
 
 // Entrées "effectives" pour le calcul de charge et la sauvegarde — dérivées
 // à la demande, sans jamais muter session.entries pendant l'affichage.
@@ -268,10 +276,11 @@ function getEffectiveEntries(s) {
 
 function computeLoad(s) {
   if (!s) return { sessionLoad: null, correctedLoad: null };
+  const participation = s.participation != null ? s.participation : 1.0;
   const sessionLoad = s.intensity > 0 && s.duration ? Math.round(s.intensity * Number(s.duration)) : null;
   const active = Object.entries(getEffectiveEntries(s)).filter(function(e){ return e[1].rpe > 0; });
   const totalRpe = active.reduce(function(sum,e){ return sum + e[1].rpe; }, 0);
-  if (active.length === 0) return { sessionLoad: sessionLoad, correctedLoad: sessionLoad };
+  if (active.length === 0) return { sessionLoad: sessionLoad, correctedLoad: sessionLoad !== null ? Math.round(sessionLoad * participation) : null };
   const neuralFactor = active.reduce(function(sum,e){
     const t = THEMES.find(function(th){ return th.id === e[0]; });
     return sum + (t ? t.neural : 1) * e[1].rpe;
@@ -283,7 +292,7 @@ function computeLoad(s) {
   const contractionFactor = active.reduce(function(sum,e){
     return sum + (CONTRACTION_FACTORS[e[1].contraction] || 1) * e[1].rpe;
   }, 0) / totalRpe;
-  const correctedLoad = sessionLoad !== null ? Math.round(sessionLoad * neuralFactor * typeFactor * contractionFactor) : null;
+  const correctedLoad = sessionLoad !== null ? Math.round(sessionLoad * neuralFactor * typeFactor * contractionFactor * participation) : null;
   return { sessionLoad: sessionLoad, correctedLoad: correctedLoad };
 }
 
@@ -292,13 +301,14 @@ function rowToSession(row) {
   if (!row) return emptySession();
   return { entries: row.entries || {}, goal: row.goal || null, duration: row.duration_minutes || "",
     durationPreset: deriveDurationPreset(row.duration_minutes), achievement: row.achievement || null,
-    intensity: row.intensity || 0, discipline: row.discipline || null, time: row.session_time || "" };
+    intensity: row.intensity || 0, discipline: row.discipline || null, time: row.session_time || "",
+    participation: row.participation != null ? Number(row.participation) : 1.0 };
 }
 function sessionToRow(dateStr, s) {
   const load = computeLoad(s);
   return { session_date: dateStr, goal: s.goal, duration_minutes: s.duration ? Number(s.duration) : null,
     achievement: s.achievement, intensity: s.intensity || null, entries: s.entries || {}, discipline: s.discipline || null,
-    session_time: s.time || null,
+    session_time: s.time || null, participation: s.participation != null ? s.participation : 1.0,
     session_load: load.sessionLoad, corrected_load: load.correctedLoad, updated_at: new Date().toISOString() };
 }
 async function loadSessionsForDate(dateStr) {
@@ -717,6 +727,11 @@ function drawSeance() {
     html += '<div class="section-label">Objectif atteint ?</div><div class="pill-row" id="achievement-row" style="margin-bottom:16px">';
     ACHIEVEMENTS.forEach(function(a) { html += pillHtml(a, session.achievement === a.id, "achievement"); });
     html += "</div>";
+    html += '<div class="section-label">Ton implication (coach vs pratiquant)</div><div class="pill-row compact" id="participation-row" style="margin-bottom:16px">';
+    PARTICIPATION_LEVELS.forEach(function(p) {
+      html += '<button class="pill' + (Math.abs((session.participation != null ? session.participation : 1.0) - p.value) < 0.01 ? " active" : "") + '" data-value="' + p.value + '">' + p.label + "</button>";
+    });
+    html += "</div>";
     html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">';
     html += '<span class="section-label" style="margin:0">Intensité globale ressentie</span><span class="rpe-value">' + (session.intensity > 0 ? session.intensity : "–") + "</span></div>";
     html += rpeLadderHtml("global", session.intensity || 0);
@@ -950,6 +965,9 @@ function wireSeanceEvents() {
   if (durCustom) durCustom.addEventListener("blur", function() { session.duration = durCustom.value; update(); });
   document.querySelectorAll('#achievement-row .pill').forEach(function(btn) {
     btn.addEventListener("click", function() { session.achievement = session.achievement === btn.dataset.id ? null : btn.dataset.id; update(); });
+  });
+  document.querySelectorAll('#participation-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { session.participation = Number(btn.dataset.value); update(); });
   });
 
   document.querySelectorAll('.rpe-ladder[data-scope="global"] .rpe-bar').forEach(function(btn) {
