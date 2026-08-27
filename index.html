@@ -586,7 +586,10 @@ function renderSeanceTendancesHtml() {
   const themeCounts = {};
   monthSessions.forEach(function(s){ Object.keys(s.entries).forEach(function(t){ themeCounts[t]=(themeCounts[t]||0)+1; }); });
   const stale = THEMES.map(function(t) {
-    const last = allSessions.filter(function(s){ return s.entries[t.id]; }).sort(function(a,b){return a.date<b.date?1:-1;})[0];
+    // Un mouvement complet (muscle-up, etc.) mélange traction et poussée —
+    // il compte pour les deux, pas seulement pour "complet".
+    const relevantIds = (t.id === "tirage" || t.id === "poussee") ? [t.id, "complet"] : [t.id];
+    const last = allSessions.filter(function(s){ return relevantIds.some(function(id){ return s.entries[id]; }); }).sort(function(a,b){return a.date<b.date?1:-1;})[0];
     const days = last ? Math.round((new Date(today)-new Date(last.date))/86400000) : null;
     return { theme: t, days: days };
   }).filter(function(x){ return x.days === null || x.days >= 10; });
