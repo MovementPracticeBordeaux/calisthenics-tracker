@@ -176,6 +176,12 @@ const CONTRACTIONS = [
 const CONTRACTION_FACTORS = { dynamique: 1.0, isometrique: 1.15, excentrique: 1.10, mixte: 1.05 };
 const GOALS = [{ id: "force", label: "Force" }, { id: "endurance_force", label: "End. force" }, { id: "endurance", label: "Endurance" }, { id: "hybride", label: "Hybride" }];
 const GOAL_FACTORS = { force: 1.0, endurance_force: 1.15, endurance: 1.25, hybride: 1.20 };
+// Niveau de pratique — les figures/mouvements travaillés dans un thème
+// progressent avec le niveau (ex. Handstand au mur -> libre -> figures ;
+// Calisthenics dips/tractions -> skin the cat/L-sit -> muscle-up), avec une
+// charge tendino-musculaire qui augmente en conséquence.
+const NIVEAUX = [{ id: "debutant", label: "Débutant" }, { id: "intermediaire", label: "Intermédiaire" }, { id: "avance", label: "Avancé" }];
+const NIVEAU_FACTORS = { debutant: 0.85, intermediaire: 1.0, avance: 1.2 };
 const DURATIONS = [{ id: "30", label: "30 min", minutes: 30 }, { id: "45", label: "45 min", minutes: 45 }, { id: "60", label: "1h", minutes: 60 }, { id: "plus", label: "Plus", minutes: null }];
 const ACHIEVEMENTS = [{ id: "atteint", label: "Atteint", color: "green" }, { id: "moyen", label: "Moyennement", color: "amber" }, { id: "pas", label: "Pas atteint", color: "red" }];
 // Coefficient de participation réelle du coach — un cours enseigné n'impose
@@ -259,7 +265,7 @@ function sessionFromClass(c) {
   return { entries: entries, goal: null, duration: duration, durationPreset: deriveDurationPreset(duration),
     achievement: null, intensity: 0, discipline: c.discipline, time: c.heure_debut.slice(0,5) };
 }
-function emptySession() { return { entries: {}, goal: null, durationPreset: null, duration: "", achievement: null, intensity: 0, discipline: null, time: "", participation: 1.0 }; }
+function emptySession() { return { entries: {}, goal: null, durationPreset: null, duration: "", achievement: null, intensity: 0, discipline: null, time: "", participation: 1.0, niveau: "intermediaire" }; }
 
 // Entrées "effectives" pour le calcul de charge et la sauvegarde — dérivées
 // à la demande, sans jamais muter session.entries pendant l'affichage.
@@ -268,7 +274,7 @@ function getEffectiveEntries(s) {
   const singleThemeId = s.discipline ? SINGLE_THEME_DISCIPLINES[s.discipline] : null;
   if (singleThemeId) {
     const e = {};
-    e[singleThemeId] = { contraction: "dynamique", rpe: s.intensity || 0 };
+    e[singleThemeId] = { contraction: "dynamique", rpe: s.intensity || 0, niveau: s.niveau || "intermediaire" };
     return e;
   }
   return {};
@@ -292,7 +298,10 @@ function computeLoad(s) {
   const contractionFactor = active.reduce(function(sum,e){
     return sum + (CONTRACTION_FACTORS[e[1].contraction] || 1) * e[1].rpe;
   }, 0) / totalRpe;
-  const correctedLoad = sessionLoad !== null ? Math.round(sessionLoad * neuralFactor * typeFactor * contractionFactor * participation) : null;
+  const niveauFactor = active.reduce(function(sum,e){
+    return sum + (NIVEAU_FACTORS[e[1].niveau] || 1) * e[1].rpe;
+  }, 0) / totalRpe;
+  const correctedLoad = sessionLoad !== null ? Math.round(sessionLoad * neuralFactor * typeFactor * contractionFactor * niveauFactor * participation) : null;
   return { sessionLoad: sessionLoad, correctedLoad: correctedLoad };
 }
 
@@ -302,13 +311,15 @@ function rowToSession(row) {
   return { entries: row.entries || {}, goal: row.goal || null, duration: row.duration_minutes || "",
     durationPreset: deriveDurationPreset(row.duration_minutes), achievement: row.achievement || null,
     intensity: row.intensity || 0, discipline: row.discipline || null, time: row.session_time || "",
-    participation: row.participation != null ? Number(row.participation) : 1.0 };
+    participation: row.participation != null ? Number(row.participation) : 1.0,
+    niveau: row.niveau || "intermediaire" };
 }
 function sessionToRow(dateStr, s) {
   const load = computeLoad(s);
   return { session_date: dateStr, goal: s.goal, duration_minutes: s.duration ? Number(s.duration) : null,
     achievement: s.achievement, intensity: s.intensity || null, entries: s.entries || {}, discipline: s.discipline || null,
     session_time: s.time || null, participation: s.participation != null ? s.participation : 1.0,
+    niveau: s.niveau || "intermediaire",
     session_load: load.sessionLoad, corrected_load: load.correctedLoad, updated_at: new Date().toISOString() };
 }
 async function loadSessionsForDate(dateStr) {
@@ -629,6 +640,7 @@ function renderSeanceTendancesHtml() {
     ["neural", "Complexité neurale par thème"],
     ["contraction", "Type de contraction"],
     ["goal", "Type d'effort"],
+    ["niveau", "Niveau de pratique"],
   ];
   coefGroups.forEach(function(g) {
     html += '<div class="section-label" style="margin-top:12px">' + g[1] + '</div>';
@@ -751,6 +763,12 @@ function drawSeance() {
     // coulisse à partir du RPE global, sans dupliquer l'info dans une UI à part.
     const isCalisthenics = session.discipline === "Calisthenics";
     const singleThemeId = session.discipline ? SINGLE_THEME_DISCIPLINES[session.discipline] : null;
+    if (singleThemeId) {
+      html += '<div class="section-label" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">Niveau des figures travaillées</div>';
+      html += '<div class="pill-row compact" id="niveau-row">';
+      NIVEAUX.forEach(function(n) { html += '<button class="pill' + ((session.niveau || "intermediaire") === n.id ? " active" : "") + '" data-id="' + n.id + '">' + n.label + "</button>"; });
+      html += "</div>";
+    }
     if (isCalisthenics) {
       html += '<div class="section-label" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">Thèmes travaillés</div>';
       const CALI_THEMES = THEMES.filter(function(t) { return ["tirage", "poussee", "complet"].indexOf(t.id) !== -1; });
@@ -768,6 +786,9 @@ function drawSeance() {
           html += "</div>";
           html += '<div class="section-label">Type d\'effort</div><div class="pill-row compact" style="margin-bottom:14px" data-theme-group="type" data-theme="' + t.id + '">';
           GOALS.forEach(function(g) { html += '<button class="pill' + (data.type === g.id ? " active" : "") + '" data-id="' + g.id + '">' + g.label + "</button>"; });
+          html += "</div>";
+          html += '<div class="section-label">Niveau des mouvements</div><div class="pill-row compact" style="margin-bottom:14px" data-theme-group="niveau" data-theme="' + t.id + '">';
+          NIVEAUX.forEach(function(n) { html += '<button class="pill' + ((data.niveau || "intermediaire") === n.id ? " active" : "") + '" data-id="' + n.id + '">' + n.label + "</button>"; });
           html += "</div>";
           html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><span class="section-label" style="margin:0">Intensité (RPE)</span><span class="rpe-value">' + (data.rpe > 0 ? data.rpe : "–") + "</span></div>";
           html += rpeLadderHtml("theme:" + t.id, data.rpe || 0);
@@ -995,6 +1016,14 @@ function wireSeanceEvents() {
     row.querySelectorAll(".pill").forEach(function(btn) {
       btn.addEventListener("click", function() { session.entries[row.dataset.theme].type = btn.dataset.id; update(); });
     });
+  });
+  document.querySelectorAll('[data-theme-group="niveau"]').forEach(function(row) {
+    row.querySelectorAll(".pill").forEach(function(btn) {
+      btn.addEventListener("click", function() { session.entries[row.dataset.theme].niveau = btn.dataset.id; update(); });
+    });
+  });
+  document.querySelectorAll('#niveau-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { session.niveau = btn.dataset.id; update(); });
   });
   document.querySelectorAll('.rpe-ladder').forEach(function(ladder) {
     if (ladder.dataset.scope === "global") return;
@@ -2247,6 +2276,9 @@ async function loadCoefficients() {
       } else if (r.category === "goal") {
         const id = r.key.replace("goal_", "");
         if (GOAL_FACTORS[id] != null) GOAL_FACTORS[id] = Number(r.value);
+      } else if (r.category === "niveau") {
+        const id = r.key.replace("niveau_", "");
+        if (NIVEAU_FACTORS[id] != null) NIVEAU_FACTORS[id] = Number(r.value);
       }
     });
   } catch (e) {
