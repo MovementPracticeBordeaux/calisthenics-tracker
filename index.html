@@ -1211,6 +1211,16 @@ async function renderDashboard() {
   if (hrvPct != null) { signals++; if (hrvPct <= -30) score -= 25; else if (hrvPct <= -20) score -= 15; else if (hrvPct <= -10) score -= 5; else if (hrvPct >= 15) score += 10; }
   if (stressDiff != null) { signals++; if (stressDiff >= 10) score -= 25; else if (stressDiff >= 5) score -= 10; }
   if (loadRatio != null) { signals++; if (loadRatio > 1.5) score -= 20; else if (loadRatio > 1.3) score -= 10; else if (loadRatio < 0.7) score += 5; }
+  // Dépense d'énergie du jour — dégressif au fil des séances loguées
+  // aujourd'hui, indépendamment de loadRatio (qui compare une tendance sur
+  // plusieurs jours). Ici, chaque séance loguée fait baisser le score
+  // immédiatement et visiblement : c'est ce qui restait sans effet avant.
+  let todayDepletion = 0;
+  if (todayTotalLoad > 0) {
+    signals++;
+    todayDepletion = Math.min(35, Math.round(todayTotalLoad / 60));
+    score -= todayDepletion;
+  }
   if (sleepMin != null) {
     signals++;
     if (sleepMin < 300) score -= 25; else if (sleepMin < 360) score -= 15; else if (sleepMin < 420) score -= 5; else if (sleepMin > 600) score -= 5;
@@ -1406,6 +1416,7 @@ async function renderDashboard() {
     if (hrvTierNow) checklist.push({ label: "VFC", tier: hrvTierNow, note: (todayWearable && todayWearable.hrv_avg != null ? Math.round(todayWearable.hrv_avg) : Math.round(avgOf(hrvSeries.map(function(s){return s.val;}).filter(function(v){return v>0;})))) + " ms" });
     if (sleepMin != null) checklist.push({ label: "Sommeil", tier: sleepMin < 360 ? "red" : sleepMin < 420 ? "amber" : "green", note: Math.floor(sleepMin/60) + "h" + Math.round(sleepMin%60).toString().padStart(2,'0') });
     if (loadRatio != null) checklist.push({ label: "Charge récente", tier: loadRatio > 1.5 ? "red" : loadRatio > 1.3 ? "amber" : "green", note: (loadRatio >= 1 ? "+" : "") + Math.round((loadRatio-1)*100) + "%" });
+    if (todayTotalLoad > 0) checklist.push({ label: "Dépense du jour", tier: todayDepletion >= 25 ? "red" : todayDepletion >= 12 ? "amber" : "green", note: "-" + todayDepletion + " pts (charge " + todayTotalLoad + ")" });
     if (todayMigraine != null) checklist.push({ label: "Migraine", tier: "red", note: todayMigraine + "/10" });
     if (lifeload) checklist.push({ label: "Ressenti", tier: lifeload === "bien" ? "green" : lifeload === "malade" ? "red" : ["stresse","fatigue"].indexOf(lifeload) !== -1 ? "amber" : "steel", note: lifeload });
 
