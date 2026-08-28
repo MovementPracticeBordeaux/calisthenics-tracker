@@ -145,7 +145,11 @@ def build_daily_summary(db_path):
     # Vigilance par fenêtres horaires (matin/après-midi/soir) : moyennes VFC et
     # stress sur des créneaux fixes, pour comparer chaque jour à sa propre
     # référence sur le même créneau plutôt qu'une courbe théorique générique.
-    WINDOWS = [("morning", 6, 9), ("afternoon", 13, 15), ("evening", 19, 21)]
+    # Créneaux ajustés sur les moments réellement immobiles de la journée
+    # (14h-16h15 et 17h-19h hors mardi) — les précédents coïncidaient avec les
+    # trajets à vélo, empêchant toute mesure fiable (le capteur optique au
+    # poignet ne mesure quasiment que pendant l'immobilité).
+    WINDOWS = [("morning", 6, 9), ("afternoon", 14, 16), ("evening", 17, 19)]
     cur.execute("SELECT TIMESTAMP, VALUE FROM GENERIC_HRV_VALUE_SAMPLE WHERE TIMESTAMP >= ?", (cutoff_ms,))
     hrv_rows = cur.fetchall()
     cur.execute("SELECT TIMESTAMP, STRESS FROM HUAMI_STRESS_SAMPLE WHERE TIMESTAMP >= ?", (cutoff_ms,))
