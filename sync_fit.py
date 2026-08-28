@@ -84,6 +84,25 @@ def match_class(start_local, schedule, ref_cache):
     return None
 
 
+def match_logged_session(start_local, logged_cache):
+    """Repli si aucun cours officiel ne correspond : vérifie si l'horaire du
+    fichier .fit correspond à une séance que Sylvain a lui-même loguée ce
+    jour-là (via le champ heure du formulaire) — couvre les séances hors
+    planning (perso, remplacement, week-end...)."""
+    day = start_local.date()
+    day_str = day.isoformat()
+    if day_str not in logged_cache:
+        rows = sb_get(f"sessions?session_date=eq.{day_str}&select=discipline,session_time")
+        logged_cache[day_str] = [r for r in rows if r.get("session_time") and r.get("discipline")]
+    tol = datetime.timedelta(minutes=30)
+    for s in logged_cache[day_str]:
+        s_time = datetime.time.fromisoformat(s["session_time"])
+        s_start = datetime.datetime.combine(day, s_time)
+        if s_start - tol <= start_local <= s_start + tol:
+            return s["discipline"]
+    return None
+
+
 def is_bike_trip(start_local, duration_min):
     """Trajets à vélo connus — créneaux et durée habituels, en repli si aucun
     cours du planning ne correspond."""
@@ -102,7 +121,7 @@ def is_bike_trip(start_local, duration_min):
     return False
 
 
-def parse_fit(path, schedule, ref_cache):
+def parse_fit(path, schedule, ref_cache, logged_cache):
     """Extrait une séance d'un fichier .fit, avec zones Karvonen et
     rattachement au planning réel."""
     try:
@@ -146,6 +165,8 @@ def parse_fit(path, schedule, ref_cache):
         start_local = start + datetime.timedelta(hours=2)
 
         matched_discipline = match_class(start_local, schedule, ref_cache)
+        if not matched_discipline:
+            matched_discipline = match_logged_session(start_local, logged_cache)
         if matched_discipline:
             activity_type = "seance"
         elif is_bike_trip(start_local, dur_s / 60):
@@ -215,9 +236,10 @@ if __name__ == "__main__":
         sys.exit(0)
     schedule = load_schedule()
     ref_cache = {}
+    logged_cache = {}
     rows = []
     for fp in files:
-        row = parse_fit(fp, schedule, ref_cache)
+        row = parse_fit(fp, schedule, ref_cache, logged_cache)
         if row:
             rows.append(row)
     # Déduplique par start_time — Postgres refuse deux fois la même clé dans
