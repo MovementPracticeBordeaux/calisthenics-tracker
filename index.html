@@ -1219,6 +1219,21 @@ async function renderDashboard() {
       return t ? t.neural : 1;
     }
     if (discipline === "Calisthenics") {
+      // Regarde ce qui a vraiment été loggé ce jour-là en Calisthenics
+      // (thèmes cochés + RPE), pondéré comme dans computeLoad — pas une
+      // moyenne générique des 3 thèmes possibles.
+      const todayCaliEntries = sessions
+        .filter(function(s) { return s.date === today && s.discipline === "Calisthenics"; })
+        .reduce(function(acc, s) { return Object.assign(acc, s.entries); }, {});
+      const active = Object.entries(todayCaliEntries).filter(function(e){ return e[1].rpe > 0; });
+      const totalRpe = active.reduce(function(sum,e){ return sum + e[1].rpe; }, 0);
+      if (active.length && totalRpe > 0) {
+        return active.reduce(function(sum,e){
+          const t = THEMES.find(function(th){ return th.id === e[0]; });
+          return sum + (t ? t.neural : 1) * e[1].rpe;
+        }, 0) / totalRpe;
+      }
+      // Repli si rien n'est encore loggé pour cette séance : moyenne des 3 thèmes.
       const caliThemes = THEMES.filter(function(t){ return ["tirage","poussee","complet"].indexOf(t.id) !== -1; });
       return avgOf(caliThemes.map(function(t){ return t.neural; }));
     }
