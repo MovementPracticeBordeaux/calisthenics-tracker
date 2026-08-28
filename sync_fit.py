@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Synchronise les séances Zepp (.fit) vers Supabase.
 
-Décode les fichiers .fit exportés automatiquement par Zepp vers Google Drive
-et calcule les zones cardiaques par la méthode Karvonen (réserve cardiaque),
-à partir des données seconde par seconde — plus juste que le %FCmax utilisé
-par défaut par la montre, car elle intègre la FC de repos.
+Décode les fichiers .fit exportés automatiquement vers Google Drive et
+calcule les zones cardiaques par la méthode Karvonen (réserve cardiaque), à
+partir des données seconde par seconde. Chaque fichier est croisé avec le
+planning réel des cours (class_schedule) pour distinguer une vraie séance
+d'un trajet ou d'une activité hors planning, plutôt que de deviner à la
+seule durée.
 """
 import datetime
 import glob
@@ -31,13 +33,60 @@ def karvonen_thresholds():
     return [round(HR_REST + reserve * p) for p in (0.5, 0.6, 0.7, 0.8, 0.9)]
 
 
-# Trajets à vélo connus — créneaux et durée habituels. Ces activités sont
-# détectées par la montre comme n'importe quelle autre, mais ne sont pas des
-# séances d'entraînement : à exclure des zones cardiaques et de l'effet
-# d'entraînement utilisés pour juger la charge, tout en gardant une trace de
-# leur coût réel (elles comptent quand même dans le PAI, calculé séparément
-# par la montre à partir de la FC continue).
+def sb_get(path):
+    r = requests.get(
+        f"{SUPABASE_URL}/rest/v1/{path}",
+        headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def get_semaine(day, ref_cache):
+    """Détermine la semaine A/B pour une date donnée, à partir de la
+    référence stockée en base (alternance chaque semaine depuis le lundi de
+    référence)."""
+    if "ref" not in ref_cache:
+        ref = sb_get("schedule_reference?select=date_lundi_reference,semaine_ce_lundi&limit=1")
+        ref_cache["ref"] = ref[0] if ref else None
+    ref = ref_cache["ref"]
+    if not ref:
+        return None
+    ref_monday = datetime.date.fromisoformat(ref["date_lundi_reference"])
+    ref_letter = ref["semaine_ce_lundi"]
+    this_monday = day - datetime.timedelta(days=day.weekday())
+    weeks_diff = (this_monday - ref_monday).days // 7
+    if weeks_diff % 2 == 0:
+        return ref_letter
+    return "A" if ref_letter == "B" else "B"
+
+
+def load_schedule():
+    """Charge tout le planning une fois, pour éviter un appel réseau par fichier."""
+    return sb_get("class_schedule?select=discipline,jour_semaine,semaine,heure_debut,heure_fin&actif=eq.true")
+
+
+def match_class(start_local, schedule, ref_cache):
+    """Cherche un cours du planning dont le créneau (±20 min de tolérance)
+    contient l'heure de début du fichier .fit — c'est ce qui permet de
+    distinguer une vraie séance de cours (1h) d'un trajet ou d'une activité
+    hors planning, sans se fier uniquement à la durée."""
+    day = start_local.date()
+    semaine = get_semaine(day, ref_cache)
+    jour_semaine = start_local.isoweekday()  # 1=lundi ... 7=dimanche
+    tol = datetime.timedelta(minutes=20)
+    for c in schedule:
+        if c["jour_semaine"] != jour_semaine or c["semaine"] != semaine:
+            continue
+        c_start = datetime.datetime.combine(day, datetime.time.fromisoformat(c["heure_debut"]))
+        if c_start - tol <= start_local <= c_start + tol:
+            return c["discipline"]
+    return None
+
+
 def is_bike_trip(start_local, duration_min):
+    """Trajets à vélo connus — créneaux et durée habituels, en repli si aucun
+    cours du planning ne correspond."""
     if not (6 <= duration_min <= 11):
         return False
     h, m = start_local.hour, start_local.minute
@@ -53,8 +102,9 @@ def is_bike_trip(start_local, duration_min):
     return False
 
 
-def parse_fit(path):
-    """Extrait une séance d'un fichier .fit, avec zones Karvonen."""
+def parse_fit(path, schedule, ref_cache):
+    """Extrait une séance d'un fichier .fit, avec zones Karvonen et
+    rattachement au planning réel."""
     try:
         ff = fitparse.FitFile(path)
         sessions = [{f.name: f.value for f in m} for m in ff.get_messages("session")]
@@ -91,9 +141,18 @@ def parse_fit(path):
 
         end = start + datetime.timedelta(seconds=dur_s)
         # Les horodatages FIT sont en UTC ; conversion approximative heure
-        # française d'été (+2h) pour la détection des créneaux de trajet.
+        # française d'été (+2h) pour le rattachement au planning et la
+        # détection des trajets.
         start_local = start + datetime.timedelta(hours=2)
-        activity_type = "trajet" if is_bike_trip(start_local, dur_s / 60) else "seance"
+
+        matched_discipline = match_class(start_local, schedule, ref_cache)
+        if matched_discipline:
+            activity_type = "seance"
+        elif is_bike_trip(start_local, dur_s / 60):
+            activity_type = "trajet"
+        else:
+            activity_type = "autre"
+
         zones_official = s.get("time_in_hr_zone") or [0] * 6
 
         return {
@@ -121,6 +180,7 @@ def parse_fit(path):
             "hr_points": len(hrs),
             "source": "zepp_official",
             "activity_type": activity_type,
+            "matched_discipline": matched_discipline,
         }
     except Exception as exc:
         print(f"  ! {os.path.basename(path)} illisible : {exc}")
@@ -144,7 +204,8 @@ def push(rows):
     if resp.status_code >= 300:
         print(f"Erreur Supabase ({resp.status_code}): {resp.text}")
     else:
-        print(f"{len(rows)} séance(s) synchronisée(s) vers Supabase.")
+        matched = sum(1 for r in rows if r.get("matched_discipline"))
+        print(f"{len(rows)} séance(s) synchronisée(s) vers Supabase ({matched} rattachée(s) à un cours du planning).")
 
 
 if __name__ == "__main__":
@@ -152,9 +213,11 @@ if __name__ == "__main__":
     if not files:
         print(f"Aucun fichier .fit dans {FIT_DIR}")
         sys.exit(0)
+    schedule = load_schedule()
+    ref_cache = {}
     rows = []
     for fp in files:
-        row = parse_fit(fp)
+        row = parse_fit(fp, schedule, ref_cache)
         if row:
             rows.append(row)
     # Déduplique par start_time — Postgres refuse deux fois la même clé dans
