@@ -1247,6 +1247,15 @@ async function renderDashboard() {
       return s + te * neuralCoefficientForDiscipline(w.matched_discipline);
     }, 0);
   } catch (e) {}
+  // Trajets à vélo du jour — coût réel mais modeste (pas de complexité
+  // neurale particulière, coefficient neutre 1.0), pris en compte séparément
+  // pour ne pas les confondre avec une vraie séance dans le récap.
+  let todayTripEffort = 0, todayTripCount = 0;
+  try {
+    const todayTrips = await sb("workout_sessions?day=eq." + today + "&activity_type=eq.trajet&select=training_effect_aerobic,training_effect_anaerobic") || [];
+    todayTripCount = todayTrips.length;
+    todayTripEffort = todayTrips.reduce(function(s, w) { return s + (Number(w.training_effect_aerobic) || 0) + (Number(w.training_effect_anaerobic) || 0); }, 0);
+  } catch (e) {}
   let history_migraines_count = 0, migraine_signature = null;
   try {
     const migRows = await sb("migraines?select=day") || [];
@@ -1317,6 +1326,12 @@ async function renderDashboard() {
     signals++;
     todayFitDepletion = Math.min(15, Math.round(todayFitEffort * 3));
     score -= todayFitDepletion;
+  }
+  let todayTripDepletion = 0;
+  if (todayTripEffort > 0) {
+    signals++;
+    todayTripDepletion = Math.min(8, Math.round(todayTripEffort * 3));
+    score -= todayTripDepletion;
   }
   if (sleepMin != null) {
     signals++;
@@ -1517,6 +1532,7 @@ async function renderDashboard() {
     if (loadRatio != null) checklist.push({ label: "Fatigue accumulée (réveil)", tier: wakeFatigueDeduction >= 20 ? "red" : wakeFatigueDeduction >= 10 ? "amber" : "green", note: (freshnessBonus > 0 ? "+" + freshnessBonus : "-" + wakeFatigueDeduction) + " pts · ACWR " + loadRatio.toFixed(2) });
     if (todayTotalLoad > 0) checklist.push({ label: "Dépense du jour", tier: todayDepletion >= 25 ? "red" : todayDepletion >= 12 ? "amber" : "green", note: "-" + todayDepletion + " pts (charge " + todayTotalLoad + ")" });
     if (todayFitEffort > 0) checklist.push({ label: "Effort mesuré (.fit)", tier: todayFitDepletion >= 10 ? "red" : todayFitDepletion >= 5 ? "amber" : "green", note: "-" + todayFitDepletion + " pts · " + todayFitSessions.map(function(w){return w.matched_discipline;}).filter(Boolean).join(", ") });
+    if (todayTripEffort > 0) checklist.push({ label: "Trajets à vélo", tier: "green", note: "-" + todayTripDepletion + " pts · " + todayTripCount + " trajet(s)" });
     if (todayMigraine != null) checklist.push({ label: "Migraine", tier: "red", note: todayMigraine + "/10" });
     if (lifeload) checklist.push({ label: "Ressenti", tier: lifeload === "bien" ? "green" : lifeload === "malade" ? "red" : ["stresse","fatigue"].indexOf(lifeload) !== -1 ? "amber" : "steel", note: lifeload });
 
