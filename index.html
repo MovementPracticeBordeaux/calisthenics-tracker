@@ -1352,7 +1352,7 @@ async function renderDashboard() {
     });
     const vigScore = vigPct != null ? Math.max(0, Math.min(100, Math.round(85 + vigPct * 1.5))) : null;
 
-    html += '<div class="card"><div class="section-label">Forme <span style="color:var(--vigilance)">+ Vigilance</span></div>';
+    html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Forme <span style="color:var(--vigilance)">+ Vigilance</span></span><span>' + tierDot(tierColor) + '</span></div>';
     html += '<div style="padding:10px 0">' + circleGaugeHtml(score, 100, {
       sublabel: tier,
       inner: vigScore != null ? { value: vigScore, max: 100 } : null,
@@ -1365,10 +1365,13 @@ async function renderDashboard() {
     }
     html += "</div>";
 
+    const vigTierNow = vigPct != null ? (vigPct <= -20 ? "red" : vigPct <= -10 ? "amber" : "green") : null;
+    let stressTierNow = null;
     if (todayWearable && todayWearable.stress_avg != null) {
       const sv = todayWearable.stress_avg;
+      stressTierNow = sv >= 50 ? "red" : sv >= 30 ? "amber" : "green";
       const sLabel = sv >= 50 ? "Élevé" : sv >= 30 ? "Modéré" : "Faible";
-      html += '<div class="card"><div class="section-label">Stress</div>';
+      html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Stress</span><span>' + tierDot(stressTierNow) + '</span></div>';
       html += stressGaugeHtml(sv, sLabel);
       if (stressDiff != null) {
         html += '<div class="muted" style="text-align:center;font-size:11px;margin-top:6px">' + (stressDiff >= 0 ? "+" : "") + stressDiff.toFixed(0) + " vs ta moyenne des 7 derniers jours</div>";
@@ -1376,52 +1379,45 @@ async function renderDashboard() {
       html += "</div>";
     }
 
-    html += '<div class="card"><div class="section-label">Vigilance — détail des points de contrôle</div>';
-    VIG_WINDOWS.forEach(function(w) {
-      const todayHrv = todayWearable ? todayWearable[w.hrvKey] : null;
-      const baseVals = wearable.filter(function(x){ return x.day !== today && x[w.hrvKey] != null; }).map(function(x){ return x[w.hrvKey]; });
-      const baseHrv = baseVals.length >= 3 ? avgOf(baseVals) : null;
-      html += '<div style="padding:8px 0;border-bottom:1px solid var(--line)">';
-      html += '<div style="display:flex;justify-content:space-between;align-items:center">';
-      html += '<span style="font-size:13px;font-weight:700">' + w.label + '</span>';
-      if (todayHrv != null) {
-        let tier2 = "steel", note = "Pas encore assez d'historique pour comparer";
-        if (baseHrv != null && baseHrv > 0) {
-          const pct = Math.round(((todayHrv - baseHrv) / baseHrv) * 100);
-          tier2 = pct <= -20 ? "red" : pct <= -10 ? "amber" : "green";
-          note = (pct >= 0 ? "+" : "") + pct + "% vs ta moyenne sur ce créneau";
-        }
-        html += '<span style="font-size:13px;font-weight:800;color:var(--' + tier2 + ')">' + todayHrv.toFixed(0) + ' ms</span></div>';
-        html += '<div class="muted" style="font-size:11px;margin-top:2px">' + note + '</div>';
-      } else if (nowHour < w.lo) {
-        html += '<span class="muted" style="font-size:12px">À venir</span></div>';
-      } else {
-        html += '<span class="muted" style="font-size:12px">En attente de synchro</span></div>';
-      }
-      html += "</div>";
-    });
-    html += '<div class="muted" style="font-size:10px;margin-top:8px">VFC réelle sur chaque créneau, comparée à ta propre moyenne sur ce même créneau (14 derniers jours) — pas une courbe théorique. Distinct du score Forme (récupération globale du jour).</div></div>';
-
     // Tendance FC repos + VFC sur 14 jours
     const trend14 = []; for (let i = 13; i >= 0; i--) trend14.push(daysAgo(i));
     const hrSeries = trend14.map(function(d) { const w = wearable.find(function(x) { return x.day === d; }); return { label: formatDateLabel(d).slice(0,2), val: (w && w.hr_resting) || 0 }; });
     const hrvSeries = trend14.map(function(d) { const w = wearable.find(function(x) { return x.day === d; }); return { label: formatDateLabel(d).slice(0,2), val: (w && w.hrv_avg) || 0 }; });
     const hasHrData = hrSeries.some(function(s) { return s.val > 0; });
+    let hrTierNow = null, hrvTierNow = null;
     if (hasHrData) {
-      html += '<div class="card"><div class="section-label">FC repos (bpm) — 14 jours</div>';
+      const hrVals = hrSeries.map(function(s){return s.val;}).filter(function(v){return v>0;});
+      const hrvVals = hrvSeries.map(function(s){return s.val;}).filter(function(v){return v>0;});
+      hrTierNow = hrVals.length ? qualifyRHR(avgOf(hrVals)) : null;
+      hrvTierNow = hrvVals.length ? qualifyHRV(avgOf(hrvVals)) : null;
+      html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>FC repos (bpm) — 14 jours</span><span>' + tierDot(hrTierNow) + '</span></div>';
       html += barChartHtml(hrSeries, { unit: " bpm", qualify: qualifyRHR });
       html += "</div>";
-      html += '<div class="card"><div class="section-label">VFC (ms) — 14 jours</div>';
+      html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>VFC (ms) — 14 jours</span><span>' + tierDot(hrvTierNow) + '</span></div>';
       html += barChartHtml(hrvSeries, { unit: " ms", qualify: qualifyHRV });
       html += "</div>";
     }
 
-    html += '<div class="card"><div class="section-label">Interprétation du jour</div>';
-    lines.forEach(function(l) {
-      const dotColor = l.tone === "warn" ? "red" : l.tone === "good" ? "green" : "steel";
-      html += '<div style="display:flex;align-items:flex-start;margin-bottom:8px;font-size:13px;color:var(--chalkDim)"><span style="display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--' + dotColor + ');margin-right:8px;margin-top:5px;flex-shrink:0"></span><span>' + esc(l.text) + "</span></div>";
+    // Check-list récapitulative — remplace "Interprétation du jour" (prose peu
+    // lisible) par un coup d'œil rapide sur chaque section déjà affichée.
+    const checklist = [];
+    checklist.push({ label: "Forme", tier: tierColor, note: tier });
+    if (vigTierNow) checklist.push({ label: "Vigilance", tier: vigTierNow, note: (vigPct >= 0 ? "+" : "") + vigPct + "%" });
+    if (stressTierNow) checklist.push({ label: "Stress", tier: stressTierNow });
+    if (hrTierNow) checklist.push({ label: "FC repos", tier: hrTierNow });
+    if (hrvTierNow) checklist.push({ label: "VFC", tier: hrvTierNow });
+    if (sleepMin != null) checklist.push({ label: "Sommeil", tier: sleepMin < 360 ? "red" : sleepMin < 420 ? "amber" : "green", note: Math.floor(sleepMin/60) + "h" + Math.round(sleepMin%60).toString().padStart(2,'0') });
+    if (loadRatio != null) checklist.push({ label: "Charge récente", tier: loadRatio > 1.5 ? "red" : loadRatio > 1.3 ? "amber" : "green" });
+    if (todayMigraine != null) checklist.push({ label: "Migraine", tier: "red", note: todayMigraine + "/10" });
+    if (lifeload) checklist.push({ label: "Ressenti", tier: lifeload === "bien" ? "green" : lifeload === "malade" ? "red" : ["stresse","fatigue"].indexOf(lifeload) !== -1 ? "amber" : "steel", note: lifeload });
+
+    html += '<div class="card"><div class="section-label">Récap du jour</div>';
+    checklist.forEach(function(c) {
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
+      html += '<span style="font-size:13px">' + c.label + (c.note ? ' <span class="muted" style="font-size:11px">· ' + esc(String(c.note)) + '</span>' : '') + "</span>";
+      html += '<span>' + tierDot(c.tier) + "</span></div>";
     });
-    html += '<div class="muted" style="font-size:10px;margin-top:4px">Interprétation indicative — ne remplace pas ton ressenti ni un avis médical. Les fluctuations de VFC de 10-20% d\'un jour à l\'autre sont normales ; seuls les écarts plus marqués ou les tendances sur plusieurs jours sont vraiment significatifs.</div></div>';
+    html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></div>';
     if (todayWearable) html += wearableCardHtml(Object.assign({}, todayWearable, { day: today }));
   } else if (dashPeriod === "semaine") {
     const last7 = []; for (let i = 6; i >= 0; i--) last7.push(daysAgo(i));
@@ -2265,6 +2261,11 @@ async function renderVie() {
   app.innerHTML = html;
 }
 
+function tierDot(tier) {
+  if (!tier || tier === "steel") return "";
+  const emoji = tier === "green" ? "✅" : tier === "amber" ? "🟠" : "🔴";
+  return '<span style="font-size:13px">' + emoji + "</span>";
+}
 function statHtml(label, value, color) {
   return '<div class="stat"><div class="stat-label">' + label + '</div><div class="stat-value"' + (color ? ' style="color:var(--'+color+')"' : '') + '>' + value + "</div></div>";
 }
