@@ -1260,11 +1260,21 @@ async function renderDashboard() {
   // ~7j), distincte de la dépense du jour même pour ne pas compter deux fois
   // une même séance. C'est une vraie déduction continue, proportionnelle au
   // niveau de fatigue reporté, pas juste un déclenchement à un seuil.
-  let wakeFatigueDeduction = 0;
+  let wakeFatigueDeduction = 0, freshnessBonus = 0;
   if (atlWake != null && atlWake > 0) {
     signals++;
     wakeFatigueDeduction = Math.min(30, Math.round(atlWake / 70));
     score -= wakeFatigueDeduction;
+  }
+  // Bonus explicite de fraîcheur — pas juste "moins de pénalité", un vrai
+  // ajout quand ta fatigue accumulée est nettement sous ta charge chronique
+  // habituelle (ACWR bas p/r à TA propre référence, pas un seuil générique).
+  if (atlWake != null && ctl) {
+    const wakeRatio = atlWake / ctl;
+    if (wakeRatio < 0.8) {
+      freshnessBonus = Math.min(10, Math.round((0.8 - wakeRatio) * 25));
+      score += freshnessBonus;
+    }
   }
   // Complément objectif : effet d'entraînement réel (FC seconde par seconde,
   // fichiers .fit rattachés au planning), en plus du RPE déclaratif —
@@ -1471,7 +1481,7 @@ async function renderDashboard() {
     if (hrTierNow) checklist.push({ label: "FC repos", tier: hrTierNow, note: (todayWearable && todayWearable.hr_resting != null ? todayWearable.hr_resting : Math.round(avgOf(hrSeries.map(function(s){return s.val;}).filter(function(v){return v>0;})))) + " bpm" });
     if (hrvTierNow) checklist.push({ label: "VFC", tier: hrvTierNow, note: (todayWearable && todayWearable.hrv_avg != null ? Math.round(todayWearable.hrv_avg) : Math.round(avgOf(hrvSeries.map(function(s){return s.val;}).filter(function(v){return v>0;})))) + " ms" });
     if (sleepMin != null) checklist.push({ label: "Sommeil", tier: sleepMin < 360 ? "red" : sleepMin < 420 ? "amber" : "green", note: Math.floor(sleepMin/60) + "h" + Math.round(sleepMin%60).toString().padStart(2,'0') });
-    if (loadRatio != null) checklist.push({ label: "Fatigue accumulée (réveil)", tier: wakeFatigueDeduction >= 20 ? "red" : wakeFatigueDeduction >= 10 ? "amber" : "green", note: "-" + wakeFatigueDeduction + " pts · ACWR " + loadRatio.toFixed(2) });
+    if (loadRatio != null) checklist.push({ label: "Fatigue accumulée (réveil)", tier: wakeFatigueDeduction >= 20 ? "red" : wakeFatigueDeduction >= 10 ? "amber" : "green", note: (freshnessBonus > 0 ? "+" + freshnessBonus : "-" + wakeFatigueDeduction) + " pts · ACWR " + loadRatio.toFixed(2) });
     if (todayTotalLoad > 0) checklist.push({ label: "Dépense du jour", tier: todayDepletion >= 25 ? "red" : todayDepletion >= 12 ? "amber" : "green", note: "-" + todayDepletion + " pts (charge " + todayTotalLoad + ")" });
     if (todayFitEffort > 0) checklist.push({ label: "Effort mesuré (.fit)", tier: todayFitDepletion >= 10 ? "red" : todayFitDepletion >= 5 ? "amber" : "green", note: "-" + todayFitDepletion + " pts · " + todayFitSessions.map(function(w){return w.matched_discipline;}).filter(Boolean).join(", ") });
     if (todayMigraine != null) checklist.push({ label: "Migraine", tier: "red", note: todayMigraine + "/10" });
