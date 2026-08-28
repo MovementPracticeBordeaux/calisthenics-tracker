@@ -1336,8 +1336,8 @@ async function renderDashboard() {
     const nowHour = new Date().getHours() + new Date().getMinutes() / 60;
     const VIG_WINDOWS = [
       { label: "Matin", hrvKey: "hrv_morning", lo: 6, hi: 9 },
-      { label: "Après-midi", hrvKey: "hrv_afternoon", lo: 13, hi: 15 },
-      { label: "Soir", hrvKey: "hrv_evening", lo: 19, hi: 21 },
+      { label: "Après-midi", hrvKey: "hrv_afternoon", lo: 14, hi: 16 },
+      { label: "Soir", hrvKey: "hrv_evening", lo: 17, hi: 19 },
     ];
     let vigPct = null, vigWindowLabel = null;
     VIG_WINDOWS.slice().reverse().forEach(function(w) {
