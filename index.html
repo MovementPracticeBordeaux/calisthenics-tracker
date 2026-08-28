@@ -585,13 +585,23 @@ function renderSeanceTendancesHtml() {
   }
   html += "</div></div>";
 
+  // Un thème peut être présent soit via ses entries détaillées (Calisthenics),
+  // soit simplement via la discipline de la séance (Handstand, Altinha, etc.
+  // n'ont pas d'entries stockées par design — sinon ce serait dupliqué).
+  function sessionHasTheme(s, themeId) {
+    if (s.entries[themeId]) return true;
+    const disc = Object.keys(SINGLE_THEME_DISCIPLINES).find(function(d) { return SINGLE_THEME_DISCIPLINES[d] === themeId; });
+    return disc ? s.discipline === disc : false;
+  }
   const themeCounts = {};
-  monthSessions.forEach(function(s){ Object.keys(s.entries).forEach(function(t){ themeCounts[t]=(themeCounts[t]||0)+1; }); });
+  monthSessions.forEach(function(s){
+    THEMES.forEach(function(t) { if (sessionHasTheme(s, t.id)) themeCounts[t.id] = (themeCounts[t.id]||0) + 1; });
+  });
   const stale = THEMES.map(function(t) {
     // Un mouvement complet (muscle-up, etc.) mélange traction et poussée —
     // il compte pour les deux, pas seulement pour "complet".
     const relevantIds = (t.id === "tirage" || t.id === "poussee") ? [t.id, "complet"] : [t.id];
-    const last = allSessions.filter(function(s){ return relevantIds.some(function(id){ return s.entries[id]; }); }).sort(function(a,b){return a.date<b.date?1:-1;})[0];
+    const last = allSessions.filter(function(s){ return relevantIds.some(function(id){ return sessionHasTheme(s, id); }); }).sort(function(a,b){return a.date<b.date?1:-1;})[0];
     const days = last ? Math.round((new Date(today)-new Date(last.date))/86400000) : null;
     return { theme: t, days: days };
   }).filter(function(x){ return x.days === null || x.days >= 10; });
@@ -2263,8 +2273,7 @@ async function renderVie() {
 
 function tierDot(tier) {
   if (!tier || tier === "steel") return "";
-  const emoji = tier === "green" ? "✅" : tier === "amber" ? "🟠" : "🔴";
-  return '<span style="font-size:13px">' + emoji + "</span>";
+  return '<span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:var(--' + tier + ');box-shadow:0 0 6px 2px var(--' + tier + '),0 0 2px var(--' + tier + ')"></span>';
 }
 function statHtml(label, value, color) {
   return '<div class="stat"><div class="stat-label">' + label + '</div><div class="stat-value"' + (color ? ' style="color:var(--'+color+')"' : '') + '>' + value + "</div></div>";
