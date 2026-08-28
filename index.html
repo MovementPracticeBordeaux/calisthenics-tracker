@@ -1208,11 +1208,29 @@ async function renderDashboard() {
   let todayMigraine = null;
   // Effort objectif du jour (fichiers .fit rattachés à un cours du planning)
   // — vient compléter le RPE déclaratif par une vraie mesure cardiaque,
-  // automatiquement, sans ressaisie.
+  // automatiquement, sans ressaisie. Pondéré par le même coefficient neural
+  // que le RPE (littérature : la FC sous-estime d'autant plus l'effort réel
+  // que la discipline est neuralement exigeante — Handstand, Arm Balance...).
+  function neuralCoefficientForDiscipline(discipline) {
+    if (!discipline) return 1;
+    const themeId = SINGLE_THEME_DISCIPLINES[discipline];
+    if (themeId) {
+      const t = THEMES.find(function(x){ return x.id === themeId; });
+      return t ? t.neural : 1;
+    }
+    if (discipline === "Calisthenics") {
+      const caliThemes = THEMES.filter(function(t){ return ["tirage","poussee","complet"].indexOf(t.id) !== -1; });
+      return avgOf(caliThemes.map(function(t){ return t.neural; }));
+    }
+    return 1;
+  }
   let todayFitEffort = 0, todayFitSessions = [];
   try {
     todayFitSessions = await sb("workout_sessions?day=eq." + today + "&activity_type=eq.seance&select=training_effect_aerobic,training_effect_anaerobic,matched_discipline") || [];
-    todayFitEffort = todayFitSessions.reduce(function(s, w) { return s + (Number(w.training_effect_aerobic) || 0) + (Number(w.training_effect_anaerobic) || 0); }, 0);
+    todayFitEffort = todayFitSessions.reduce(function(s, w) {
+      const te = (Number(w.training_effect_aerobic) || 0) + (Number(w.training_effect_anaerobic) || 0);
+      return s + te * neuralCoefficientForDiscipline(w.matched_discipline);
+    }, 0);
   } catch (e) {}
   let history_migraines_count = 0, migraine_signature = null;
   try {
