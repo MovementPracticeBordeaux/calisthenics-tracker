@@ -104,21 +104,11 @@ def match_logged_session(start_local, logged_cache):
 
 
 def is_bike_trip(start_local, duration_min):
-    """Trajets à vélo connus — créneaux et durée habituels, en repli si aucun
-    cours du planning ne correspond."""
-    if not (6 <= duration_min <= 11):
-        return False
-    h, m = start_local.hour, start_local.minute
-    if 9 <= h <= 10:
-        return True
-    if h == 13 and 15 <= m <= 45:
-        return True
-    if start_local.weekday() == 1:  # mardi
-        if h == 19 and m <= 30:
-            return True
-        if (h == 20 and m >= 50) or (h == 21 and m <= 30):
-            return True
-    return False
+    """Tout effort court (6-11 min), non rattaché à un cours du planning ni à
+    une séance loguée, est un trajet à vélo — peu importe l'heure. C'est la
+    vraie règle (confirmée directement) : pas besoin de créneaux horaires
+    précis, la durée courte + l'absence de correspondance suffit."""
+    return 6 <= duration_min <= 11
 
 
 def parse_fit(path, schedule, ref_cache, logged_cache):
