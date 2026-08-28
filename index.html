@@ -1399,13 +1399,13 @@ async function renderDashboard() {
 
     // Check-list récapitulative — le reste des signaux, condensé.
     const checklist = [];
-    checklist.push({ label: "Forme", tier: tierColor, note: tier });
+    checklist.push({ label: "Forme", tier: tierColor, note: score + "/100 · " + tier });
     if (vigTierNow) checklist.push({ label: "Vigilance", tier: vigTierNow, note: (vigPct >= 0 ? "+" : "") + vigPct + "%" });
-    if (stressTierNow) checklist.push({ label: "Stress", tier: stressTierNow });
-    if (hrTierNow) checklist.push({ label: "FC repos", tier: hrTierNow });
-    if (hrvTierNow) checklist.push({ label: "VFC", tier: hrvTierNow });
+    if (stressTierNow) checklist.push({ label: "Stress", tier: stressTierNow, note: Math.round(todayWearable.stress_avg) });
+    if (hrTierNow) checklist.push({ label: "FC repos", tier: hrTierNow, note: (todayWearable && todayWearable.hr_resting != null ? todayWearable.hr_resting : Math.round(avgOf(hrSeries.map(function(s){return s.val;}).filter(function(v){return v>0;})))) + " bpm" });
+    if (hrvTierNow) checklist.push({ label: "VFC", tier: hrvTierNow, note: (todayWearable && todayWearable.hrv_avg != null ? Math.round(todayWearable.hrv_avg) : Math.round(avgOf(hrvSeries.map(function(s){return s.val;}).filter(function(v){return v>0;})))) + " ms" });
     if (sleepMin != null) checklist.push({ label: "Sommeil", tier: sleepMin < 360 ? "red" : sleepMin < 420 ? "amber" : "green", note: Math.floor(sleepMin/60) + "h" + Math.round(sleepMin%60).toString().padStart(2,'0') });
-    if (loadRatio != null) checklist.push({ label: "Charge récente", tier: loadRatio > 1.5 ? "red" : loadRatio > 1.3 ? "amber" : "green" });
+    if (loadRatio != null) checklist.push({ label: "Charge récente", tier: loadRatio > 1.5 ? "red" : loadRatio > 1.3 ? "amber" : "green", note: (loadRatio >= 1 ? "+" : "") + Math.round((loadRatio-1)*100) + "%" });
     if (todayMigraine != null) checklist.push({ label: "Migraine", tier: "red", note: todayMigraine + "/10" });
     if (lifeload) checklist.push({ label: "Ressenti", tier: lifeload === "bien" ? "green" : lifeload === "malade" ? "red" : ["stresse","fatigue"].indexOf(lifeload) !== -1 ? "amber" : "steel", note: lifeload });
 
