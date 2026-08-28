@@ -576,7 +576,9 @@ function renderSeanceTendancesHtml() {
   html += '<div class="card"><div class="stat-row">';
   html += statHtml("Séances", monthSessions.length);
   html += statHtml("Objectifs atteints", withAch ? achieved+"/"+withAch : "–");
-  html += statHtml("Fréquence", (monthSessions.length/4.3).toFixed(1)+"/sem");
+  const freqPerWeek = monthSessions.length/4.3;
+  const freqQualColor = freqPerWeek >= 3 ? "green" : freqPerWeek >= 1.5 ? "amber" : "red";
+  html += statHtml("Fréquence", freqPerWeek.toFixed(1)+"/sem", freqQualColor);
   if (prevMonthTotalLoad > 0) {
     const deltaPct = Math.round(((monthTotalLoad - prevMonthTotalLoad) / prevMonthTotalLoad) * 100);
     html += statHtml("Vs mois précédent", (deltaPct >= 0 ? "+" : "") + deltaPct + "%", deltaPct >= 30 ? "amber" : null);
@@ -611,7 +613,11 @@ function renderSeanceTendancesHtml() {
   }
 
   const discStats = {};
-  allSessions.filter(function(s){ return s.discipline && s.correctedLoad != null; }).forEach(function(s) {
+  // Exclut les anciennes séances à discipline fusionnée (ex. "Mobilité +
+  // Handstand"), un reste d'avant qu'une séance = un seul cours. Les
+  // comparer aux disciplines pures serait trompeur, donc on ne les affiche
+  // simplement pas ici — la donnée reste ailleurs (historique, charge totale).
+  allSessions.filter(function(s){ return s.discipline && s.correctedLoad != null && s.discipline.indexOf(" + ") === -1; }).forEach(function(s) {
     if (!discStats[s.discipline]) discStats[s.discipline] = [];
     discStats[s.discipline].push(s.correctedLoad);
   });
@@ -1634,6 +1640,7 @@ async function renderSommeil() {
       ["Profond", latest.deep, "rust", 13, 23, null],
       ["Paradoxal", latest.rem, "green", 20, 25, 15],
     ];
+    html += '<div class="card">';
     const stageTotal = latest.total || 1;
     stages.forEach(function(s) {
       const pct = Math.round((s[1]/stageTotal)*100);
@@ -1646,9 +1653,16 @@ async function renderSommeil() {
     if (latest.awake != null) {
       const otherAwakes = withSleep.filter(function(n) { return n.date !== latest.date && n.awake != null; }).map(function(n) { return n.awake; });
       const awakeBaseline = otherAwakes.length ? avgOf(otherAwakes) : null;
-      html += '<div class="muted" style="font-size:11px;margin-top:6px">Réveils détectés : ' + latest.awake;
-      if (awakeBaseline != null) html += ' <span class="muted">(moyenne récente : ' + awakeBaseline.toFixed(0) + ')</span>';
-      html += "</div>";
+      let awakeQ = { label: "Normal", color: "green" };
+      if (awakeBaseline != null) {
+        const ratio = latest.awake / awakeBaseline;
+        if (ratio >= 1.8) awakeQ = { label: "Élevé", color: "red" };
+        else if (ratio >= 1.3) awakeQ = { label: "Un peu élevé", color: "amber" };
+        else if (ratio <= 0.6) awakeQ = { label: "Faible", color: "green" };
+      }
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">';
+      html += '<span style="font-size:12px">Réveils détectés : <b>' + latest.awake + '</b>' + (awakeBaseline != null ? ' <span class="muted">(moy. ' + awakeBaseline.toFixed(0) + ')</span>' : '') + '</span>';
+      html += '<span style="font-size:11px;font-weight:700;color:var(--' + awakeQ.color + ')">' + awakeQ.label + "</span></div>";
       if (awakeBaseline != null && latest.awake >= awakeBaseline * 1.8 && latest.awake >= 10) {
         html += '<div style="font-size:11px;color:var(--amber);margin-top:4px">Nettement plus que d\'habitude — souvent lié à une nuit agitée (douleur, stress, chaleur, alcool…). Sous cette forme de capteur (accéléromètre), ce chiffre capte tout mouvement, pas seulement de vrais réveils conscients — à lire en tendance, pas en valeur isolée.</div>';
       }
