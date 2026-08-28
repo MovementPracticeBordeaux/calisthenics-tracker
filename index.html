@@ -471,6 +471,43 @@ function renderSeanceTendancesHtml() {
 
   let html = "";
 
+  // Recommandations — l'info la plus actionnable de cet onglet, affichée en
+  // premier (principe UX : ce qui demande une décision passe avant les
+  // graphiques bruts).
+  function sessionHasTheme(s, themeId) {
+    if (s.entries[themeId]) return true;
+    const disc = Object.keys(SINGLE_THEME_DISCIPLINES).find(function(d) { return SINGLE_THEME_DISCIPLINES[d] === themeId; });
+    return disc ? s.discipline === disc : false;
+  }
+  const themeCounts = {};
+  monthSessions.forEach(function(s){
+    THEMES.forEach(function(t) { if (sessionHasTheme(s, t.id)) themeCounts[t.id] = (themeCounts[t.id]||0) + 1; });
+  });
+  const stale = THEMES.map(function(t) {
+    // Un mouvement complet (muscle-up, etc.) mélange traction et poussée —
+    // il compte pour les deux, pas seulement pour "complet".
+    const relevantIds = (t.id === "tirage" || t.id === "poussee") ? [t.id, "complet"] : [t.id];
+    const last = allSessions.filter(function(s){ return relevantIds.some(function(id){ return sessionHasTheme(s, id); }); }).sort(function(a,b){return a.date<b.date?1:-1;})[0];
+    const days = last ? Math.round((new Date(today)-new Date(last.date))/86400000) : null;
+    return { theme: t, days: days };
+  }).filter(function(x){ return x.days === null || x.days >= 10; });
+  const recs = [];
+  const total = monthSessions.length;
+  if (total >= 3) {
+    const pull = (themeCounts.tirage||0) + (themeCounts.complet||0), push = (themeCounts.poussee||0) + (themeCounts.complet||0);
+    if (pull+push >= 4) {
+      if (push>0 && pull/push<=0.55) recs.push({tone:"warn",text:"Poussée bien plus travaillée que Tirage ("+push+" vs "+pull+")."});
+      else if (pull>0 && push/pull<=0.55) recs.push({tone:"warn",text:"Tirage bien plus travaillé que Poussée ("+pull+" vs "+push+")."});
+    }
+    THEMES.forEach(function(t){ const c=themeCounts[t.id]||0; if (total>=4 && c/total>0.55) recs.push({tone:"neutral",text:t.label+" domine largement tes séances ("+c+"/"+total+")."}); });
+  }
+  if (recs.length || stale.length) {
+    html += '<div class="card amber"><div class="section-label">Recommandations</div>';
+    recs.forEach(function(r){ html += '<div style="font-size:12px;color:var(--chalkDim);margin-bottom:8px">' + esc(r.text) + "</div>"; });
+    stale.forEach(function(s) { html += '<div style="font-size:12px;color:var(--chalkDim);margin-bottom:8px"><span style="color:var(--amber);font-weight:700">'+s.theme.label+'</span> — '+(s.days===null?"jamais travaillé":"pas travaillé depuis "+s.days+"j")+"</div>"; });
+    html += "</div>";
+  }
+
   // ---- Semaine ----
   const last7 = []; for (let i = 6; i >= 0; i--) last7.push(daysAgo(i));
   const prev7 = []; for (let i = 13; i >= 7; i--) prev7.push(daysAgo(i));
@@ -584,43 +621,6 @@ function renderSeanceTendancesHtml() {
     html += statHtml("Vs mois précédent", (deltaPct >= 0 ? "+" : "") + deltaPct + "%", deltaPct >= 30 ? "amber" : null);
   }
   html += "</div></div>";
-
-  // Un thème peut être présent soit via ses entries détaillées (Calisthenics),
-  // soit simplement via la discipline de la séance (Handstand, Altinha, etc.
-  // n'ont pas d'entries stockées par design — sinon ce serait dupliqué).
-  function sessionHasTheme(s, themeId) {
-    if (s.entries[themeId]) return true;
-    const disc = Object.keys(SINGLE_THEME_DISCIPLINES).find(function(d) { return SINGLE_THEME_DISCIPLINES[d] === themeId; });
-    return disc ? s.discipline === disc : false;
-  }
-  const themeCounts = {};
-  monthSessions.forEach(function(s){
-    THEMES.forEach(function(t) { if (sessionHasTheme(s, t.id)) themeCounts[t.id] = (themeCounts[t.id]||0) + 1; });
-  });
-  const stale = THEMES.map(function(t) {
-    // Un mouvement complet (muscle-up, etc.) mélange traction et poussée —
-    // il compte pour les deux, pas seulement pour "complet".
-    const relevantIds = (t.id === "tirage" || t.id === "poussee") ? [t.id, "complet"] : [t.id];
-    const last = allSessions.filter(function(s){ return relevantIds.some(function(id){ return sessionHasTheme(s, id); }); }).sort(function(a,b){return a.date<b.date?1:-1;})[0];
-    const days = last ? Math.round((new Date(today)-new Date(last.date))/86400000) : null;
-    return { theme: t, days: days };
-  }).filter(function(x){ return x.days === null || x.days >= 10; });
-  const recs = [];
-  const total = monthSessions.length;
-  if (total >= 3) {
-    const pull = (themeCounts.tirage||0) + (themeCounts.complet||0), push = (themeCounts.poussee||0) + (themeCounts.complet||0);
-    if (pull+push >= 4) {
-      if (push>0 && pull/push<=0.55) recs.push({tone:"warn",text:"Poussée bien plus travaillée que Tirage ("+push+" vs "+pull+")."});
-      else if (pull>0 && push/pull<=0.55) recs.push({tone:"warn",text:"Tirage bien plus travaillé que Poussée ("+pull+" vs "+push+")."});
-    }
-    THEMES.forEach(function(t){ const c=themeCounts[t.id]||0; if (total>=4 && c/total>0.55) recs.push({tone:"neutral",text:t.label+" domine largement tes séances ("+c+"/"+total+")."}); });
-  }
-  if (recs.length || stale.length) {
-    html += '<div class="card amber"><div class="section-label">Recommandations</div>';
-    recs.forEach(function(r){ html += '<div style="font-size:12px;color:var(--chalkDim);margin-bottom:8px">' + esc(r.text) + "</div>"; });
-    stale.forEach(function(s) { html += '<div style="font-size:12px;color:var(--chalkDim);margin-bottom:8px"><span style="color:var(--amber);font-weight:700">'+s.theme.label+'</span> — '+(s.days===null?"jamais travaillé":"pas travaillé depuis "+s.days+"j")+"</div>"; });
-    html += "</div>";
-  }
 
   const discStats = {};
   // Exclut les anciennes séances à discipline fusionnée (ex. "Mobilité +
@@ -1343,7 +1343,6 @@ async function renderDashboard() {
     // somnolence dans la littérature (études de détection de somnolence au
     // volant, validées contre des mesures oculaires). On calcule ici le
     // dernier créneau atteint pour l'imbriquer dans l'anneau Forme.
-    const nowHour = new Date().getHours() + new Date().getMinutes() / 60;
     const VIG_WINDOWS = [
       { label: "Matin", hrvKey: "hrv_morning", lo: 6, hi: 9 },
       { label: "Après-midi", hrvKey: "hrv_afternoon", lo: 14, hi: 16 },
@@ -1361,32 +1360,13 @@ async function renderDashboard() {
       vigWindowLabel = w.label;
     });
     const vigScore = vigPct != null ? Math.max(0, Math.min(100, Math.round(85 + vigPct * 1.5))) : null;
-
-    html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Forme <span style="color:var(--vigilance)">+ Vigilance</span></span><span>' + tierDot(tierColor) + '</span></div>';
-    html += '<div style="padding:10px 0">' + circleGaugeHtml(score, 100, {
-      sublabel: tier,
-      inner: vigScore != null ? { value: vigScore, max: 100 } : null,
-    }) + "</div>";
-    html += '<div style="text-align:center;padding-top:10px;border-top:1px solid var(--line);font-size:12px">Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div>";
-    if (vigScore != null) {
-      html += '<div style="text-align:center;padding-top:8px;font-size:12px">Vigilance (' + vigWindowLabel + ') : <b style="color:var(--vigilance)">' + (vigPct >= 0 ? "+" : "") + vigPct + '%</b> vs ta moyenne sur ce créneau</div>';
-    } else {
-      html += '<div class="muted" style="text-align:center;font-size:11px;padding-top:8px">Vigilance : pas encore de créneau comparable aujourd\'hui</div>';
-    }
-    html += "</div>";
-
     const vigTierNow = vigPct != null ? (vigPct <= -20 ? "red" : vigPct <= -10 ? "amber" : "green") : null;
-    let stressTierNow = null;
+
+    let stressTierNow = null, sLabel = null;
     if (todayWearable && todayWearable.stress_avg != null) {
       const sv = todayWearable.stress_avg;
       stressTierNow = sv >= 50 ? "red" : sv >= 30 ? "amber" : "green";
-      const sLabel = sv >= 50 ? "Élevé" : sv >= 30 ? "Modéré" : "Faible";
-      html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Stress</span><span>' + tierDot(stressTierNow) + '</span></div>';
-      html += stressGaugeHtml(sv, sLabel);
-      if (stressDiff != null) {
-        html += '<div class="muted" style="text-align:center;font-size:11px;margin-top:6px">' + (stressDiff >= 0 ? "+" : "") + stressDiff.toFixed(0) + " vs ta moyenne des 7 derniers jours</div>";
-      }
-      html += "</div>";
+      sLabel = sv >= 50 ? "Élevé" : sv >= 30 ? "Modéré" : "Faible";
     }
 
     // Tendance FC repos + VFC sur 14 jours
@@ -1400,16 +1380,10 @@ async function renderDashboard() {
       const hrvVals = hrvSeries.map(function(s){return s.val;}).filter(function(v){return v>0;});
       hrTierNow = hrVals.length ? qualifyRHR(avgOf(hrVals)) : null;
       hrvTierNow = hrvVals.length ? qualifyHRV(avgOf(hrvVals)) : null;
-      html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>FC repos (bpm) — 14 jours</span><span>' + tierDot(hrTierNow) + '</span></div>';
-      html += barChartHtml(hrSeries, { unit: " bpm", qualify: qualifyRHR });
-      html += "</div>";
-      html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>VFC (ms) — 14 jours</span><span>' + tierDot(hrvTierNow) + '</span></div>';
-      html += barChartHtml(hrvSeries, { unit: " ms", qualify: qualifyHRV });
-      html += "</div>";
     }
 
-    // Check-list récapitulative — remplace "Interprétation du jour" (prose peu
-    // lisible) par un coup d'œil rapide sur chaque section déjà affichée.
+    // Check-list récapitulative — en premier, avant le détail (principe UX :
+    // vue d'ensemble d'abord, approfondissement ensuite au scroll).
     const checklist = [];
     checklist.push({ label: "Forme", tier: tierColor, note: tier });
     if (vigTierNow) checklist.push({ label: "Vigilance", tier: vigTierNow, note: (vigPct >= 0 ? "+" : "") + vigPct + "%" });
@@ -1428,6 +1402,39 @@ async function renderDashboard() {
       html += '<span>' + tierDot(c.tier) + "</span></div>";
     });
     html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></div>';
+
+    // Détail, pour qui veut approfondir chaque point du récap ci-dessus.
+    html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Forme <span style="color:var(--vigilance)">+ Vigilance</span></span><span>' + tierDot(tierColor) + '</span></div>';
+    html += '<div style="padding:10px 0">' + circleGaugeHtml(score, 100, {
+      sublabel: tier,
+      inner: vigScore != null ? { value: vigScore, max: 100 } : null,
+    }) + "</div>";
+    html += '<div style="text-align:center;padding-top:10px;border-top:1px solid var(--line);font-size:12px">Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div>";
+    if (vigScore != null) {
+      html += '<div style="text-align:center;padding-top:8px;font-size:12px">Vigilance (' + vigWindowLabel + ') : <b style="color:var(--vigilance)">' + (vigPct >= 0 ? "+" : "") + vigPct + '%</b> vs ta moyenne sur ce créneau</div>';
+    } else {
+      html += '<div class="muted" style="text-align:center;font-size:11px;padding-top:8px">Vigilance : pas encore de créneau comparable aujourd\'hui</div>';
+    }
+    html += "</div>";
+
+    if (stressTierNow) {
+      html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Stress</span><span>' + tierDot(stressTierNow) + '</span></div>';
+      html += stressGaugeHtml(todayWearable.stress_avg, sLabel);
+      if (stressDiff != null) {
+        html += '<div class="muted" style="text-align:center;font-size:11px;margin-top:6px">' + (stressDiff >= 0 ? "+" : "") + stressDiff.toFixed(0) + " vs ta moyenne des 7 derniers jours</div>";
+      }
+      html += "</div>";
+    }
+
+    if (hasHrData) {
+      html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>FC repos (bpm) — 14 jours</span><span>' + tierDot(hrTierNow) + '</span></div>';
+      html += barChartHtml(hrSeries, { unit: " bpm", qualify: qualifyRHR });
+      html += "</div>";
+      html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>VFC (ms) — 14 jours</span><span>' + tierDot(hrvTierNow) + '</span></div>';
+      html += barChartHtml(hrvSeries, { unit: " ms", qualify: qualifyHRV });
+      html += "</div>";
+    }
+
     if (todayWearable) html += wearableCardHtml(Object.assign({}, todayWearable, { day: today }));
   } else if (dashPeriod === "semaine") {
     const last7 = []; for (let i = 6; i >= 0; i--) last7.push(daysAgo(i));
