@@ -1130,16 +1130,38 @@ async function renderDashboard() {
     if (stressDiff >= 8) lines.push({ tone: "warn", text: "Stress du jour plus élevé que d'habitude (" + todayWearable.stress_avg.toFixed(0) + " vs " + stressBaseline.toFixed(0) + ")." });
   }
   const loaded = sessions.filter(function(s){ return s.correctedLoad != null; }).slice().reverse();
-  const r3 = avgOf(loaded.slice(-3).map(function(s){ return s.correctedLoad; }));
-  const r10 = avgOf(loaded.slice(-10).map(function(s){ return s.correctedLoad; }));
-  if (r3 != null && r10) {
-    loadRatio = r3 / r10;
-    // NB : ce ratio (inspiré de l'ACWR sportif) est indicatif seulement — la littérature
-    // récente (Impellizzeri et al.) remet en cause sa valeur prédictive isolée. À croiser
-    // avec les autres signaux, jamais à lire seul.
-    if (loadRatio > 1.3) lines.push({ tone: "warn", text: "Charge des 3 dernières séances au-dessus de ta moyenne récente — à surveiller, sans excès d'inquiétude isolément." });
-    else if (loadRatio < 0.85) lines.push({ tone: "neutral", text: "Charge récente en retrait — phase plus légère." });
-    else lines.push({ tone: "good", text: "Charge récente cohérente avec ta progression." });
+  // Modèle Fitness-Fatigue (Banister et al. 1975, toujours la référence
+  // utilisée par les plateformes sérieuses type TrainingPeaks) : la fatigue
+  // s'accumule à chaque séance et se dissipe de façon exponentielle — pas
+  // d'un coup au réveil — avec une constante de temps d'environ 7 jours
+  // (fatigue aiguë) contre 28 jours pour la forme de fond (fitness/tolérance
+  // chronique). Remplace l'ancienne moyenne brute des 3 dernières séances,
+  // qui ne captait pas cette notion de report d'un jour sur l'autre.
+  const dailyLoad = {};
+  loaded.forEach(function(s) { dailyLoad[s.date] = (dailyLoad[s.date] || 0) + s.correctedLoad; });
+  const allDates = Object.keys(dailyLoad).sort();
+  let atl = null, ctl = null; // fatigue aiguë (7j) / forme chronique (28j)
+  const tauATL = 7, tauCTL = 28;
+  const decayATL = Math.exp(-1 / tauATL), decayCTL = Math.exp(-1 / tauCTL);
+  if (allDates.length) {
+    let cursor = new Date(allDates[0]);
+    const end = new Date(today);
+    while (cursor <= end) {
+      const d = cursor.toISOString().slice(0, 10);
+      const w = dailyLoad[d] || 0;
+      atl = atl == null ? w : atl * decayATL + w * (1 - decayATL);
+      ctl = ctl == null ? w : ctl * decayCTL + w * (1 - decayCTL);
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  }
+  if (atl != null && ctl) {
+    loadRatio = atl / ctl; // ACWR calculé proprement (EWMA), pas une moyenne de fenêtre
+    // Seuils établis en sciences du sport (Gabbett et al.) : 0.8-1.3 = zone
+    // favorable, >1.5 = risque accru, <0.8 = sous-sollicité récemment.
+    if (loadRatio > 1.5) lines.push({ tone: "warn", text: "Fatigue accumulée nettement au-dessus de ta charge habituelle (ACWR " + loadRatio.toFixed(2) + ") — vraie zone à surveiller." });
+    else if (loadRatio > 1.3) lines.push({ tone: "warn", text: "Fatigue accumulée un peu élevée par rapport à ta charge habituelle (ACWR " + loadRatio.toFixed(2) + ")." });
+    else if (loadRatio < 0.8) lines.push({ tone: "neutral", text: "Charge récente en retrait par rapport à ta charge habituelle — phase plus légère." });
+    else lines.push({ tone: "good", text: "Fatigue accumulée dans une zone favorable, cohérente avec ta charge habituelle." });
   }
   if (todayTotalLoad) lines.push({ tone: "neutral", text: "Séance loggée aujourd'hui — charge corrigée " + todayTotalLoad + "." });
   else lines.push({ tone: "neutral", text: "Pas de séance enregistrée aujourd'hui." });
@@ -1218,7 +1240,7 @@ async function renderDashboard() {
   if (hrDiff != null) { signals++; if (hrDiff >= 10) score -= 30; else if (hrDiff >= 5) score -= 15; else if (hrDiff >= 3) score -= 3; else if (hrDiff <= -3) score += 5; }
   if (hrvPct != null) { signals++; if (hrvPct <= -30) score -= 25; else if (hrvPct <= -20) score -= 15; else if (hrvPct <= -10) score -= 5; else if (hrvPct >= 15) score += 10; }
   if (stressDiff != null) { signals++; if (stressDiff >= 10) score -= 25; else if (stressDiff >= 5) score -= 10; }
-  if (loadRatio != null) { signals++; if (loadRatio > 1.5) score -= 20; else if (loadRatio > 1.3) score -= 10; else if (loadRatio < 0.7) score += 5; }
+  if (loadRatio != null) { signals++; if (loadRatio > 1.5) score -= 20; else if (loadRatio > 1.3) score -= 10; else if (loadRatio < 0.8) score += 5; }
   // Dépense d'énergie du jour — dégressif au fil des séances loguées
   // aujourd'hui, indépendamment de loadRatio (qui compare une tendance sur
   // plusieurs jours). Ici, chaque séance loguée fait baisser le score
@@ -1434,7 +1456,7 @@ async function renderDashboard() {
     if (hrTierNow) checklist.push({ label: "FC repos", tier: hrTierNow, note: (todayWearable && todayWearable.hr_resting != null ? todayWearable.hr_resting : Math.round(avgOf(hrSeries.map(function(s){return s.val;}).filter(function(v){return v>0;})))) + " bpm" });
     if (hrvTierNow) checklist.push({ label: "VFC", tier: hrvTierNow, note: (todayWearable && todayWearable.hrv_avg != null ? Math.round(todayWearable.hrv_avg) : Math.round(avgOf(hrvSeries.map(function(s){return s.val;}).filter(function(v){return v>0;})))) + " ms" });
     if (sleepMin != null) checklist.push({ label: "Sommeil", tier: sleepMin < 360 ? "red" : sleepMin < 420 ? "amber" : "green", note: Math.floor(sleepMin/60) + "h" + Math.round(sleepMin%60).toString().padStart(2,'0') });
-    if (loadRatio != null) checklist.push({ label: "Charge récente", tier: loadRatio > 1.5 ? "red" : loadRatio > 1.3 ? "amber" : "green", note: (loadRatio >= 1 ? "+" : "") + Math.round((loadRatio-1)*100) + "%" });
+    if (loadRatio != null) checklist.push({ label: "Fatigue accumulée (ACWR)", tier: loadRatio > 1.5 ? "red" : loadRatio > 1.3 ? "amber" : loadRatio < 0.8 ? "steel" : "green", note: loadRatio.toFixed(2) });
     if (todayTotalLoad > 0) checklist.push({ label: "Dépense du jour", tier: todayDepletion >= 25 ? "red" : todayDepletion >= 12 ? "amber" : "green", note: "-" + todayDepletion + " pts (charge " + todayTotalLoad + ")" });
     if (todayFitEffort > 0) checklist.push({ label: "Effort mesuré (.fit)", tier: todayFitDepletion >= 10 ? "red" : todayFitDepletion >= 5 ? "amber" : "green", note: "-" + todayFitDepletion + " pts · " + todayFitSessions.map(function(w){return w.matched_discipline;}).filter(Boolean).join(", ") });
     if (todayMigraine != null) checklist.push({ label: "Migraine", tier: "red", note: todayMigraine + "/10" });
