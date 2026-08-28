@@ -1382,8 +1382,22 @@ async function renderDashboard() {
       hrvTierNow = hrvVals.length ? qualifyHRV(avgOf(hrvVals)) : null;
     }
 
-    // Check-list récapitulative — en premier, avant le détail (principe UX :
-    // vue d'ensemble d'abord, approfondissement ensuite au scroll).
+    // L'anneau Forme est lui-même déjà une vue d'ensemble en un coup d'œil —
+    // il passe avant le récap détaillé, pas après.
+    html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Forme <span style="color:var(--vigilance)">+ Vigilance</span></span><span>' + tierDot(tierColor) + '</span></div>';
+    html += '<div style="padding:10px 0">' + circleGaugeHtml(score, 100, {
+      sublabel: tier,
+      inner: vigScore != null ? { value: vigScore, max: 100 } : null,
+    }) + "</div>";
+    html += '<div style="text-align:center;padding-top:10px;border-top:1px solid var(--line);font-size:12px">Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div>";
+    if (vigScore != null) {
+      html += '<div style="text-align:center;padding-top:8px;font-size:12px">Vigilance (' + vigWindowLabel + ') : <b style="color:var(--vigilance)">' + (vigPct >= 0 ? "+" : "") + vigPct + '%</b> vs ta moyenne sur ce créneau</div>';
+    } else {
+      html += '<div class="muted" style="text-align:center;font-size:11px;padding-top:8px">Vigilance : pas encore de créneau comparable aujourd\'hui</div>';
+    }
+    html += "</div>";
+
+    // Check-list récapitulative — le reste des signaux, condensé.
     const checklist = [];
     checklist.push({ label: "Forme", tier: tierColor, note: tier });
     if (vigTierNow) checklist.push({ label: "Vigilance", tier: vigTierNow, note: (vigPct >= 0 ? "+" : "") + vigPct + "%" });
@@ -1402,20 +1416,6 @@ async function renderDashboard() {
       html += '<span>' + tierDot(c.tier) + "</span></div>";
     });
     html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></div>';
-
-    // Détail, pour qui veut approfondir chaque point du récap ci-dessus.
-    html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Forme <span style="color:var(--vigilance)">+ Vigilance</span></span><span>' + tierDot(tierColor) + '</span></div>';
-    html += '<div style="padding:10px 0">' + circleGaugeHtml(score, 100, {
-      sublabel: tier,
-      inner: vigScore != null ? { value: vigScore, max: 100 } : null,
-    }) + "</div>";
-    html += '<div style="text-align:center;padding-top:10px;border-top:1px solid var(--line);font-size:12px">Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div>";
-    if (vigScore != null) {
-      html += '<div style="text-align:center;padding-top:8px;font-size:12px">Vigilance (' + vigWindowLabel + ') : <b style="color:var(--vigilance)">' + (vigPct >= 0 ? "+" : "") + vigPct + '%</b> vs ta moyenne sur ce créneau</div>';
-    } else {
-      html += '<div class="muted" style="text-align:center;font-size:11px;padding-top:8px">Vigilance : pas encore de créneau comparable aujourd\'hui</div>';
-    }
-    html += "</div>";
 
     if (stressTierNow) {
       html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Stress</span><span>' + tierDot(stressTierNow) + '</span></div>';
