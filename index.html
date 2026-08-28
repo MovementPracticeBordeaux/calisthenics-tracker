@@ -1414,6 +1414,8 @@ async function renderDashboard() {
     html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Forme <span style="color:var(--vigilance)">+ Vigilance</span></span><span>' + tierDot(tierColor) + '</span></div>';
     html += '<div style="padding:10px 0">' + circleGaugeHtml(score, 100, {
       sublabel: tier,
+      size: 200,
+      strokeWidth: 16,
       inner: vigScore != null ? { value: vigScore, max: 100 } : null,
     }) + "</div>";
     html += '<div style="text-align:center;padding-top:10px;border-top:1px solid var(--line);font-size:12px">Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div>";
