@@ -152,14 +152,14 @@ async function sb(path, options) {
 
 // ---------------- Constantes ----------------
 const THEMES = [
-  { id: "tirage", label: "Tirage", hint: "traction, rowing", neural: 1.05 },
-  { id: "poussee", label: "Poussée", hint: "push, dips, pompes", neural: 1.05 },
-  { id: "complet", label: "Mouvement complet", hint: "muscle-up, skin the cat", neural: 1.2 },
-  { id: "handstand", label: "Handstand", hint: "ATR, appui tendu, presses", neural: 1.4 },
-  { id: "arm_balance", label: "Arm Balance", hint: "crow, planche, figures d'appui", neural: 1.35 },
-  { id: "locomotion", label: "Locomotion", hint: "quadrupédie, mains, arm balance, sol complexe", neural: 1.30 },
-  { id: "altinha", label: "Altinha", hint: "jonglage, réactivité, coordination", neural: 1.15 },
-  { id: "bas", label: "Bas du corps", hint: "jambes, mobilité", neural: 1.0 }
+  { id: "tirage", label: "Tirage", hint: "traction, rowing", neural: 1.05, tendino: 1.2 },
+  { id: "poussee", label: "Poussée", hint: "push, dips, pompes", neural: 1.05, tendino: 1.2 },
+  { id: "complet", label: "Mouvement complet", hint: "muscle-up, skin the cat", neural: 1.2, tendino: 1.3 },
+  { id: "handstand", label: "Handstand", hint: "ATR, appui tendu, presses", neural: 1.4, tendino: 1.0 },
+  { id: "arm_balance", label: "Arm Balance", hint: "crow, planche, figures d'appui", neural: 1.35, tendino: 1.0 },
+  { id: "locomotion", label: "Locomotion", hint: "quadrupédie, mains, arm balance, sol complexe", neural: 1.30, tendino: 1.0 },
+  { id: "altinha", label: "Altinha", hint: "jonglage, réactivité, coordination", neural: 1.15, tendino: 1.0 },
+  { id: "bas", label: "Bas du corps", hint: "jambes, mobilité", neural: 1.0, tendino: 1.5 }
 ];
 const CONTRACTIONS = [
   { id: "dynamique", label: "Dynamique" },
@@ -291,6 +291,10 @@ function computeLoad(s) {
     const t = THEMES.find(function(th){ return th.id === e[0]; });
     return sum + (t ? t.neural : 1) * e[1].rpe;
   }, 0) / totalRpe;
+  const tendinoFactor = active.reduce(function(sum,e){
+    const t = THEMES.find(function(th){ return th.id === e[0]; });
+    return sum + (t ? t.tendino : 1) * e[1].rpe;
+  }, 0) / totalRpe;
   const typeFactor = active.reduce(function(sum,e){
     const ty = e[1].type || s.goal;
     return sum + (GOAL_FACTORS[ty] || 1) * e[1].rpe;
@@ -301,7 +305,7 @@ function computeLoad(s) {
   const niveauFactor = active.reduce(function(sum,e){
     return sum + (NIVEAU_FACTORS[e[1].niveau] || 1) * e[1].rpe;
   }, 0) / totalRpe;
-  const correctedLoad = sessionLoad !== null ? Math.round(sessionLoad * neuralFactor * typeFactor * contractionFactor * niveauFactor * participation) : null;
+  const correctedLoad = sessionLoad !== null ? Math.round(sessionLoad * neuralFactor * tendinoFactor * typeFactor * contractionFactor * niveauFactor * participation) : null;
   return { sessionLoad: sessionLoad, correctedLoad: correctedLoad };
 }
 
@@ -657,6 +661,7 @@ function renderSeanceTendancesHtml() {
   html += '<div class="muted" style="font-size:11px;margin-bottom:12px">Multiplicateurs appliqués à la charge de séance selon la complexité neuromusculaire du thème, le type de contraction, et le type d\'effort visé.</div>';
   const coefGroups = [
     ["neural", "Complexité neurale par thème"],
+    ["tendino", "Charge tendino-articulaire par thème"],
     ["contraction", "Type de contraction"],
     ["goal", "Type d'effort"],
     ["niveau", "Niveau de pratique"],
@@ -1208,16 +1213,17 @@ async function renderDashboard() {
   let todayMigraine = null;
   // Effort objectif du jour (fichiers .fit rattachés à un cours du planning)
   // — vient compléter le RPE déclaratif par une vraie mesure cardiaque,
-  // automatiquement, sans ressaisie. Pondéré par le même coefficient neural
-  // que le RPE (littérature : la FC sous-estime d'autant plus l'effort réel
-  // que la discipline est neuralement exigeante — Handstand, Arm Balance...).
+  // automatiquement, sans ressaisie. Pondéré par les mêmes coefficients
+  // neural ET tendino-articulaire que le RPE (littérature : la FC sous-estime
+  // d'autant plus l'effort réel que la discipline est neuralement exigeante
+  // ou sollicite fort les tendons/articulations — Handstand, Mobilité...).
   function neuralCoefficientForDiscipline(discipline, sessionNiveau) {
     if (!discipline) return 1;
     const niveauFactor = NIVEAU_FACTORS[sessionNiveau] || 1;
     const themeId = SINGLE_THEME_DISCIPLINES[discipline];
     if (themeId) {
       const t = THEMES.find(function(x){ return x.id === themeId; });
-      return (t ? t.neural : 1) * niveauFactor;
+      return (t ? t.neural * t.tendino : 1) * niveauFactor;
     }
     if (discipline === "Calisthenics") {
       // Regarde ce qui a vraiment été loggé ce jour-là en Calisthenics
@@ -1232,12 +1238,12 @@ async function renderDashboard() {
         return active.reduce(function(sum,e){
           const t = THEMES.find(function(th){ return th.id === e[0]; });
           const nf = NIVEAU_FACTORS[e[1].niveau] || 1;
-          return sum + (t ? t.neural : 1) * nf * e[1].rpe;
+          return sum + (t ? t.neural * t.tendino : 1) * nf * e[1].rpe;
         }, 0) / totalRpe;
       }
       // Repli si rien n'est encore loggé pour cette séance : moyenne des 3 thèmes.
       const caliThemes = THEMES.filter(function(t){ return ["tirage","poussee","complet"].indexOf(t.id) !== -1; });
-      return avgOf(caliThemes.map(function(t){ return t.neural; }));
+      return avgOf(caliThemes.map(function(t){ return t.neural * t.tendino; }));
     }
     return 1;
   }
@@ -2434,6 +2440,10 @@ async function loadCoefficients() {
         const themeId = r.key.replace("neural_", "");
         const t = THEMES.find(function(x) { return x.id === themeId; });
         if (t) t.neural = Number(r.value);
+      } else if (r.category === "tendino") {
+        const themeId = r.key.replace("tendino_", "");
+        const t = THEMES.find(function(x) { return x.id === themeId; });
+        if (t) t.tendino = Number(r.value);
       } else if (r.category === "contraction") {
         const id = r.key.replace("contraction_", "");
         if (CONTRACTION_FACTORS[id] != null) CONTRACTION_FACTORS[id] = Number(r.value);
