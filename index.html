@@ -1211,17 +1211,18 @@ async function renderDashboard() {
   // automatiquement, sans ressaisie. Pondéré par le même coefficient neural
   // que le RPE (littérature : la FC sous-estime d'autant plus l'effort réel
   // que la discipline est neuralement exigeante — Handstand, Arm Balance...).
-  function neuralCoefficientForDiscipline(discipline) {
+  function neuralCoefficientForDiscipline(discipline, sessionNiveau) {
     if (!discipline) return 1;
+    const niveauFactor = NIVEAU_FACTORS[sessionNiveau] || 1;
     const themeId = SINGLE_THEME_DISCIPLINES[discipline];
     if (themeId) {
       const t = THEMES.find(function(x){ return x.id === themeId; });
-      return t ? t.neural : 1;
+      return (t ? t.neural : 1) * niveauFactor;
     }
     if (discipline === "Calisthenics") {
       // Regarde ce qui a vraiment été loggé ce jour-là en Calisthenics
-      // (thèmes cochés + RPE), pondéré comme dans computeLoad — pas une
-      // moyenne générique des 3 thèmes possibles.
+      // (thèmes cochés + RPE + niveau), pondéré comme dans computeLoad — pas
+      // une moyenne générique des 3 thèmes possibles.
       const todayCaliEntries = sessions
         .filter(function(s) { return s.date === today && s.discipline === "Calisthenics"; })
         .reduce(function(acc, s) { return Object.assign(acc, s.entries); }, {});
@@ -1230,7 +1231,8 @@ async function renderDashboard() {
       if (active.length && totalRpe > 0) {
         return active.reduce(function(sum,e){
           const t = THEMES.find(function(th){ return th.id === e[0]; });
-          return sum + (t ? t.neural : 1) * e[1].rpe;
+          const nf = NIVEAU_FACTORS[e[1].niveau] || 1;
+          return sum + (t ? t.neural : 1) * nf * e[1].rpe;
         }, 0) / totalRpe;
       }
       // Repli si rien n'est encore loggé pour cette séance : moyenne des 3 thèmes.
@@ -1244,7 +1246,8 @@ async function renderDashboard() {
     todayFitSessions = await sb("workout_sessions?day=eq." + today + "&activity_type=eq.seance&select=training_effect_aerobic,training_effect_anaerobic,matched_discipline") || [];
     todayFitEffort = todayFitSessions.reduce(function(s, w) {
       const te = (Number(w.training_effect_aerobic) || 0) + (Number(w.training_effect_anaerobic) || 0);
-      return s + te * neuralCoefficientForDiscipline(w.matched_discipline);
+      const matchedSession = sessions.find(function(s) { return s.date === today && s.discipline === w.matched_discipline; });
+      return s + te * neuralCoefficientForDiscipline(w.matched_discipline, matchedSession ? matchedSession.niveau : null);
     }, 0);
   } catch (e) {}
   // Trajets à vélo du jour — coût réel mais modeste (pas de complexité
