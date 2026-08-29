@@ -3,8 +3,15 @@
 # vers Supabase : d'abord les données quotidiennes (Gadgetbridge), ensuite
 # les séances .fit — désormais exportées par Gadgetbridge lui-même, avec
 # repli sur l'ancien dossier Zepp au cas où il redevienne actif un jour.
-set -e
 HOME_DIR="/data/data/com.termux/files/home"
+
+# Auto-journalisation : peu importe comment ce script est lancé (cron,
+# termux-job-scheduler, manuellement), tout va dans sync.log. C'est
+# termux-job-scheduler qui ne redirige rien tout seul, contrairement à cron.
+exec >> "$HOME_DIR/sync.log" 2>&1
+echo "--- $(date) ---"
+
+set -e
 
 # --- Données quotidiennes (FC, VFC, stress, sommeil) ---
 rclone copy gdrive:Gadgetbridge_Export/Gadgetbridge.db "$HOME_DIR" --update
