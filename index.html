@@ -204,7 +204,10 @@ const DISCIPLINE_TO_THEMES = {
 // seul thème identique à la discipline elle-même : pas besoin d'un second
 // menu qui ne ferait que dupliquer ce que le RPE global indique déjà.
 const SINGLE_THEME_DISCIPLINES = { Handstand: "handstand", "Mobilité": "bas", Locomotion: "locomotion", "Arm Balance": "arm_balance", Altinha: "altinha" };
-const CLASS_SCHEDULE = [
+// Repli si le réseau ou la table ne répond pas au démarrage — l'appli reste
+// utilisable, mais ces valeurs sont normalement remplacées par loadSchedule()
+// avec les vraies données de Supabase (jamais figées ici).
+let CLASS_SCHEDULE = [
   { discipline: "Altinha", jour_semaine: 1, semaine: "B", heure_debut: "11:00", heure_fin: "12:00" },
   { discipline: "Locomotion", jour_semaine: 1, semaine: "B", heure_debut: "12:15", heure_fin: "13:15" },
   { discipline: "Calisthenics", jour_semaine: 2, semaine: "A", heure_debut: "12:15", heure_fin: "13:15" },
@@ -220,8 +223,26 @@ const CLASS_SCHEDULE = [
   { discipline: "Calisthenics", jour_semaine: 5, semaine: "A", heure_debut: "11:00", heure_fin: "12:00" },
   { discipline: "Locomotion", jour_semaine: 5, semaine: "A", heure_debut: "12:15", heure_fin: "13:15" }
 ].map(function(c){ c.actif = true; return c; });
-const SCHEDULE_REFERENCE = { date_lundi_reference: "2026-08-17", semaine_ce_lundi: "B" };
-const SCHEDULE_VACATIONS = [{ date_debut: "2026-08-06", date_fin: "2026-08-16" }, { date_debut: "2026-10-03", date_fin: "2026-10-11" }];
+let SCHEDULE_REFERENCE = { date_lundi_reference: "2026-08-17", semaine_ce_lundi: "B" };
+let SCHEDULE_VACATIONS = [{ date_debut: "2026-08-06", date_fin: "2026-08-16" }, { date_debut: "2026-10-03", date_fin: "2026-10-11" }];
+
+async function loadSchedule() {
+  // Recharge le vrai planning depuis Supabase à chaque démarrage de l'appli —
+  // toute modification que tu fais en base est reflétée automatiquement, plus
+  // besoin de republier l'appli pour un changement d'horaire ou de cours.
+  try {
+    const rows = await sb("class_schedule?select=discipline,jour_semaine,semaine,heure_debut,heure_fin,actif");
+    if (rows && rows.length) CLASS_SCHEDULE = rows;
+  } catch (e) {}
+  try {
+    const ref = await sb("schedule_reference?select=date_lundi_reference,semaine_ce_lundi&limit=1");
+    if (ref && ref[0]) SCHEDULE_REFERENCE = ref[0];
+  } catch (e) {}
+  try {
+    const vac = await sb("schedule_vacations?select=date_debut,date_fin");
+    if (vac) SCHEDULE_VACATIONS = vac;
+  } catch (e) {}
+}
 
 // ---------------- Utilitaires ----------------
 function todayISO() { return new Date().toISOString().slice(0, 10); }
@@ -685,7 +706,11 @@ function renderSeanceTendancesHtml() {
 function drawSeance() {
   const app = document.getElementById("app");
   const scrollY = window.scrollY;
-  const classes = seance.classes;
+  // Ne propose que les cours pas encore loggés — une fois une séance validée
+  // pour une discipline, elle disparaît de "Cours prévu".
+  const loggedDisciplinesToday = seance.sessions.map(function(s) { return s.discipline; });
+  const classes = seance.classes.filter(function(c) { return loggedDisciplinesToday.indexOf(c.discipline) === -1; });
+  seance.visibleClasses = classes; // accessible depuis wireSeanceEvents pour le clic "Pré-remplir"
   let html = "";
   if (seance.error) html += '<div class="error-banner"><b>Erreur :</b> ' + esc(seance.error) + "</div>";
 
@@ -930,7 +955,7 @@ function wireSeanceEvents() {
 
   document.querySelectorAll(".apply-schedule-theme").forEach(function(btn) {
     btn.addEventListener("click", function() {
-      const c = seance.classes[Number(btn.dataset.classIndex)];
+      const c = seance.visibleClasses[Number(btn.dataset.classIndex)];
       disciplineOtherMode = false;
       editingSession = sessionFromClass(c) || emptySession();
       drawSeance();
@@ -2471,7 +2496,7 @@ document.getElementById("refresh-btn").addEventListener("click", function() {
   setTab(currentTab);
   setTimeout(function() { btn.style.transform = ""; }, 500);
 });
-loadCoefficients().then(function() { setTab("dashboard"); });
+Promise.all([loadCoefficients(), loadSchedule()]).then(function() { setTab("dashboard"); });
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", function() { navigator.serviceWorker.register("sw.js").catch(function() {}); });
 }
