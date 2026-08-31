@@ -377,6 +377,7 @@ async function listWearable(limit) {
 
 // ---------------- État global ----------------
 let currentTab = "seance";
+let lifeloadEditing = false;
 let napQuality = "moyenne";
 let napDuration = 30;
 let currentDate = todayISO();
@@ -1480,17 +1481,22 @@ async function renderDashboard() {
       html += '<div class="error-banner" style="background:rgba(242,113,28,0.15);border-color:var(--rust)"><b>⚠ Signaux similaires à une migraine passée :</b> ' + esc(migraineAlert) + "</div>";
     }
 
-    if (!lifeload) {
+    const LIFELOAD_OPTIONS = [
+      ["", "— Choisir —"], ["bien", "Bien"], ["neutre", "Neutre"], ["stresse", "Stressé"],
+      ["fatigue", "Fatigué"], ["courbature", "Courbaturé"], ["malade", "Malade"],
+    ];
+    if (!lifeload || lifeloadEditing) {
       html += '<div class="card"><div class="section-label">Comment tu te sens aujourd\'hui ?</div>';
       html += '<select id="lifeload-select" style="width:100%;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:7px;color:var(--chalk);font-size:16px;padding:10px 12px">';
-      const LIFELOAD_OPTIONS = [
-        ["", "— Choisir —"], ["bien", "Bien"], ["neutre", "Neutre"], ["stresse", "Stressé"],
-        ["fatigue", "Fatigué"], ["courbature", "Courbaturé"], ["malade", "Malade"],
-      ];
       LIFELOAD_OPTIONS.forEach(function(o) {
-        html += '<option value="' + o[0] + '"' + (o[0] === "" ? " selected" : "") + '>' + o[1] + "</option>";
+        html += '<option value="' + o[0] + '"' + (o[0] === (lifeload || "") ? " selected" : "") + '>' + o[1] + "</option>";
       });
       html += "</select></div>";
+    } else {
+      const currentLabel = (LIFELOAD_OPTIONS.find(function(o) { return o[0] === lifeload; }) || [,lifeload])[1];
+      html += '<div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px">';
+      html += '<span style="font-size:13px">Ressenti aujourd\'hui : <b>' + esc(currentLabel) + '</b></span>';
+      html += '<button id="lifeload-edit-btn" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--steel);font-size:11px;font-weight:700;padding:5px 10px;cursor:pointer">Modifier</button></div>';
     }
 
     // Vigilance — 3 points de contrôle réels dans la journée (VFC mesurée sur
@@ -1750,8 +1756,10 @@ async function renderDashboard() {
       method: "POST",
       headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
       body: JSON.stringify({ day: todayISO(), state: v }),
-    }).then(function() { renderDashboard(); }).catch(function(e) { alert("Erreur : " + e.message); });
+    }).then(function() { lifeloadEditing = false; renderDashboard(); }).catch(function(e) { alert("Erreur : " + e.message); });
   });
+  const lifeloadEditBtn = document.getElementById("lifeload-edit-btn");
+  if (lifeloadEditBtn) lifeloadEditBtn.addEventListener("click", function() { lifeloadEditing = true; renderDashboard(); });
 }
 // ---------------- Rendu : Sommeil ----------------
 async function renderSommeil() {
