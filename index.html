@@ -402,8 +402,13 @@ function getEffectiveEntries(s) {
   if (s.discipline === "Calisthenics") return s.entries || {};
   const singleThemeId = s.discipline ? SINGLE_THEME_DISCIPLINES[s.discipline] : null;
   if (singleThemeId) {
+    // reps : seul champ que l'utilisateur édite manuellement pour une
+    // discipline à thème unique (le reste — contraction/rpe/niveau — reste
+    // dérivé du RPE global comme avant) ; conservé dans entries pour ne pas
+    // ajouter de colonne DB.
+    const storedReps = s.entries && s.entries[singleThemeId] ? s.entries[singleThemeId].reps : null;
     const e = {};
-    e[singleThemeId] = { contraction: "dynamique", rpe: s.intensity || 0, niveau: s.niveau || "intermediaire" };
+    e[singleThemeId] = { contraction: "dynamique", rpe: s.intensity || 0, niveau: s.niveau || "intermediaire", reps: storedReps };
     return e;
   }
   return {};
@@ -931,6 +936,11 @@ function drawSeance() {
       html += '<div class="pill-row compact" id="niveau-row">';
       NIVEAUX.forEach(function(n) { html += '<button class="pill' + ((session.niveau || "intermediaire") === n.id ? " active" : "") + '" data-id="' + n.id + '">' + n.label + "</button>"; });
       html += "</div>";
+      if (session.discipline === "Arm Balance") {
+        const abReps = session.entries[singleThemeId] ? session.entries[singleThemeId].reps : null;
+        html += '<div class="section-label" style="margin-top:14px">Répétitions (optionnel — ex. nombre de tentatives)</div>';
+        html += '<input type="number" min="0" id="single-theme-reps-input" placeholder="Nombre de répétitions" value="' + esc(abReps != null ? abReps : "") + '" />';
+      }
     }
     if (isCalisthenics) {
       html += '<div class="section-label" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">Thèmes travaillés</div>';
@@ -955,6 +965,8 @@ function drawSeance() {
           html += "</div>";
           html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><span class="section-label" style="margin:0">Intensité (RPE)</span><span class="rpe-value">' + (data.rpe > 0 ? data.rpe : "–") + "</span></div>";
           html += rpeLadderHtml("theme:" + t.id, data.rpe || 0);
+          html += '<div class="section-label" style="margin-top:14px">Répétitions (optionnel — ex. total sur un EMOM)</div>';
+          html += '<input type="number" min="0" class="theme-reps-input" data-theme="' + t.id + '" placeholder="Nombre de répétitions" value="' + esc(data.reps != null ? data.reps : "") + '" />';
           html += "</div>";
         }
         html += "</div>";
@@ -986,7 +998,11 @@ function drawSeance() {
     Object.keys(h.entries).forEach(function(tid) {
       const th = THEMES.find(function(t) { return t.id === tid; });
       const d = h.entries[tid];
-      html += '<span class="badge">' + (th ? th.label : tid) + " · " + (CONTRACTIONS.find(function(c){return c.id===d.contraction;})||{label:"dynamique"}).label + " · RPE " + (d.rpe || "–") + "</span>";
+      let label = th ? th.label : tid;
+      if (d.contraction) label += " · " + (CONTRACTIONS.find(function(c){return c.id===d.contraction;})||{label:"dynamique"}).label;
+      if (d.rpe) label += " · RPE " + d.rpe;
+      if (d.reps) label += " · " + d.reps + " reps";
+      html += '<span class="badge">' + label + "</span>";
     });
     if (ach) html += '<span class="badge" style="background:var(--' + ach.color + ');color:var(--bg);font-weight:700">' + ach.label + "</span>";
     html += "</button>";
@@ -1185,8 +1201,21 @@ function wireSeanceEvents() {
       btn.addEventListener("click", function() { session.entries[row.dataset.theme].niveau = btn.dataset.id; update(); });
     });
   });
+  document.querySelectorAll('.theme-reps-input').forEach(function(input) {
+    input.addEventListener("blur", function() {
+      session.entries[input.dataset.theme].reps = input.value ? Number(input.value) : null;
+      saveInBackground();
+    });
+  });
   document.querySelectorAll('#niveau-row .pill').forEach(function(btn) {
     btn.addEventListener("click", function() { session.niveau = btn.dataset.id; update(); });
+  });
+  const singleRepsInput = document.getElementById("single-theme-reps-input");
+  if (singleRepsInput) singleRepsInput.addEventListener("blur", function() {
+    const singleThemeId = SINGLE_THEME_DISCIPLINES[session.discipline];
+    if (!session.entries[singleThemeId]) session.entries[singleThemeId] = {};
+    session.entries[singleThemeId].reps = singleRepsInput.value ? Number(singleRepsInput.value) : null;
+    saveInBackground();
   });
   document.querySelectorAll('.rpe-ladder').forEach(function(ladder) {
     if (ladder.dataset.scope === "global") return;
