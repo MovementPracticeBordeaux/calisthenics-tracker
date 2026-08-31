@@ -245,8 +245,14 @@ async function loadSchedule() {
 }
 
 // ---------------- Utilitaires ----------------
-function todayISO() { return new Date().toISOString().slice(0, 10); }
-function daysAgo(n) { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); }
+// toISOString() convertit en UTC : entre minuit et ~1h-2h du matin (heure de
+// Paris), ça renvoyait encore la date d'hier. On formate donc la date locale
+// du navigateur directement, sans passer par l'UTC.
+function localDateISO(d) {
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+function todayISO() { return localDateISO(new Date()); }
+function daysAgo(n) { const d = new Date(); d.setDate(d.getDate() - n); return localDateISO(d); }
 function formatDateLabel(iso) {
   const d = new Date(iso + "T00:00:00");
   return d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
@@ -304,9 +310,14 @@ function getEffectiveEntries(s) {
 function computeLoad(s) {
   if (!s) return { sessionLoad: null, correctedLoad: null };
   const participation = s.participation != null ? s.participation : 1.0;
-  const sessionLoad = s.intensity > 0 && s.duration ? Math.round(s.intensity * Number(s.duration)) : null;
   const active = Object.entries(getEffectiveEntries(s)).filter(function(e){ return e[1].rpe > 0; });
   const totalRpe = active.reduce(function(sum,e){ return sum + e[1].rpe; }, 0);
+  // Intensité effective : le RPE global si renseigné, sinon la moyenne des RPE
+  // par thème — sans ce repli, une séance Calisthenics où seuls les thèmes
+  // sont remplis (RPE global oublié) perdait toute sa charge (sessionLoad et
+  // correctedLoad à null), alors que l'information existe bien par thème.
+  const effectiveIntensity = s.intensity > 0 ? s.intensity : (active.length ? totalRpe / active.length : 0);
+  const sessionLoad = effectiveIntensity > 0 && s.duration ? Math.round(effectiveIntensity * Number(s.duration)) : null;
   if (active.length === 0) return { sessionLoad: sessionLoad, correctedLoad: sessionLoad !== null ? Math.round(sessionLoad * participation) : null };
   const neuralFactor = active.reduce(function(sum,e){
     const t = THEMES.find(function(th){ return th.id === e[0]; });

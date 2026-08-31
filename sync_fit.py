@@ -13,9 +13,12 @@ import glob
 import json
 import os
 import sys
+from zoneinfo import ZoneInfo
 
 import fitparse
 import requests
+
+PARIS_TZ = ZoneInfo("Europe/Paris")
 
 SUPABASE_URL = "https://zwltvhjitrvlrhbivdfm.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3bHR2aGppdHJ2bHJoYml2ZGZtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODczMTMxMjcsImV4cCI6MjEwMjg4OTEyN30.hTD6h2r9dKdKaJ15vcFU6eN8WScA1rr_nT2dNByT6co"
@@ -149,10 +152,11 @@ def parse_fit(path, schedule, ref_cache, logged_cache):
                 z[4] += 1
 
         end = start + datetime.timedelta(seconds=dur_s)
-        # Les horodatages FIT sont en UTC ; conversion approximative heure
-        # française d'été (+2h) pour le rattachement au planning et la
-        # détection des trajets.
-        start_local = start + datetime.timedelta(hours=2)
+        # Les horodatages FIT sont en UTC ; conversion vers l'heure de Paris via
+        # zoneinfo (gère automatiquement CET/CEST), plutôt qu'un décalage fixe
+        # +2h qui était faux en hiver (CET = UTC+1) et pouvait faire rater le
+        # rattachement à un cours du planning ou mal classer un trajet.
+        start_local = start.replace(tzinfo=datetime.timezone.utc).astimezone(PARIS_TZ).replace(tzinfo=None)
 
         matched_discipline = match_class(start_local, schedule, ref_cache)
         if not matched_discipline:
@@ -167,7 +171,7 @@ def parse_fit(path, schedule, ref_cache, logged_cache):
         zones_official = s.get("time_in_hr_zone") or [0] * 6
 
         return {
-            "day": start.strftime("%Y-%m-%d"),
+            "day": start_local.strftime("%Y-%m-%d"),
             "start_time": start.isoformat(),
             "end_time": end.isoformat(),
             "duration_min": round(dur_s / 60, 1),
