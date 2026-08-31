@@ -237,4 +237,26 @@ if __name__ == "__main__":
     by_start = {}
     for r in rows:
         by_start[r["start_time"]] = r
-    push(list(by_start.values()))
+    rows = list(by_start.values())
+
+    # Une seule activité par (jour, discipline rattachée) — s'il y en a
+    # plusieurs (ex. une activité courte et une longue toutes les deux
+    # rattachées à la même séance loguée), ne garde que celle dont la durée
+    # est la plus proche d'1h (durée réelle de tous les cours) ; les autres
+    # repassent en "autre" plutôt que de fausser doublement le calcul.
+    groups = {}
+    for r in rows:
+        if r["activity_type"] == "seance" and r["matched_discipline"]:
+            key = (r["day"], r["matched_discipline"])
+            groups.setdefault(key, []).append(r)
+    for key, group_rows in groups.items():
+        if len(group_rows) <= 1:
+            continue
+        group_rows.sort(key=lambda r: abs(r["duration_min"] - 60))
+        for loser in group_rows[1:]:
+            print(f"  ! doublon écarté : {loser['start_time']} ({loser['duration_min']} min) "
+                  f"gardait '{loser['matched_discipline']}', repasse en 'autre'")
+            loser["activity_type"] = "autre"
+            loser["matched_discipline"] = None
+
+    push(rows)
