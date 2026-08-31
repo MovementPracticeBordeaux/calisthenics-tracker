@@ -1317,20 +1317,26 @@ async function renderDashboard() {
     if (rows && rows.length) todayMigraine = Math.max.apply(null, rows.map(function(r) { return r.intensity || 5; }));
   } catch (e) {}
 
-  let score = 75, signals = 0;
+  let score = 100, signals = 0;
   if (hrDiff != null) { signals++; if (hrDiff >= 10) score -= 30; else if (hrDiff >= 5) score -= 15; else if (hrDiff >= 3) score -= 3; else if (hrDiff <= -3) score += 5; }
   if (hrvPct != null) { signals++; if (hrvPct <= -30) score -= 25; else if (hrvPct <= -20) score -= 15; else if (hrvPct <= -10) score -= 5; else if (hrvPct >= 15) score += 10; }
   if (stressDiff != null) { signals++; if (stressDiff >= 10) score -= 25; else if (stressDiff >= 5) score -= 10; }
   if (loadRatio != null) { signals++; } // le score réagit désormais en continu via atlWake ci-dessous, pas juste à un seuil
+  // Panier "charge / fatigue" — dépense du jour, fatigue accumulée, effort
+  // .fit, trajets et ressenti négatif mesurent tous, en grande partie, la
+  // MÊME réalité sous-jacente (une grosse période d'entraînement qui
+  // fatigue). Les additionner sans limite comptait plusieurs fois le même
+  // fait et pouvait à lui seul écraser tout le score. Plafonné en un seul
+  // panier plutôt que chaque signal déduisant indépendamment sans limite.
+  let loadFatigueBucket = 0;
   // Dépense d'énergie du jour — dégressif au fil des séances loguées
   // aujourd'hui, indépendamment de loadRatio (qui compare une tendance sur
-  // plusieurs jours). Ici, chaque séance loguée fait baisser le score
-  // immédiatement et visiblement : c'est ce qui restait sans effet avant.
+  // plusieurs jours).
   let todayDepletion = 0;
   if (todayTotalLoad > 0) {
     signals++;
     todayDepletion = Math.min(35, Math.round(todayTotalLoad / 60));
-    score -= todayDepletion;
+    loadFatigueBucket -= todayDepletion;
   }
   // Fatigue accumulée "au réveil" — ce que les jours précédents laissent
   // encore aujourd'hui (modèle Fitness-Fatigue, décroissance exponentielle
@@ -1341,11 +1347,12 @@ async function renderDashboard() {
   if (atlWake != null && atlWake > 0) {
     signals++;
     wakeFatigueDeduction = Math.min(30, Math.round(atlWake / 70));
-    score -= wakeFatigueDeduction;
+    loadFatigueBucket -= wakeFatigueDeduction;
   }
   // Bonus explicite de fraîcheur — pas juste "moins de pénalité", un vrai
   // ajout quand ta fatigue accumulée est nettement sous ta charge chronique
   // habituelle (ACWR bas p/r à TA propre référence, pas un seuil générique).
+  // Laissé hors du plafond : un bonus n'a pas besoin d'être limité.
   if (atlWake != null && ctl) {
     const wakeRatio = atlWake / ctl;
     if (wakeRatio < 0.8) {
@@ -1360,13 +1367,13 @@ async function renderDashboard() {
   if (todayFitEffort > 0) {
     signals++;
     todayFitDepletion = Math.min(15, Math.round(todayFitEffort * 3));
-    score -= todayFitDepletion;
+    loadFatigueBucket -= todayFitDepletion;
   }
   let todayTripDepletion = 0;
   if (todayTripEffort > 0) {
     signals++;
     todayTripDepletion = Math.min(8, Math.round(todayTripEffort * 3));
-    score -= todayTripDepletion;
+    loadFatigueBucket -= todayTripDepletion;
   }
   if (sleepMin != null) {
     signals++;
@@ -1437,7 +1444,13 @@ async function renderDashboard() {
     }
   }
   const LIFELOAD_IMPACT = { bien: 8, stresse: -12, fatigue: -18, malade: -40, courbature: -10, neutre: 0 };
-  if (lifeload != null) { signals++; score += (LIFELOAD_IMPACT[lifeload] || 0); }
+  if (lifeload != null) { signals++; const impact = LIFELOAD_IMPACT[lifeload] || 0; if (impact < 0) loadFatigueBucket += impact; else score += impact; }
+  // Le panier "charge / fatigue" est plafonné à -40 au total — un plafond
+  // généreux (largement au-dessus de ce que produirait une vraie journée
+  // difficile isolée), mais qui empêche 4-5 signaux corrélés de vider à eux
+  // seuls tout le score. Les bonus (fraîcheur, sieste, LifeLoad positif)
+  // restent hors panier, non plafonnés.
+  score += Math.max(-40, loadFatigueBucket);
   score = Math.max(0, Math.min(100, score));
   let tier = "Données insuffisantes", tierColor = "muted", needRest = "–";
   if (signals > 0) {
