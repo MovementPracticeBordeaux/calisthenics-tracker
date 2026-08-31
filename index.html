@@ -1370,18 +1370,26 @@ async function renderDashboard() {
   }
   if (sleepMin != null) {
     signals++;
-    if (sleepMin < 300) score -= 25; else if (sleepMin < 360) score -= 15; else if (sleepMin < 420) score -= 5; else if (sleepMin > 600) score -= 5;
+    // Plafond global du sommeil aligné sur les autres signaux physiologiques
+    // (FC repos -30, VFC -25, Stress -25 max) — les plateformes de référence
+    // (WHOOP : ~60% VFC, sommeil secondaire ; Fitbit : sommeil/VFC/activité à
+    // peu près égaux) ne laissent jamais le sommeil dominer le score à lui
+    // seul. Avant ce plafond, durée + stades pouvaient cumuler jusqu'à -41,
+    // largement au-dessus de tout autre signal isolé.
+    let sleepDeduction = 0;
+    if (sleepMin < 300) sleepDeduction += 20; else if (sleepMin < 360) sleepDeduction += 12; else if (sleepMin < 420) sleepDeduction += 4; else if (sleepMin > 600) sleepDeduction += 4;
     // Qualité des stades, pas juste la durée — mêmes seuils que l'onglet
-    // Sommeil (AASM/CDC) : profond <13% ou paradoxal <15% pénalisent, même
+    // Sommeil (AASM/CDC) : profond <10% ou paradoxal <15% pénalisent, même
     // avec une durée totale correcte.
     if (todayWearable && todayWearable.sleep_deep_min != null && sleepMin > 0) {
       const deepPct = (todayWearable.sleep_deep_min / sleepMin) * 100;
-      if (deepPct < 10) { score -= 8; lines.push({ tone: "neutral", text: "Sommeil profond faible (" + Math.round(deepPct) + "%) malgré une durée correcte — pèse un peu sur le score." }); }
+      if (deepPct < 10) { sleepDeduction += 6; lines.push({ tone: "neutral", text: "Sommeil profond faible (" + Math.round(deepPct) + "%) malgré une durée correcte — pèse un peu sur le score." }); }
       if (todayWearable.sleep_rem_min != null) {
         const remPct = (todayWearable.sleep_rem_min / sleepMin) * 100;
-        if (remPct < 15) { score -= 8; lines.push({ tone: "neutral", text: "Sommeil paradoxal faible (" + Math.round(remPct) + "%) — à surveiller si ça se répète." }); }
+        if (remPct < 15) { sleepDeduction += 6; lines.push({ tone: "neutral", text: "Sommeil paradoxal faible (" + Math.round(remPct) + "%) — à surveiller si ça se répète." }); }
       }
     }
+    score -= Math.min(25, sleepDeduction);
   }
   if (respDiff != null) { signals++; if (respDiff >= 3) score -= 20; else if (respDiff >= 2) score -= 10; }
   if (todayMigraine != null) { signals++; score -= (10 + todayMigraine * 4); }
