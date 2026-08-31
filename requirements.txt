@@ -1,6 +1,5 @@
 requests
 fitparse
-pycryptodome
 # Termux/Android ne fournit pas la base de fuseaux horaires système que
 # zoneinfo attend par défaut (contrairement à un Linux classique) — sans ce
 # paquet, ZoneInfo("Europe/Paris") plante avec ZoneInfoNotFoundError.
