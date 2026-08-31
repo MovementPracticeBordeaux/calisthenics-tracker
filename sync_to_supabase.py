@@ -15,8 +15,13 @@ import struct
 import sys
 import requests
 
+import mpb_auth
+
 SUPABASE_URL = "https://zwltvhjitrvlrhbivdfm.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3bHR2aGppdHJ2bHJoYml2ZGZtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODczMTMxMjcsImV4cCI6MjEwMjg4OTEyN30.hTD6h2r9dKdKaJ15vcFU6eN8WScA1rr_nT2dNByT6co"
+# Jeton d'accès obtenu au démarrage (voir __main__) — la clé anon seule n'a
+# plus accès aux données depuis le verrouillage des policies RLS.
+ACCESS_TOKEN = None
 DAYS = 30
 
 DB_PATH = sys.argv[1] if len(sys.argv) > 1 else "Gadgetbridge.db"
@@ -197,7 +202,7 @@ def push_to_supabase(rows):
     url = f"{SUPABASE_URL}/rest/v1/wearable_daily?on_conflict=day"
     headers = {
         "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
         "Content-Type": "application/json",
         "Prefer": "resolution=merge-duplicates,return=minimal",
     }
@@ -262,7 +267,7 @@ def push_sleep_stages(rows):
     url = f"{SUPABASE_URL}/rest/v1/wearable_daily?on_conflict=day"
     headers = {
         "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
         "Content-Type": "application/json",
         "Prefer": "resolution=merge-duplicates,return=minimal",
     }
@@ -274,6 +279,7 @@ def push_sleep_stages(rows):
 
 
 if __name__ == "__main__":
+    ACCESS_TOKEN = mpb_auth.get_access_token(SUPABASE_URL, SUPABASE_KEY)
     # Séances (zones cardiaques, effet d'entraînement) : plus estimées ici — la
     # sauvegarde automatique Zepp vers Google Drive fournit désormais ces données
     # officielles, lues directement par Claude depuis Drive.

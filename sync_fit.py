@@ -18,10 +18,15 @@ from zoneinfo import ZoneInfo
 import fitparse
 import requests
 
+import mpb_auth
+
 PARIS_TZ = ZoneInfo("Europe/Paris")
 
 SUPABASE_URL = "https://zwltvhjitrvlrhbivdfm.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3bHR2aGppdHJ2bHJoYml2ZGZtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODczMTMxMjcsImV4cCI6MjEwMjg4OTEyN30.hTD6h2r9dKdKaJ15vcFU6eN8WScA1rr_nT2dNByT6co"
+# Jeton d'accès obtenu au démarrage (voir __main__) — la clé anon seule n'a
+# plus accès aux données depuis le verrouillage des policies RLS.
+ACCESS_TOKEN = None
 
 # Profil — FC max réellement observée (pas une formule d'âge, qui sous-estimait
 # à 179) et FC repos réelle. À réviser si un test d'effort donne mieux.
@@ -39,7 +44,7 @@ def karvonen_thresholds():
 def sb_get(path):
     r = requests.get(
         f"{SUPABASE_URL}/rest/v1/{path}",
-        headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
+        headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {ACCESS_TOKEN}"},
     )
     r.raise_for_status()
     return r.json()
@@ -210,7 +215,7 @@ def push(rows):
         f"{SUPABASE_URL}/rest/v1/workout_sessions?on_conflict=start_time",
         headers={
             "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Authorization": f"Bearer {ACCESS_TOKEN}",
             "Content-Type": "application/json",
             "Prefer": "resolution=merge-duplicates,return=minimal",
         },
@@ -228,6 +233,7 @@ if __name__ == "__main__":
     if not files:
         print(f"Aucun fichier .fit dans {FIT_DIR}")
         sys.exit(0)
+    ACCESS_TOKEN = mpb_auth.get_access_token(SUPABASE_URL, SUPABASE_KEY)
     schedule = load_schedule()
     ref_cache = {}
     logged_cache = {}

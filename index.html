@@ -88,26 +88,122 @@
   <div style="font-size:11px;font-weight:800;letter-spacing:2px;text-transform:uppercase;margin-bottom:24px">
     <span style="color:var(--chalkDim)">MOVEMENT </span><span style="background:var(--gradient);-webkit-background-clip:text;background-clip:text;color:transparent">PRACTICE ✦ SUIVI</span>
   </div>
-  <input type="password" id="auth-input" placeholder="Mot de passe" style="width:100%;max-width:280px;margin-bottom:12px;text-align:center" autocomplete="off" />
-  <button id="auth-submit" style="width:100%;max-width:280px;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Accéder</button>
-  <div id="auth-error" class="muted" style="margin-top:10px;font-size:12px;color:var(--red);display:none">Mot de passe incorrect</div>
+  <div id="auth-title" style="font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:16px;color:var(--chalkDim)">Connexion</div>
+  <input type="email" id="auth-email" placeholder="Email" style="width:100%;max-width:280px;margin-bottom:10px;text-align:center" autocomplete="username" />
+  <input type="password" id="auth-password" placeholder="Mot de passe" style="width:100%;max-width:280px;margin-bottom:12px;text-align:center" autocomplete="current-password" />
+  <button id="auth-submit" style="width:100%;max-width:280px;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Se connecter</button>
+  <button id="auth-toggle" style="margin-top:14px;background:none;border:none;color:var(--steel);font-size:12px;font-weight:700;cursor:pointer">Première visite ? Créer un compte</button>
+  <div id="auth-error" class="muted" style="margin-top:10px;font-size:12px;text-align:center;max-width:280px;display:none"></div>
 </div>
 <script>
+// Remplace l'ancien mot de passe partagé (vérifié côté client, contournable
+// en un clic dans les DevTools) par un vrai compte Supabase Auth. Les
+// policies RLS de la base n'acceptent plus que les requêtes authentifiées
+// avec ce compte : la clé anon seule (visible plus bas dans ce fichier) ne
+// donne désormais accès à aucune donnée.
+const SUPABASE_URL = "https://zwltvhjitrvlrhbivdfm.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3bHR2aGppdHJ2bHJoYml2ZGZtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODczMTMxMjcsImV4cCI6MjEwMjg4OTEyN30.hTD6h2r9dKdKaJ15vcFU6eN8WScA1rr_nT2dNByT6co";
+
+const AUTH_STORAGE_KEY = "mpb_session";
+function getStoredSession() {
+  try { return JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) || "null"); } catch (e) { return null; }
+}
+function storeSession(tokenResponse) {
+  if (!tokenResponse) { localStorage.removeItem(AUTH_STORAGE_KEY); return; }
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+    access_token: tokenResponse.access_token,
+    refresh_token: tokenResponse.refresh_token,
+    expires_at: Date.now() + (tokenResponse.expires_in || 3600) * 1000,
+  }));
+}
+async function authRequest(path, body) {
+  const res = await fetch(SUPABASE_URL + "/auth/v1/" + path, {
+    method: "POST",
+    headers: { apikey: SUPABASE_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(function() { return {}; });
+  if (!res.ok) throw new Error(data.error_description || data.msg || data.error || ("Erreur " + res.status));
+  return data;
+}
+// Renvoie un access_token valide (rafraîchi si besoin), ou null si aucune
+// session active. Le refresh token Supabase est à usage unique : plusieurs
+// appels sb() concurrents (ex. Promise.all au démarrage) pourraient sinon
+// déclencher deux refresh en parallèle avec le même refresh token et casser
+// la session — on partage donc le rafraîchissement en cours au lieu d'en
+// lancer un nouveau.
+let refreshInFlight = null;
+async function ensureAccessToken() {
+  const s = getStoredSession();
+  if (!s) return null;
+  if (s.expires_at - Date.now() > 60000) return s.access_token;
+  if (!refreshInFlight) {
+    refreshInFlight = authRequest("token?grant_type=refresh_token", { refresh_token: s.refresh_token })
+      .then(function(fresh) { storeSession(fresh); return fresh.access_token; })
+      .catch(function() { storeSession(null); return null; })
+      .finally(function() { refreshInFlight = null; });
+  }
+  return refreshInFlight;
+}
+function logout() { storeSession(null); location.reload(); }
+
 (function() {
-  var PASS = "Rut57Refund15Startling1";
-  var gate = document.getElementById("auth-gate");
-  if (localStorage.getItem("mpb_auth") === "ok") { gate.style.display = "none"; return; }
-  function tryAuth() {
-    var val = document.getElementById("auth-input").value;
-    if (val === PASS) {
-      localStorage.setItem("mpb_auth", "ok");
-      gate.style.display = "none";
-    } else {
-      document.getElementById("auth-error").style.display = "block";
+  const gate = document.getElementById("auth-gate");
+  let mode = "signin";
+
+  function showMessage(msg, isError) {
+    const el = document.getElementById("auth-error");
+    el.textContent = msg || "";
+    el.style.display = msg ? "block" : "none";
+    el.style.color = isError ? "var(--red)" : "var(--chalkDim)";
+  }
+  function setMode(m) {
+    mode = m;
+    document.getElementById("auth-title").textContent = mode === "signup" ? "Créer mon compte" : "Connexion";
+    document.getElementById("auth-submit").textContent = mode === "signup" ? "Créer le compte" : "Se connecter";
+    document.getElementById("auth-toggle").textContent = mode === "signup" ? "J'ai déjà un compte" : "Première visite ? Créer un compte";
+    showMessage("");
+  }
+  function onAuthed() {
+    gate.style.display = "none";
+    if (window.mpbOnAuthed) window.mpbOnAuthed();
+  }
+
+  async function trySubmit() {
+    const email = document.getElementById("auth-email").value.trim();
+    const password = document.getElementById("auth-password").value;
+    if (!email || !password) { showMessage("Renseigne un email et un mot de passe.", true); return; }
+    const btn = document.getElementById("auth-submit");
+    btn.disabled = true;
+    showMessage(mode === "signup" ? "Création du compte…" : "Connexion…");
+    try {
+      if (mode === "signup") {
+        const data = await authRequest("signup", { email: email, password: password });
+        if (data.access_token) {
+          storeSession(data);
+          onAuthed();
+        } else {
+          showMessage("Compte créé — vérifie ta boîte mail pour confirmer, puis reconnecte-toi ici.");
+          setMode("signin");
+        }
+      } else {
+        const data = await authRequest("token?grant_type=password", { email: email, password: password });
+        storeSession(data);
+        onAuthed();
+      }
+    } catch (e) {
+      showMessage(e.message, true);
+    } finally {
+      btn.disabled = false;
     }
   }
-  document.getElementById("auth-submit").addEventListener("click", tryAuth);
-  document.getElementById("auth-input").addEventListener("keydown", function(e) { if (e.key === "Enter") tryAuth(); });
+
+  document.getElementById("auth-submit").addEventListener("click", trySubmit);
+  document.getElementById("auth-password").addEventListener("keydown", function(e) { if (e.key === "Enter") trySubmit(); });
+  document.getElementById("auth-toggle").addEventListener("click", function() { setMode(mode === "signup" ? "signin" : "signup"); });
+
+  // Session déjà valide (ou rafraîchissable) : on saute directement le gate.
+  ensureAccessToken().then(function(token) { if (token) onAuthed(); });
 })();
 </script>
 
@@ -117,6 +213,7 @@
       <span style="color:var(--chalkDim)">MOVEMENT </span><span style="background:var(--gradient);-webkit-background-clip:text;background-clip:text;color:transparent">PRACTICE ✦ SUIVI</span>
     </div>
     <button id="refresh-btn" title="Rafraîchir les données" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--muted);padding:3px 6px;cursor:pointer;font-size:12px;line-height:1;position:absolute;right:16px">⟳</button>
+    <button id="logout-btn" title="Se déconnecter" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--muted);padding:3px 6px;cursor:pointer;font-size:12px;line-height:1;position:absolute;right:52px">⏻</button>
   </div>
   <div class="tabs">
     <button class="tab" data-tab="seance">Entraînement</button>
@@ -130,15 +227,20 @@
 
 <script>
 // ---------------- Supabase ----------------
-const SUPABASE_URL = "https://zwltvhjitrvlrhbivdfm.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3bHR2aGppdHJ2bHJoYml2ZGZtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODczMTMxMjcsImV4cCI6MjEwMjg4OTEyN30.hTD6h2r9dKdKaJ15vcFU6eN8WScA1rr_nT2dNByT6co";
-
+// SUPABASE_URL / SUPABASE_KEY / ensureAccessToken() sont définis dans le
+// script du gate d'authentification plus haut (même page, même portée).
 async function sb(path, options) {
   options = options || {};
+  const token = await ensureAccessToken();
+  if (!token) {
+    const gate = document.getElementById("auth-gate");
+    if (gate) gate.style.display = "flex";
+    throw new Error("Session expirée — reconnecte-toi.");
+  }
   const res = await fetch(SUPABASE_URL + "/rest/v1/" + path, Object.assign({}, options, {
     headers: Object.assign({
       apikey: SUPABASE_KEY,
-      Authorization: "Bearer " + SUPABASE_KEY,
+      Authorization: "Bearer " + token,
       "Content-Type": "application/json"
     }, options.headers || {})
   }));
@@ -2536,7 +2638,15 @@ document.getElementById("refresh-btn").addEventListener("click", function() {
   setTab(currentTab);
   setTimeout(function() { btn.style.transform = ""; }, 500);
 });
-Promise.all([loadCoefficients(), loadSchedule()]).then(function() { setTab("dashboard"); });
+document.getElementById("logout-btn").addEventListener("click", function() {
+  if (confirm("Se déconnecter ?")) logout();
+});
+// Ne démarre le chargement des données qu'une fois authentifié — appelé par
+// le script du gate (juste après connexion, ou immédiatement si la session
+// stockée est encore valide). Voir ensureAccessToken() plus haut.
+window.mpbOnAuthed = function() {
+  Promise.all([loadCoefficients(), loadSchedule()]).then(function() { setTab("dashboard"); });
+};
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", function() { navigator.serviceWorker.register("sw.js").catch(function() {}); });
 }
