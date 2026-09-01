@@ -1686,8 +1686,11 @@ async function renderDashboard() {
     }
 
     // L'anneau Forme est lui-même déjà une vue d'ensemble en un coup d'œil —
-    // il passe avant le récap détaillé, pas après.
-    html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Forme <span style="color:var(--vigilance)">+ Vigilance</span></span><span>' + tierDot(tierColor) + '</span></div>';
+    // il passe avant le récap détaillé, pas après. Volontairement sans le
+    // cadre ".card" des autres indicateurs (fond noir uni, comme l'anneau
+    // principal des apps Zepp/Garmin) pour le distinguer visuellement comme
+    // l'indicateur central, pas juste une carte parmi d'autres.
+    html += '<div style="margin-bottom:20px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Forme <span style="color:var(--vigilance)">+ Vigilance</span></span><span>' + tierDot(tierColor) + '</span></div>';
     html += '<div style="padding:10px 0">' + circleGaugeHtml(score, 100, {
       sublabel: tier,
       size: 200,
