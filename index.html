@@ -1690,18 +1690,18 @@ async function renderDashboard() {
     // cadre ".card" des autres indicateurs (fond noir uni, comme l'anneau
     // principal des apps Zepp/Garmin) pour le distinguer visuellement comme
     // l'indicateur central, pas juste une carte parmi d'autres.
-    html += '<div style="margin-bottom:20px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Forme <span style="color:var(--vigilance)">+ Vigilance</span></span><span>' + tierDot(tierColor) + '</span></div>';
-    html += '<div style="padding:10px 0">' + circleGaugeHtml(score, 100, {
+    html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Forme <span style="color:var(--vigilance)">+ Vigilance</span></span><span>' + tierDot(tierColor) + '</span></div>';
+    html += '<div style="padding:18px 0">' + circleGaugeHtml(score, 100, {
       sublabel: tier,
       size: 200,
       strokeWidth: 16,
       inner: vigScore != null ? { value: vigScore, max: 100 } : null,
     }) + "</div>";
-    html += '<div style="text-align:center;padding-top:10px;border-top:1px solid var(--line);font-size:12px">Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div>";
+    html += '<div style="text-align:center;padding-top:14px;border-top:1px solid var(--line);font-size:12px">Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div>";
     if (vigScore != null) {
-      html += '<div style="text-align:center;padding-top:8px;font-size:12px">Vigilance (' + vigWindowLabel + ') : <b style="color:var(--vigilance)">' + (vigPct >= 0 ? "+" : "") + vigPct + '%</b> vs ta moyenne sur ce créneau</div>';
+      html += '<div style="text-align:center;padding-top:10px;font-size:12px">Vigilance (' + vigWindowLabel + ') : <b style="color:var(--vigilance)">' + (vigPct >= 0 ? "+" : "") + vigPct + '%</b> vs ta moyenne sur ce créneau</div>';
     } else {
-      html += '<div class="muted" style="text-align:center;font-size:11px;padding-top:8px">Vigilance : pas encore de créneau comparable aujourd\'hui</div>';
+      html += '<div class="muted" style="text-align:center;font-size:11px;padding-top:10px">Vigilance : pas encore de créneau comparable aujourd\'hui</div>';
     }
     html += "</div>";
 
