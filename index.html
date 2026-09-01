@@ -2594,7 +2594,7 @@ async function renderVie() {
     const totalCal = last7Trips.reduce(function(s,t){ return s + (t.calories||0); }, 0);
     html += '<div class="card"><div class="section-label">Trajets actifs (vélo) — 7 derniers jours</div><div class="stat-row">';
     html += statHtml("Trajets", last7Trips.length);
-    html += statHtml("Temps total", totalMin + " min");
+    html += statHtml("Temps total", totalMin.toFixed(1) + " min");
     html += statHtml("Calories", totalCal || "–");
     html += "</div>";
     html += '<div class="muted" style="font-size:10px;margin-top:8px">Détectés automatiquement (créneaux et durées habituels), exclus des zones cardiaques et de l\'effet d\'entraînement — ce ne sont pas des séances. Mais l\'effort qu\'ils représentent est réel et compte déjà dans ton PAI (calculé sur toute activité cardiaque, pas seulement l\'entraînement structuré).</div></div>';
