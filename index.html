@@ -1247,19 +1247,36 @@ let dashPeriod = "jour";
 async function renderDashboard() {
   const app = document.getElementById("app");
   app.innerHTML = '<div class="muted">Chargement du dashboard…</div>';
-  let sessions = [], wearable = [], dismissedDates = [], workouts = [], errorMsg = "";
-  try { sessions = await listSessions(90); } catch (e) { errorMsg = e.message; }
-  try { wearable = await listWearable(40); } catch (e) { errorMsg = errorMsg || e.message; }
-  try {
-    const rows = await sb("dismissed_activity_flags?select=day");
-    dismissedDates = (rows || []).map(function(r) { return r.day; });
-  } catch (e) {}
-  try { workouts = await sb("workout_sessions?select=day,training_effect_aerobic,training_effect_anaerobic&activity_type=eq.seance&order=day.desc&limit=60") || []; } catch (e) {}
-  let monthMigraines = [], monthLifeload = [];
-  try { monthMigraines = await sb("migraines?select=day,intensity&order=day.desc&limit=60") || []; } catch (e) {}
-  try { monthLifeload = await sb("lifeload?select=day,state&order=day.desc&limit=60") || []; } catch (e) {}
-
   const today = todayISO();
+  let errorMsg = "";
+  // Toutes ces requêtes sont indépendantes les unes des autres — les lancer
+  // en parallèle plutôt qu'en séquence évite d'accumuler une douzaine
+  // d'allers-retours réseau l'un après l'autre (plusieurs secondes sur une
+  // connexion mobile un peu lente, avec un dashboard qui reste bloqué sur
+  // "Chargement…" en attendant). Chaque requête garde son propre repli en
+  // cas d'échec isolé, exactement comme avant.
+  const results = await Promise.all([
+    listSessions(90).catch(function(e) { errorMsg = errorMsg || e.message; return []; }),
+    listWearable(40).catch(function(e) { errorMsg = errorMsg || e.message; return []; }),
+    sb("dismissed_activity_flags?select=day").catch(function() { return []; }),
+    sb("workout_sessions?select=day,training_effect_aerobic,training_effect_anaerobic&activity_type=eq.seance&order=day.desc&limit=60").catch(function() { return []; }),
+    sb("migraines?select=day,intensity&order=day.desc&limit=60").catch(function() { return []; }),
+    sb("lifeload?select=day,state&order=day.desc&limit=60").catch(function() { return []; }),
+    sb("lifeload?day=eq." + today + "&select=state").catch(function() { return []; }),
+    sb("naps?day=eq." + today + "&select=duration_min,quality").catch(function() { return []; }),
+    sb("workout_sessions?day=eq." + today + "&activity_type=eq.seance&select=training_effect_aerobic,training_effect_anaerobic,matched_discipline").catch(function() { return []; }),
+    sb("workout_sessions?day=eq." + today + "&activity_type=eq.trajet&select=training_effect_aerobic,training_effect_anaerobic").catch(function() { return []; }),
+    sb("migraines?select=day").catch(function() { return []; }),
+    sb("migraines?day=eq." + today + "&select=intensity").catch(function() { return []; }),
+  ]);
+  const sessions = results[0] || [], wearable = results[1] || [];
+  const dismissedDates = (results[2] || []).map(function(r) { return r.day; });
+  const workouts = results[3] || [];
+  const monthMigraines = results[4] || [], monthLifeload = results[5] || [];
+  const lifeloadRows = results[6] || [], napRows = results[7] || [];
+  const todayFitSessions = results[8] || [], todayTrips = results[9] || [];
+  const migRows = results[10] || [], todayMigRows = results[11] || [];
+
   const todayTotalLoad = sessions.filter(function(s){ return s.date === today; }).reduce(function(s,x){ return s + (x.correctedLoad || 0); }, 0);
   const todayWearable = wearable.find(function(w){ return w.day === today; }) || null;
   const wearable7 = wearable.filter(function(w){ return w.day >= daysAgo(7); });
@@ -1364,19 +1381,11 @@ async function renderDashboard() {
     if (respDiff >= 2) lines.push({ tone: "warn", text: "Fréquence respiratoire nocturne à " + todayWearable.resp_rate_avg.toFixed(1) + " resp/min, au-dessus de ta moyenne (" + respBaseline.toFixed(1) + ") — à surveiller sur plusieurs nuits (signe précoce possible de fatigue ou début de maladie)." });
   }
 
-  let lifeload = null;
-  try {
-    const rows = await sb("lifeload?day=eq." + today + "&select=state");
-    if (rows && rows[0]) lifeload = rows[0].state;
-  } catch (e) {}
+  const lifeload = (lifeloadRows && lifeloadRows[0]) ? lifeloadRows[0].state : null;
 
-  let todayNapMin = 0, todayNapEffective = 0;
-  try {
-    const napRows = await sb("naps?day=eq." + today + "&select=duration_min,quality") || [];
-    const qWeight = { bonne: 1.0, moyenne: 0.6, mauvaise: 0.2 };
-    todayNapMin = napRows.reduce(function(s, n) { return s + n.duration_min; }, 0);
-    todayNapEffective = napRows.reduce(function(s, n) { return s + n.duration_min * (qWeight[n.quality] != null ? qWeight[n.quality] : 0.6); }, 0);
-  } catch (e) {}
+  const napQWeight = { bonne: 1.0, moyenne: 0.6, mauvaise: 0.2 };
+  const todayNapMin = napRows.reduce(function(s, n) { return s + n.duration_min; }, 0);
+  const todayNapEffective = napRows.reduce(function(s, n) { return s + n.duration_min * (napQWeight[n.quality] != null ? napQWeight[n.quality] : 0.6); }, 0);
 
   let todayMigraine = null;
   // Effort objectif du jour (fichiers .fit rattachés à un cours du planning)
@@ -1415,49 +1424,36 @@ async function renderDashboard() {
     }
     return 1;
   }
-  let todayFitEffort = 0, todayFitSessions = [];
-  try {
-    todayFitSessions = await sb("workout_sessions?day=eq." + today + "&activity_type=eq.seance&select=training_effect_aerobic,training_effect_anaerobic,matched_discipline") || [];
-    todayFitEffort = todayFitSessions.reduce(function(s, w) {
-      const te = (Number(w.training_effect_aerobic) || 0) + (Number(w.training_effect_anaerobic) || 0);
-      const matchedSession = sessions.find(function(s) { return s.date === today && s.discipline === w.matched_discipline; });
-      return s + te * neuralCoefficientForDiscipline(w.matched_discipline, matchedSession ? matchedSession.niveau : null);
-    }, 0);
-  } catch (e) {}
+  const todayFitEffort = todayFitSessions.reduce(function(s, w) {
+    const te = (Number(w.training_effect_aerobic) || 0) + (Number(w.training_effect_anaerobic) || 0);
+    const matchedSession = sessions.find(function(s) { return s.date === today && s.discipline === w.matched_discipline; });
+    return s + te * neuralCoefficientForDiscipline(w.matched_discipline, matchedSession ? matchedSession.niveau : null);
+  }, 0);
   // Trajets à vélo du jour — coût réel mais modeste (pas de complexité
   // neurale particulière, coefficient neutre 1.0), pris en compte séparément
   // pour ne pas les confondre avec une vraie séance dans le récap.
-  let todayTripEffort = 0, todayTripCount = 0;
-  try {
-    const todayTrips = await sb("workout_sessions?day=eq." + today + "&activity_type=eq.trajet&select=training_effect_aerobic,training_effect_anaerobic") || [];
-    todayTripCount = todayTrips.length;
-    todayTripEffort = todayTrips.reduce(function(s, w) { return s + (Number(w.training_effect_aerobic) || 0) + (Number(w.training_effect_anaerobic) || 0); }, 0);
-  } catch (e) {}
-  let history_migraines_count = 0, migraine_signature = null;
-  try {
-    const migRows = await sb("migraines?select=day") || [];
-    const migDays = migRows.map(function(r){ return r.day; });
-    history_migraines_count = migDays.length;
-    if (migDays.length >= 5) {
-      const migWearable = wearable.filter(function(w){ return migDays.indexOf(w.day) !== -1; });
-      const baseWearable = wearable.filter(function(w){ return migDays.indexOf(w.day) === -1; });
-      function avgF(arr, f) { const v = arr.map(function(w){return w[f];}).filter(function(x){return x!=null;}); return v.length ? avgOf(v) : null; }
-      const bHr = avgF(baseWearable, "hr_resting"), mHr = avgF(migWearable, "hr_resting");
-      const bHrv = avgF(baseWearable, "hrv_avg"), mHrv = avgF(migWearable, "hrv_avg");
-      const bStress = avgF(baseWearable, "stress_avg"), mStress = avgF(migWearable, "stress_avg");
-      const mSleep = avgF(migWearable, "sleep_total_min");
-      migraine_signature = {
-        hrDiff: (bHr != null && mHr != null) ? mHr - bHr : null,
-        hrvPct: (bHrv != null && mHrv != null && bHrv > 0) ? ((mHrv - bHrv) / bHrv) * 100 : null,
-        stressDiff: (bStress != null && mStress != null) ? mStress - bStress : null,
-        sleepMin: mSleep,
-      };
-    }
-  } catch (e) {}
-  try {
-    const rows = await sb("migraines?day=eq." + today + "&select=intensity");
-    if (rows && rows.length) todayMigraine = Math.max.apply(null, rows.map(function(r) { return r.intensity || 5; }));
-  } catch (e) {}
+  const todayTripCount = todayTrips.length;
+  const todayTripEffort = todayTrips.reduce(function(s, w) { return s + (Number(w.training_effect_aerobic) || 0) + (Number(w.training_effect_anaerobic) || 0); }, 0);
+
+  const migDays = migRows.map(function(r){ return r.day; });
+  const history_migraines_count = migDays.length;
+  let migraine_signature = null;
+  if (migDays.length >= 5) {
+    const migWearable = wearable.filter(function(w){ return migDays.indexOf(w.day) !== -1; });
+    const baseWearable = wearable.filter(function(w){ return migDays.indexOf(w.day) === -1; });
+    function avgF(arr, f) { const v = arr.map(function(w){return w[f];}).filter(function(x){return x!=null;}); return v.length ? avgOf(v) : null; }
+    const bHr = avgF(baseWearable, "hr_resting"), mHr = avgF(migWearable, "hr_resting");
+    const bHrv = avgF(baseWearable, "hrv_avg"), mHrv = avgF(migWearable, "hrv_avg");
+    const bStress = avgF(baseWearable, "stress_avg"), mStress = avgF(migWearable, "stress_avg");
+    const mSleep = avgF(migWearable, "sleep_total_min");
+    migraine_signature = {
+      hrDiff: (bHr != null && mHr != null) ? mHr - bHr : null,
+      hrvPct: (bHrv != null && mHrv != null && bHrv > 0) ? ((mHrv - bHrv) / bHrv) * 100 : null,
+      stressDiff: (bStress != null && mStress != null) ? mStress - bStress : null,
+      sleepMin: mSleep,
+    };
+  }
+  if (todayMigRows && todayMigRows.length) todayMigraine = Math.max.apply(null, todayMigRows.map(function(r) { return r.intensity || 5; }));
 
   let score = 100, signals = 0;
   if (hrDiff != null) { signals++; if (hrDiff >= 10) score -= 30; else if (hrDiff >= 5) score -= 15; else if (hrDiff >= 3) score -= 3; else if (hrDiff <= -3) score += 5; }
