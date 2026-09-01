@@ -264,9 +264,14 @@ if __name__ == "__main__":
             continue
         group_rows.sort(key=lambda r: abs(r["duration_min"] - 60))
         for loser in group_rows[1:]:
+            # Un trajet à vélo de 6-11 min qui démarre juste avant un cours
+            # peut se faire rattacher au même cours par match_class (tolérance
+            # ±20 min) — sans ce test, il repassait toujours en "autre" et
+            # disparaissait silencieusement des trajets suivis dans Santé.
+            new_type = "trajet" if is_bike_trip(None, loser["duration_min"]) else "autre"
             print(f"  ! doublon écarté : {loser['start_time']} ({loser['duration_min']} min) "
-                  f"gardait '{loser['matched_discipline']}', repasse en 'autre'")
-            loser["activity_type"] = "autre"
+                  f"gardait '{loser['matched_discipline']}', repasse en '{new_type}'")
+            loser["activity_type"] = new_type
             loser["matched_discipline"] = None
 
     push(rows)
