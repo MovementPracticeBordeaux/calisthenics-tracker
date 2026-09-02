@@ -237,9 +237,10 @@ function logout() { storeSession(null); location.reload(); }
     <button class="tab active" data-tab="dashboard">Dashboard</button>
     <button class="tab" data-tab="migraine">Migraine</button>
     <button class="tab" data-tab="vie">Santé</button>
-    <button class="tab" data-tab="coach">Coach</button>
   </div>
   <div id="app"></div>
+  <button id="coach-fab" title="Coach" style="position:fixed;bottom:20px;right:20px;width:52px;height:52px;border-radius:50%;background:var(--gradient);border:none;box-shadow:0 4px 16px rgba(0,0,0,0.4);font-size:22px;cursor:pointer;z-index:900;display:flex;align-items:center;justify-content:center">💬</button>
+  <div id="coach-overlay" style="display:none;position:fixed;inset:0;z-index:1000;background:var(--bg);overflow-y:auto"></div>
 </div>
 
 <script>
@@ -3263,10 +3264,15 @@ const COACH_QUESTIONS = [
   { id: "grip", label: "Ma tendance de préhension ?", fn: coachAnswerGripTrend },
   { id: "migraine_sleep", label: "Migraines liées au sommeil ?", fn: coachAnswerMigraineSleep },
 ];
+// Ouvert via la petite bulle flottante (pas un onglet de la nav principale) —
+// un calque plein écran par-dessus l'onglet en cours, pour pouvoir le
+// consulter depuis n'importe où sans perdre ce qui était affiché derrière
+// (ex. une séance de respiration en cours reste intacte à la fermeture).
 async function renderCoach() {
-  const app = document.getElementById("app");
+  const overlay = document.getElementById("coach-overlay");
+  overlay.style.display = "block";
   if (!coachData) {
-    app.innerHTML = '<div class="muted">Chargement…</div>';
+    overlay.innerHTML = '<div class="wrap"><div class="muted" style="padding-top:40px">Chargement…</div></div>';
     try {
       const results = await Promise.all([
         listWearable(60),
@@ -3276,15 +3282,20 @@ async function renderCoach() {
       ]);
       coachData = buildCoachData(results[0] || [], results[1] || [], results[2] || [], results[3] || []);
     } catch (e) {
-      app.innerHTML = '<div class="error-banner"><b>Erreur :</b> ' + esc(e.message) + "</div>";
+      overlay.innerHTML = '<div class="wrap"><div class="error-banner"><b>Erreur :</b> ' + esc(e.message) + "</div></div>";
       return;
     }
   }
   drawCoach();
 }
+function closeCoach() {
+  document.getElementById("coach-overlay").style.display = "none";
+}
 function drawCoach() {
-  const app = document.getElementById("app");
-  let html = '<h1 style="margin-bottom:4px">Coach</h1>';
+  const overlay = document.getElementById("coach-overlay");
+  let html = '<div class="wrap">';
+  html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px"><h1>Coach</h1>';
+  html += '<button id="coach-close-btn" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--chalkDim);font-size:11px;font-weight:700;padding:6px 12px;cursor:pointer">✕ Fermer</button></div>';
   html += '<div class="muted" style="margin-bottom:24px">Pose une question sur tes données récentes</div>';
 
   html += '<div id="coach-messages" style="display:flex;flex-direction:column;gap:14px;margin-bottom:28px">';
@@ -3308,8 +3319,10 @@ function drawCoach() {
   html += "</div>";
 
   html += '<div class="card steel"><div class="muted" style="font-size:11px;line-height:1.6">Réponses calculées directement à partir de tes propres données (pas de génération par IA) — mêmes seuils et méthodes que le reste de l\'appli.</div></div>';
+  html += "</div>";
 
-  app.innerHTML = html;
+  overlay.innerHTML = html;
+  document.getElementById("coach-close-btn").addEventListener("click", closeCoach);
   document.querySelectorAll("#coach-question-row .pill").forEach(function(btn) {
     btn.addEventListener("click", function() {
       const q = COACH_QUESTIONS.find(function(x) { return x.id === btn.dataset.question; });
@@ -3333,7 +3346,6 @@ function setTab(tab) {
   else if (tab === "dashboard") renderDashboard();
   else if (tab === "sommeil") renderSommeil();
   else if (tab === "migraine") loadMigraine();
-  else if (tab === "coach") renderCoach();
   else renderVie();
 }
 async function loadCoefficients() {
@@ -3378,6 +3390,7 @@ document.getElementById("refresh-btn").addEventListener("click", function() {
 document.getElementById("logout-btn").addEventListener("click", function() {
   if (confirm("Se déconnecter ?")) logout();
 });
+document.getElementById("coach-fab").addEventListener("click", renderCoach);
 // Ne démarre le chargement des données qu'une fois authentifié — appelé par
 // le script du gate (juste après connexion, ou immédiatement si la session
 // stockée est encore valide). Voir ensureAccessToken() plus haut.
