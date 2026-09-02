@@ -2304,7 +2304,7 @@ const BREATHING_PRESETS = [
   { label: "4-7-8", inhale: 4, holdFull: 7, exhale: 8, holdEmpty: 0 },
 ];
 const BREATHING_PHASE_ORDER = ["inhale", "holdFull", "exhale", "holdEmpty"];
-const BREATHING_PHASE_LABELS = { inhale: "Inspirez", holdFull: "Retenez (poumons pleins)", exhale: "Expirez", holdEmpty: "Retenez (poumons vides)" };
+const BREATHING_PHASE_LABELS = { inhale: "Inspirez", holdFull: "Rétention (plein)", exhale: "Expirez", holdEmpty: "Rétention (vide)" };
 let breathingConfig = { durationSec: 300, inhale: 4, holdFull: 0, exhale: 6, holdEmpty: 0, soundOn: true };
 let breathingRun = null; // { startedAt, phaseTimeoutId, tickIntervalId, breaths } ou null si aucune séance en cours
 let breathingAudioCtx = null, breathingWakeLock = null;
@@ -2549,8 +2549,8 @@ function drawMigraine() {
     html += "</div></div>";
 
     html += '<div style="display:flex;flex-direction:column;align-items:center;padding:20px 0 30px">';
-    html += '<div id="breathing-circle" style="width:140px;height:140px;border-radius:50%;background:var(--gradient);display:flex;align-items:center;justify-content:center;transition:transform 0.6s ease-in-out;transform:scale(1);box-shadow:0 0 30px rgba(242,113,28,0.35)">';
-    html += '<span id="breathing-phase-text" style="font-size:13px;font-weight:900;text-transform:uppercase;letter-spacing:.5px;color:var(--bg);text-align:center;padding:0 12px">Prêt</span></div>';
+    html += '<div id="breathing-circle" style="width:150px;height:150px;border-radius:50%;background:var(--gradient);display:flex;align-items:center;justify-content:center;transition:transform 0.6s ease-in-out;transform:scale(1);box-shadow:0 0 30px rgba(242,113,28,0.35)">';
+    html += '<span id="breathing-phase-text" style="font-size:11.5px;font-weight:900;text-transform:uppercase;letter-spacing:.3px;line-height:1.4;color:var(--bg);text-align:center;padding:0 10px;max-width:88px">Prêt</span></div>';
     html += '<button id="breathing-start-btn" style="width:100%;max-width:280px;margin-top:22px;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Démarrer</button>';
     html += '<button id="breathing-stop-btn" style="display:none;width:100%;max-width:280px;margin-top:22px;padding:13px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--chalkDim);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Arrêter</button>';
     html += "</div>";
