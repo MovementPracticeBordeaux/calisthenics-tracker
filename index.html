@@ -2564,7 +2564,7 @@ function stopBreathing() {
   const phaseText = document.getElementById("breathing-phase-text");
   const startBtn = document.getElementById("breathing-start-btn");
   const stopBtn = document.getElementById("breathing-stop-btn");
-  if (circle) { circle.style.transitionDuration = "0.6s"; circle.style.transform = "scale(1)"; circle.style.backgroundColor = "var(--steel)"; }
+  if (circle) { circle.style.transitionDuration = "0.6s"; circle.style.transform = "scale(1)"; circle.style.backgroundColor = "var(--purple)"; }
   const ballTrack = document.getElementById("breathing-ball-track");
   if (ballTrack) { ballTrack.style.transition = "none"; ballTrack.style.transform = "rotate(0deg)"; }
   if (phaseText) phaseText.textContent = "Prêt";
@@ -2578,11 +2578,11 @@ function updateBreathingVisual(phase, seconds) {
   if (circle && (phase === "inhale" || phase === "exhale")) {
     circle.style.transitionDuration = seconds + "s";
     circle.style.transform = phase === "inhale" ? "scale(1.55)" : "scale(1)";
-    // Poumons pleins (fin d'inspiration / début d'expiration) en rust, poumons
-    // vides (fin d'expiration / début d'inspiration) en steel — le changement
-    // progressif de couleur, en plus de la taille, marque clairement les fins
-    // de phase.
-    circle.style.backgroundColor = phase === "inhale" ? "var(--rust)" : "var(--steel)";
+    // Poumons pleins (fin d'inspiration / début d'expiration) en rose fluo,
+    // poumons vides (fin d'expiration / début d'inspiration) en violet — le
+    // changement progressif de couleur, en plus de la taille, marque
+    // clairement les fins de phase.
+    circle.style.backgroundColor = phase === "inhale" ? "var(--pink)" : "var(--purple)";
   }
   const ballTrack = document.getElementById("breathing-ball-track");
   if (ballTrack) {
@@ -2752,14 +2752,21 @@ function drawMigraine() {
 
     html += '<div style="display:flex;flex-direction:column;align-items:center;padding:48px 0 56px">';
     html += '<div style="position:relative;width:172px;height:172px">';
-    html += '<div id="breathing-circle" style="position:absolute;top:11px;left:11px;width:150px;height:150px;border-radius:50%;background-color:var(--steel);display:flex;align-items:center;justify-content:center;transition:transform 0.6s ease-in-out,background-color 0.6s ease-in-out;transform:scale(1);box-shadow:0 0 30px rgba(242,113,28,0.35)">';
+    html += '<div id="breathing-circle" style="position:absolute;top:11px;left:11px;width:150px;height:150px;border-radius:50%;background-color:var(--purple);display:flex;align-items:center;justify-content:center;transition:transform 0.6s ease-in-out,background-color 0.6s ease-in-out;transform:scale(1);box-shadow:0 0 30px rgba(168,85,247,0.35)">';
     html += '<span id="breathing-phase-text" style="font-size:11.5px;font-weight:900;text-transform:uppercase;letter-spacing:.3px;line-height:1.4;color:var(--bg);text-align:center;padding:0 10px;max-width:88px">Prêt</span></div>';
     // Bille qui fait un tour complet du cercle (sens antihoraire) sur la durée
     // de chaque phase, y compris les rétentions — repère visuel de temps qui
-    // s'ajoute à la taille et la couleur du cercle.
-    html += '<div id="breathing-ball-track" style="position:absolute;inset:0;transform:rotate(0deg)">';
-    html += '<div id="breathing-ball" style="position:absolute;top:-6px;left:50%;margin-left:-6px;width:12px;height:12px;border-radius:50%;background:var(--chalk);box-shadow:0 0 8px rgba(245,243,239,0.8)"></div>';
-    html += "</div></div>";
+    // s'ajoute à la taille et la couleur du cercle. Traînée blanche derrière
+    // la bille : un arc SVG en dégradé (opaque près de la bille, transparent
+    // à l'autre bout), rigidement solidaire de la bille dans le même élément
+    // tournant — pas besoin de la recalculer, elle suit automatiquement.
+    html += '<svg id="breathing-ball-track" width="172" height="172" viewBox="0 0 172 172" style="position:absolute;inset:0;transform:rotate(0deg)">';
+    html += '<defs><linearGradient id="breathing-ball-trail-grad" gradientUnits="userSpaceOnUse" x1="86" y1="0" x2="136.6" y2="16.4">';
+    html += '<stop offset="0%" stop-color="#fff" stop-opacity="0.85"/><stop offset="100%" stop-color="#fff" stop-opacity="0"/>';
+    html += "</linearGradient></defs>";
+    html += '<path d="M 86,0 A 86,86 0 0,1 136.6,16.4" fill="none" stroke="url(#breathing-ball-trail-grad)" stroke-width="5" stroke-linecap="round"/>';
+    html += '<circle id="breathing-ball" cx="86" cy="0" r="6" style="fill:var(--chalk);filter:drop-shadow(0 0 6px rgba(245,243,239,0.9))"/>';
+    html += "</svg></div>";
     html += '<button id="breathing-start-btn" style="width:100%;max-width:280px;margin-top:64px;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Démarrer</button>';
     html += '<button id="breathing-stop-btn" style="display:none;width:100%;max-width:280px;margin-top:64px;padding:13px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--chalkDim);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Arrêter</button>';
     html += "</div>";
