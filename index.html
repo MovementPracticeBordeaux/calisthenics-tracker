@@ -1798,7 +1798,10 @@ async function renderDashboard() {
     } else {
       html += '<div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px">';
       html += '<span style="font-size:13px">Préhension aujourd\'hui : <b>' + todayGripRow.value_kg + ' kg</b>' + (gripPct != null ? ' <span class="muted" style="font-size:11px">(' + (gripPct >= 0 ? "+" : "") + gripPct.toFixed(0) + '% vs récent)</span>' : '') + '</span>';
-      html += '<button id="grip-edit-btn" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--steel);font-size:11px;font-weight:700;padding:5px 10px;cursor:pointer">Modifier</button></div>';
+      html += '<div style="display:flex;gap:8px;flex-shrink:0">';
+      html += '<button id="grip-edit-btn" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--steel);font-size:11px;font-weight:700;padding:5px 10px;cursor:pointer">Modifier</button>';
+      html += '<button id="grip-delete-btn" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--red);font-size:11px;font-weight:700;padding:5px 10px;cursor:pointer">Supprimer</button>';
+      html += "</div></div>";
     }
 
     if (stressTierNow) {
@@ -1991,6 +1994,13 @@ async function renderDashboard() {
   });
   const gripEditBtn = document.getElementById("grip-edit-btn");
   if (gripEditBtn) gripEditBtn.addEventListener("click", function() { gripEditing = true; renderDashboard(); });
+  const gripDeleteBtn = document.getElementById("grip-delete-btn");
+  if (gripDeleteBtn) gripDeleteBtn.addEventListener("click", function() {
+    if (!confirm("Supprimer la mesure de préhension d'aujourd'hui ?")) return;
+    gripDeleteBtn.textContent = "…";
+    sb("grip_strength?day=eq." + todayISO(), { method: "DELETE", headers: { Prefer: "return=minimal" } })
+      .then(function() { renderDashboard(); }).catch(function(e) { alert("Erreur : " + e.message); });
+  });
 }
 // ---------------- Rendu : Sommeil ----------------
 async function renderSommeil() {
