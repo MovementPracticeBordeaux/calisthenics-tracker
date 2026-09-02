@@ -104,6 +104,22 @@
 const SUPABASE_URL = "https://zwltvhjitrvlrhbivdfm.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3bHR2aGppdHJ2bHJoYml2ZGZtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODczMTMxMjcsImV4cCI6MjEwMjg4OTEyN30.hTD6h2r9dKdKaJ15vcFU6eN8WScA1rr_nT2dNByT6co";
 
+// Planning réel des cours : lu directement depuis le site de réservation
+// (mpb-booking), pas depuis une copie locale qui se désynchronisait dès que
+// le planning changeait sur le site. Ces tables (cours/semaine_reference/
+// vacances) sont en lecture publique côté mpb-booking (le site affiche le
+// planning aux visiteurs non connectés) — pas besoin du compte Auth du
+// tracker pour les lire, une simple clé anon suffit.
+const MPB_BOOKING_URL = "https://aquvwqtwufdjlsjrqhux.supabase.co";
+const MPB_BOOKING_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFxdXZ3cXR3dWZkamxzanJxaHV4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU4MjQ0ODMsImV4cCI6MjEwMTQwMDQ4M30.CvYj7K1bJ4yqibiyShkzh64h7wDeJKq91DdeDBBn6_A";
+async function mpbBookingRequest(path) {
+  const res = await fetch(MPB_BOOKING_URL + "/rest/v1/" + path, {
+    headers: { apikey: MPB_BOOKING_KEY, Authorization: "Bearer " + MPB_BOOKING_KEY },
+  });
+  if (!res.ok) throw new Error("mpb-booking " + res.status);
+  return res.json();
+}
+
 const AUTH_STORAGE_KEY = "mpb_session";
 function getStoredSession() {
   try { return JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) || "null"); } catch (e) { return null; }
@@ -329,19 +345,21 @@ let SCHEDULE_REFERENCE = { date_lundi_reference: "2026-08-17", semaine_ce_lundi:
 let SCHEDULE_VACATIONS = [{ date_debut: "2026-08-06", date_fin: "2026-08-16" }, { date_debut: "2026-10-03", date_fin: "2026-10-11" }];
 
 async function loadSchedule() {
-  // Recharge le vrai planning depuis Supabase à chaque démarrage de l'appli —
-  // toute modification que tu fais en base est reflétée automatiquement, plus
-  // besoin de republier l'appli pour un changement d'horaire ou de cours.
+  // Recharge le vrai planning depuis le site de réservation (mpb-booking) à
+  // chaque démarrage de l'appli — toute modification faite sur le site
+  // (nouveaux horaires, cours ajouté/retiré, vacances) est reflétée ici
+  // automatiquement, plus besoin de la reporter à la main dans une copie
+  // séparée qui finissait toujours par diverger.
   try {
-    const rows = await sb("class_schedule?select=discipline,jour_semaine,semaine,heure_debut,heure_fin,actif");
+    const rows = await mpbBookingRequest("cours?select=discipline,jour_semaine,semaine,heure_debut,heure_fin,actif");
     if (rows && rows.length) CLASS_SCHEDULE = rows;
   } catch (e) {}
   try {
-    const ref = await sb("schedule_reference?select=date_lundi_reference,semaine_ce_lundi&limit=1");
+    const ref = await mpbBookingRequest("semaine_reference?select=date_lundi_reference,semaine_ce_lundi&limit=1");
     if (ref && ref[0]) SCHEDULE_REFERENCE = ref[0];
   } catch (e) {}
   try {
-    const vac = await sb("schedule_vacations?select=date_debut,date_fin");
+    const vac = await mpbBookingRequest("vacances?select=date_debut,date_fin");
     if (vac) SCHEDULE_VACATIONS = vac;
   } catch (e) {}
 }

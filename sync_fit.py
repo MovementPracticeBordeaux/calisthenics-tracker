@@ -28,6 +28,14 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 # plus accès aux données depuis le verrouillage des policies RLS.
 ACCESS_TOKEN = None
 
+# Planning réel des cours : lu directement depuis le site de réservation
+# (mpb-booking), pas depuis une copie locale qui se désynchronisait dès que
+# le planning changeait sur le site. Tables en lecture publique côté
+# mpb-booking (le site affiche le planning aux visiteurs non connectés) —
+# une simple clé anon suffit, pas besoin du compte Auth du tracker.
+MPB_BOOKING_URL = "https://aquvwqtwufdjlsjrqhux.supabase.co"
+MPB_BOOKING_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFxdXZ3cXR3dWZkamxzanJxaHV4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU4MjQ0ODMsImV4cCI6MjEwMTQwMDQ4M30.CvYj7K1bJ4yqibiyShkzh64h7wDeJKq91DdeDBBn6_A"
+
 # Profil — FC max réellement observée (pas une formule d'âge, qui sous-estimait
 # à 179) et FC repos réelle. À réviser si un test d'effort donne mieux.
 HR_MAX = 187
@@ -50,12 +58,21 @@ def sb_get(path):
     return r.json()
 
 
+def booking_get(path):
+    r = requests.get(
+        f"{MPB_BOOKING_URL}/rest/v1/{path}",
+        headers={"apikey": MPB_BOOKING_KEY, "Authorization": f"Bearer {MPB_BOOKING_KEY}"},
+    )
+    r.raise_for_status()
+    return r.json()
+
+
 def get_semaine(day, ref_cache):
     """Détermine la semaine A/B pour une date donnée, à partir de la
-    référence stockée en base (alternance chaque semaine depuis le lundi de
-    référence)."""
+    référence du site de réservation (alternance chaque semaine depuis le
+    lundi de référence)."""
     if "ref" not in ref_cache:
-        ref = sb_get("schedule_reference?select=date_lundi_reference,semaine_ce_lundi&limit=1")
+        ref = booking_get("semaine_reference?select=date_lundi_reference,semaine_ce_lundi&limit=1")
         ref_cache["ref"] = ref[0] if ref else None
     ref = ref_cache["ref"]
     if not ref:
@@ -70,8 +87,10 @@ def get_semaine(day, ref_cache):
 
 
 def load_schedule():
-    """Charge tout le planning une fois, pour éviter un appel réseau par fichier."""
-    return sb_get("class_schedule?select=discipline,jour_semaine,semaine,heure_debut,heure_fin&actif=eq.true")
+    """Charge tout le planning une fois, pour éviter un appel réseau par
+    fichier — directement depuis le site de réservation, pas une copie
+    locale qui se désynchronisait dès que le planning changeait sur le site."""
+    return booking_get("cours?select=discipline,jour_semaine,semaine,heure_debut,heure_fin&actif=eq.true")
 
 
 def match_class(start_local, schedule, ref_cache):
