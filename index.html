@@ -2347,11 +2347,15 @@ let migraineSubTab = "logger";
 // Cohérence cardiaque (5.5-0-5.5-0, ~5.5 cycles/min) : le rythme le plus
 // étudié en biofeedback de VFC pour la relaxation (Lehrer & Gevirtz).
 // Carré (4-4-4-4) : technique de "box breathing" classique.
-// 4-7-8 : technique de relaxation popularisée par Dr. Andrew Weil.
+// Prana 1/2/3 : pranayama à ratio 1:4:2 (inspiration:rétention:expiration),
+// intensité croissante — durée de séance associée plus courte sur Prana 3
+// (rétentions longues, plus exigeant).
 const BREATHING_PRESETS = [
   { label: "Cohérence", inhale: 5.5, holdFull: 0, exhale: 5.5, holdEmpty: 0 },
   { label: "Carré 4-4-4-4", inhale: 4, holdFull: 4, exhale: 4, holdEmpty: 4 },
-  { label: "4-7-8", inhale: 4, holdFull: 7, exhale: 8, holdEmpty: 0 },
+  { label: "Prana 1", inhale: 4, holdFull: 16, exhale: 8, holdEmpty: 0, durationSec: 180 },
+  { label: "Prana 2", inhale: 6, holdFull: 24, exhale: 12, holdEmpty: 0, durationSec: 180 },
+  { label: "Prana 3", inhale: 8, holdFull: 32, exhale: 16, holdEmpty: 0, durationSec: 120 },
 ];
 const BREATHING_PHASE_ORDER = ["inhale", "holdFull", "exhale", "holdEmpty"];
 const BREATHING_PHASE_LABELS = { inhale: "Inspirez", holdFull: "Rétention (plein)", exhale: "Expirez", holdEmpty: "Rétention (vide)" };
@@ -2679,10 +2683,10 @@ function drawMigraine() {
   html += "</div>";
 
   if (migraineSubTab === "respiration") {
-    html += '<div class="card" style="margin-bottom:28px"><div class="section-label" style="margin-bottom:14px">Préréglages</div><div class="pill-row compact" id="breathing-preset-row" style="margin-bottom:28px">';
+    html += '<div class="card" style="margin-bottom:28px"><div class="section-label" style="margin-bottom:14px">Préréglages</div><div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:28px" id="breathing-preset-row">';
     BREATHING_PRESETS.forEach(function(p, i) {
       const active = breathingConfig.inhale === p.inhale && breathingConfig.holdFull === p.holdFull && breathingConfig.exhale === p.exhale && breathingConfig.holdEmpty === p.holdEmpty;
-      html += '<button class="pill' + (active ? " active" : "") + '" data-preset="' + i + '">' + p.label + "</button>";
+      html += '<button class="pill' + (active ? " active" : "") + '" data-preset="' + i + '" style="flex:1 1 30%;min-width:100px">' + p.label + "</button>";
     });
     html += '</div><div class="section-label" style="margin-bottom:14px">Durée de la séance</div>';
     html += '<div style="max-width:160px;margin-bottom:32px"><div class="muted" style="font-size:10px;text-transform:uppercase;margin-bottom:8px">Minutes</div>';
@@ -2861,6 +2865,7 @@ function wireMigraineEvents() {
       const p = BREATHING_PRESETS[Number(btn.dataset.preset)];
       breathingConfig.inhale = p.inhale; breathingConfig.holdFull = p.holdFull;
       breathingConfig.exhale = p.exhale; breathingConfig.holdEmpty = p.holdEmpty;
+      if (p.durationSec) breathingConfig.durationSec = p.durationSec;
       drawMigraine();
     });
   });
