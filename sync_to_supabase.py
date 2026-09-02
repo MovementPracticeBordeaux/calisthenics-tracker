@@ -219,11 +219,13 @@ def build_sleep_stages(db_path, days=30):
     4x uint16 little-endian dans l'ordre [paradoxal, léger, profond, réveils].
     Décodage vérifié manuellement contre les valeurs affichées par Zepp.
 
-    Les 8 premiers octets du blob contiennent deux horodatages uint32 LE :
-    les octets 0-3 dupliquent la colonne TIMESTAMP de la ligne (fin de
-    session / réveil), et les octets 4-7 sont un horodatage distinct —
-    confirmé par dump hexadécimal direct (`hex(DATA)`) : c'est le vrai début
-    de la session, c'est-à-dire l'heure de coucher."""
+    Les octets 0-3 du blob dupliquent la colonne TIMESTAMP de la ligne (fin
+    de session / réveil). Les octets 4-7 avaient été pris pour une heure de
+    coucher, mais vérification faite sur 10 nuits différentes (dump
+    hexadécimal), c'est une valeur FIXE à 22:00:00 chaque nuit, quelle que
+    soit l'heure réelle de coucher — un paramètre interne de l'algorithme du
+    bracelet (borne de fenêtre d'analyse), pas une donnée mesurée. Ne pas
+    l'utiliser comme heure de coucher."""
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     cutoff_ms = int((datetime.datetime.now() - datetime.timedelta(days=days)).timestamp() * 1000)
@@ -235,7 +237,6 @@ def build_sleep_stages(db_path, days=30):
     for ts, data in cur.fetchall():
         try:
             rem, light, deep, awake = struct.unpack("<HHHH", data[-8:])
-            bedtime_ts = struct.unpack_from("<I", data, 4)[0]
         except struct.error:
             continue
         day = datetime.datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d")
@@ -245,7 +246,7 @@ def build_sleep_stages(db_path, days=30):
         rows.append({
             "day": day, "sleep_total_min": total, "sleep_light_min": light,
             "sleep_deep_min": deep, "sleep_rem_min": rem, "sleep_awake_count": awake,
-            "_ts": ts, "_bedtime_ts": bedtime_ts, "_total": total,
+            "_ts": ts, "_total": total,
         })
     conn.close()
 
@@ -264,10 +265,8 @@ def build_sleep_stages(db_path, days=30):
             by_day[d] = r
     for r in by_day.values():
         dt_wake = datetime.datetime.fromtimestamp(r["_ts"] / 1000)
-        dt_bed = datetime.datetime.fromtimestamp(r["_bedtime_ts"] / 1000)
         r["wake_hour"] = round(dt_wake.hour + dt_wake.minute / 60, 2)
-        r["bedtime_hour"] = round(dt_bed.hour + dt_bed.minute / 60, 2)
-        del r["_ts"], r["_bedtime_ts"], r["_total"]
+        del r["_ts"], r["_total"]
 
     return list(by_day.values())
 

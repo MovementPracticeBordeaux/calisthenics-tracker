@@ -3190,7 +3190,10 @@ function buildCoachData(wearable, sessions, migraines, gripRows) {
 
   return {
     sleepAvg14: avgField(last14, "sleep_total_min"),
-    bedtimeHours14: last14.map(function(w) { return w.bedtime_hour; }).filter(function(x) { return x != null; }),
+    // Pas d'heure de coucher fiable : ce qui ressemblait à un horodatage de
+    // coucher dans les données du bracelet s'est révélé être une valeur
+    // fixe (22:00:00 toutes les nuits, vérifié sur 10 nuits) — un paramètre
+    // interne de l'algorithme, pas une mesure réelle (voir sync_to_supabase.py).
     wakeHours14: last14.map(function(w) { return w.wake_hour; }).filter(function(x) { return x != null; }),
     hrvRecent: avgField(last7, "hrv_avg"), hrvBaseline: avgField(baseline, "hrv_avg"),
     hrRecent: avgField(last7, "hr_resting"), hrBaseline: avgField(baseline, "hr_resting"),
@@ -3214,23 +3217,25 @@ function coachAnswerSleepAvg(d) {
   return "Sur les 14 derniers jours, tu as dormi en moyenne " + h + "h" + String(m).padStart(2, "0") + " par nuit — " + qual + ".";
 }
 function coachAnswerSleepRegularity(d) {
-  if (d.bedtimeHours14.length < 5 || d.wakeHours14.length < 5) {
-    return "Pas encore assez de nuits avec heure de coucher/réveil enregistrée — relance ta synchro (sync_to_supabase.py) pour les récupérer.";
+  // Pas d'heure de coucher fiable disponible (voir sync_to_supabase.py) —
+  // seule l'heure de réveil (colonne TIMESTAMP de la session, qui varie
+  // normalement nuit après nuit) s'est avérée exploitable.
+  if (d.wakeHours14.length < 5) {
+    return "Pas encore assez de nuits avec heure de réveil enregistrée pour évaluer la régularité.";
   }
-  const avgBed = circularMeanHour(d.bedtimeHours14);
   const avgWake = circularMeanHour(d.wakeHours14);
   // Régularité = longueur du vecteur moyen (R, statistique circulaire) sur
-  // le coucher et le réveil, moyennée — 1 = horaires identiques tous les
-  // jours, 0 = horaires dispersés sur toute la journée.
-  const regularity = Math.round(((circularRegularity(d.bedtimeHours14) + circularRegularity(d.wakeHours14)) / 2) * 100);
-  // Seuils recalibrés sur la vraie échelle de R (pas 0-100 linéaire) : même un
-  // horaire assez dispersé sur plusieurs heures garde un R élevé (~85-90%)
-  // tant que ça reste dans une même moitié de journée — seul un vrai
-  // désordre façon travail posté fait chuter R nettement (<50%).
-  const note = regularity >= 95 ? "des horaires de coucher et de réveil très réguliers — excellent pour la qualité de récupération"
-    : regularity >= 80 ? "des horaires relativement réguliers, avec quelques écarts"
-    : "des horaires assez variés, ce qui peut nuire à la qualité de ton sommeil";
-  return "Ta régularité de sommeil sur les 14 derniers jours est d'environ " + regularity + "% — tu as " + note + ". Coucher moyen : " + hoursToLabel(avgBed) + ". Réveil moyen : " + hoursToLabel(avgWake) + ". Pour favoriser la récupération, vise un réveil entre " + hoursToLabel(avgWake - 0.25) + " et " + hoursToLabel(avgWake + 0.25) + ".";
+  // le réveil — 1 = réveil à la même heure tous les jours, 0 = dispersé sur
+  // toute la journée. Seuils recalibrés sur la vraie échelle de R (pas
+  // 0-100 linéaire) : même un horaire assez dispersé sur plusieurs heures
+  // garde un R élevé (~85-90%) tant que ça reste dans une même moitié de
+  // journée — seul un vrai désordre façon travail posté fait chuter R
+  // nettement (<50%).
+  const regularity = Math.round(circularRegularity(d.wakeHours14) * 100);
+  const note = regularity >= 95 ? "un réveil à une heure très régulière — excellent pour la qualité de récupération"
+    : regularity >= 80 ? "un réveil relativement régulier, avec quelques écarts"
+    : "un réveil à des heures assez variées, ce qui peut nuire à la qualité de ton sommeil";
+  return "Ta régularité de réveil sur les 14 derniers jours est d'environ " + regularity + "% — tu as " + note + ". Réveil moyen : " + hoursToLabel(avgWake) + ". (Je n'ai pas d'heure de coucher fiable à te donner : ce qui y ressemblait dans les données du bracelet s'est révélé être une valeur fixe de l'algorithme, pas une vraie mesure.)";
 }
 function coachAnswerHrvTrend(d) {
   if (d.hrvRecent == null || d.hrvBaseline == null || d.hrvBaseline <= 0) return "Pas encore assez de données de VFC pour dégager une tendance.";
