@@ -2390,6 +2390,7 @@ const BREATHING_PHASE_LABELS = { inhale: "Inspirez", holdFull: "Rétention (plei
 let breathingConfig = { durationSec: 300, inhale: 4, holdFull: 0, exhale: 6, holdEmpty: 0, soundOn: true, soundType: "tone" };
 let breathingRun = null; // { startedAt, phaseTimeoutId, tickIntervalId, breaths } ou null si aucune séance en cours
 let breathingBallRotationDeg = 0; // cumulatif, jamais remis à 0° en cours de séance (voir updateBreathingVisual)
+let breathingFocusMode = false; // vue plein écran (cercle + bille seuls), sans le reste des réglages
 let breathingAudioCtx = null, breathingWakeLock = null;
 let breathingCurrentOsc = null, breathingCurrentGain = null;
 let breathingNoiseBuffers = {}; // un buffer précalculé par "couleur" qui en a besoin (blanc/rose/brun), réutilisés tant que le sampleRate ne change pas
@@ -2648,6 +2649,32 @@ function startBreathing() {
   }, 250);
   runBreathingPhase(0);
 }
+// Cercle + bille : identique en vue normale et en plein écran (voir
+// breathingFocusMode) — même markup, mêmes ids, pour que les timers en
+// cours continuent de retrouver les éléments à mettre à jour quel que soit
+// le mode d'affichage actif.
+function breathingCircleHtml() {
+  let html = '<div style="position:relative;width:172px;height:172px">';
+  html += '<div id="breathing-circle" style="position:absolute;top:11px;left:11px;width:150px;height:150px;border-radius:50%;background-color:var(--purple);display:flex;align-items:center;justify-content:center;transition:transform 0.6s ease-in-out,background-color 0.6s ease-in-out;transform:scale(1);box-shadow:0 0 30px rgba(168,85,247,0.35)">';
+  html += '<span id="breathing-phase-text" style="font-size:11.5px;font-weight:900;text-transform:uppercase;letter-spacing:.3px;line-height:1.4;color:var(--bg);text-align:center;padding:0 10px;max-width:88px">Prêt</span></div>';
+  // Bille qui fait un tour complet du cercle (sens antihoraire) sur la durée
+  // de chaque phase, y compris les rétentions, avec une traînée blanche
+  // (arc SVG en dégradé, opaque près de la bille) rigidement solidaire
+  // d'elle dans le même élément tournant.
+  html += '<svg id="breathing-ball-track" width="172" height="172" viewBox="0 0 172 172" style="position:absolute;inset:0;overflow:visible;transform:rotate(0deg)">';
+  html += '<defs><linearGradient id="breathing-ball-trail-grad" gradientUnits="userSpaceOnUse" x1="86" y1="0" x2="136.6" y2="16.4">';
+  html += '<stop offset="0%" stop-color="#fff" stop-opacity="0.85"/><stop offset="100%" stop-color="#fff" stop-opacity="0"/>';
+  html += "</linearGradient></defs>";
+  html += '<path d="M 86,0 A 86,86 0 0,1 136.6,16.4" fill="none" stroke="url(#breathing-ball-trail-grad)" stroke-width="5" stroke-linecap="round"/>';
+  html += '<circle id="breathing-ball" cx="86" cy="0" r="6" style="fill:var(--chalk);filter:drop-shadow(0 0 6px rgba(245,243,239,0.9))"/>';
+  html += "</svg></div>";
+  return html;
+}
+function breathingButtonsHtml() {
+  let html = '<button id="breathing-start-btn" style="width:100%;max-width:280px;margin-top:64px;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Démarrer</button>';
+  html += '<button id="breathing-stop-btn" style="display:none;width:100%;max-width:280px;margin-top:64px;padding:13px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--chalkDim);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Arrêter</button>';
+  return html;
+}
 
 async function getWearableForDate2(dateStr) {
   const rows = await sb("wearable_daily?day=eq." + dateStr + "&select=*");
@@ -2716,6 +2743,20 @@ function drawMigraine() {
   html += "</div>";
 
   if (migraineSubTab === "respiration") {
+    // Vue plein écran : cercle + bille seuls, sans le reste des réglages —
+    // pensée pour être utilisée pendant la respiration elle-même, sans le
+    // surplus d'information des cartes de réglages autour.
+    if (breathingFocusMode) {
+      let focusHtml = '<div style="position:fixed;inset:0;z-index:1000;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px">';
+      focusHtml += '<button id="breathing-focus-exit" style="position:absolute;top:24px;right:24px;background:none;border:1px solid var(--line);border-radius:8px;color:var(--chalkDim);font-size:11px;font-weight:700;padding:8px 14px;cursor:pointer;text-transform:uppercase;letter-spacing:.3px">✕ Réduire</button>';
+      focusHtml += breathingCircleHtml();
+      focusHtml += breathingButtonsHtml();
+      focusHtml += "</div>";
+      app.innerHTML = focusHtml;
+      updateBreathingIdleStats();
+      wireMigraineEvents();
+      return;
+    }
     html += '<div class="card" style="margin-bottom:28px"><div class="section-label" style="margin-bottom:14px">Préréglages</div><div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:28px" id="breathing-preset-row">';
     BREATHING_PRESETS.forEach(function(p, i) {
       const active = breathingConfig.inhale === p.inhale && breathingConfig.holdFull === p.holdFull && breathingConfig.exhale === p.exhale && breathingConfig.holdEmpty === p.holdEmpty;
@@ -2756,24 +2797,9 @@ function drawMigraine() {
     html += "</div></div>";
 
     html += '<div style="display:flex;flex-direction:column;align-items:center;padding:48px 0 56px">';
-    html += '<div style="position:relative;width:172px;height:172px">';
-    html += '<div id="breathing-circle" style="position:absolute;top:11px;left:11px;width:150px;height:150px;border-radius:50%;background-color:var(--purple);display:flex;align-items:center;justify-content:center;transition:transform 0.6s ease-in-out,background-color 0.6s ease-in-out;transform:scale(1);box-shadow:0 0 30px rgba(168,85,247,0.35)">';
-    html += '<span id="breathing-phase-text" style="font-size:11.5px;font-weight:900;text-transform:uppercase;letter-spacing:.3px;line-height:1.4;color:var(--bg);text-align:center;padding:0 10px;max-width:88px">Prêt</span></div>';
-    // Bille qui fait un tour complet du cercle (sens antihoraire) sur la durée
-    // de chaque phase, y compris les rétentions — repère visuel de temps qui
-    // s'ajoute à la taille et la couleur du cercle. Traînée blanche derrière
-    // la bille : un arc SVG en dégradé (opaque près de la bille, transparent
-    // à l'autre bout), rigidement solidaire de la bille dans le même élément
-    // tournant — pas besoin de la recalculer, elle suit automatiquement.
-    html += '<svg id="breathing-ball-track" width="172" height="172" viewBox="0 0 172 172" style="position:absolute;inset:0;overflow:visible;transform:rotate(0deg)">';
-    html += '<defs><linearGradient id="breathing-ball-trail-grad" gradientUnits="userSpaceOnUse" x1="86" y1="0" x2="136.6" y2="16.4">';
-    html += '<stop offset="0%" stop-color="#fff" stop-opacity="0.85"/><stop offset="100%" stop-color="#fff" stop-opacity="0"/>';
-    html += "</linearGradient></defs>";
-    html += '<path d="M 86,0 A 86,86 0 0,1 136.6,16.4" fill="none" stroke="url(#breathing-ball-trail-grad)" stroke-width="5" stroke-linecap="round"/>';
-    html += '<circle id="breathing-ball" cx="86" cy="0" r="6" style="fill:var(--chalk);filter:drop-shadow(0 0 6px rgba(245,243,239,0.9))"/>';
-    html += "</svg></div>";
-    html += '<button id="breathing-start-btn" style="width:100%;max-width:280px;margin-top:64px;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Démarrer</button>';
-    html += '<button id="breathing-stop-btn" style="display:none;width:100%;max-width:280px;margin-top:64px;padding:13px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--chalkDim);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Arrêter</button>';
+    html += '<button id="breathing-focus-enter" style="background:none;border:none;color:var(--steel);font-size:11px;font-weight:700;letter-spacing:.3px;cursor:pointer;margin-bottom:24px;text-transform:uppercase">⤢ Plein écran</button>';
+    html += breathingCircleHtml();
+    html += breathingButtonsHtml();
     html += "</div>";
 
     html += '<div class="card steel" style="margin-top:28px"><div class="section-label" style="margin-bottom:14px">À savoir</div><div style="font-size:12px;color:var(--chalkDim);line-height:1.6">La respiration lente (le préréglage "Cohérence", ~5,5 cycles/min) est le rythme le plus étudié en biofeedback de variabilité cardiaque pour la relaxation. Utile contre le stress et la tension nerveuse — deux déclencheurs fréquents listés dans l\'onglet Logger — mais c\'est un outil de gestion au quotidien, pas un traitement d\'une crise en cours ni un substitut à un avis médical.</div></div>';
@@ -2887,7 +2913,7 @@ function drawMigraine() {
 
 function wireMigraineEvents() {
   document.querySelectorAll('#migraine-subtab-row .pill').forEach(function(btn) {
-    btn.addEventListener("click", function() { stopBreathing(); migraineSubTab = btn.dataset.subtab; drawMigraine(); });
+    btn.addEventListener("click", function() { stopBreathing(); breathingFocusMode = false; migraineSubTab = btn.dataset.subtab; drawMigraine(); });
   });
 
   const durationInput = document.getElementById("breathing-duration-input");
@@ -2926,6 +2952,10 @@ function wireMigraineEvents() {
   if (breathingStartBtn) breathingStartBtn.addEventListener("click", startBreathing);
   const breathingStopBtn = document.getElementById("breathing-stop-btn");
   if (breathingStopBtn) breathingStopBtn.addEventListener("click", stopBreathing);
+  const breathingFocusEnterBtn = document.getElementById("breathing-focus-enter");
+  if (breathingFocusEnterBtn) breathingFocusEnterBtn.addEventListener("click", function() { breathingFocusMode = true; drawMigraine(); });
+  const breathingFocusExitBtn = document.getElementById("breathing-focus-exit");
+  if (breathingFocusExitBtn) breathingFocusExitBtn.addEventListener("click", function() { breathingFocusMode = false; drawMigraine(); });
 
   const startInput = document.getElementById("mig-start");
   if (startInput) startInput.addEventListener("change", function() { migraineForm.startDateTime = startInput.value; drawMigraine(); });
@@ -3088,6 +3118,7 @@ function statHtml(label, value, color) {
 // ---------------- Navigation ----------------
 function setTab(tab) {
   stopBreathing(); // n'a d'effet que si une séance de respiration guidée tourne
+  breathingFocusMode = false;
   currentTab = tab;
   document.querySelectorAll(".tab[data-tab]").forEach(function(t) { t.classList.toggle("active", t.dataset.tab === tab); });
   if (tab === "seance") loadSeance();
