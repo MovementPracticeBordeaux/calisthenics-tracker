@@ -3313,10 +3313,15 @@ function drawCoach() {
   });
   html += "</div>";
 
-  html += '<div class="section-label" style="margin-bottom:12px">Questions suggérées</div>';
-  html += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:28px" id="coach-question-row">';
+  html += '<div class="section-label" style="margin-bottom:14px">Questions suggérées</div>';
+  // Des phrases complètes, pas des libellés courts — la classe .pill (nowrap
+  // + ellipsis + sans marge horizontale) est faite pour de petits labels
+  // fixes, pas pour ça : elle tronquait le texte ("Ma durée moyenne de
+  // som..."). Liste empilée pleine largeur, texte aligné à gauche et qui
+  // peut passer à la ligne, avec un vrai espace autour.
+  html += '<div style="display:flex;flex-direction:column;gap:12px;margin-bottom:28px" id="coach-question-row">';
   COACH_QUESTIONS.forEach(function(q) {
-    html += '<button class="pill" data-question="' + q.id + '" style="flex:1 1 45%;min-width:140px">' + q.label + "</button>";
+    html += '<button class="coach-question-btn" data-question="' + q.id + '" style="width:100%;text-align:left;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:10px;padding:16px 18px;color:var(--chalk);font-size:14px;font-weight:700;line-height:1.4;white-space:normal;cursor:pointer">' + q.label + "</button>";
   });
   html += "</div>";
 
@@ -3325,7 +3330,7 @@ function drawCoach() {
 
   overlay.innerHTML = html;
   document.getElementById("coach-close-btn").addEventListener("click", closeCoach);
-  document.querySelectorAll("#coach-question-row .pill").forEach(function(btn) {
+  document.querySelectorAll("#coach-question-row .coach-question-btn").forEach(function(btn) {
     btn.addEventListener("click", function() {
       const q = COACH_QUESTIONS.find(function(x) { return x.id === btn.dataset.question; });
       if (!q) return;
