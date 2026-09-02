@@ -2346,10 +2346,10 @@ function playBreathingTone(freq, durationSec) {
     const gain = breathingAudioCtx.createGain();
     osc.type = "sine";
     osc.frequency.value = freq;
-    const fade = Math.min(2, durationSec / 2.2); // fondu long et progressif, réduit sur les phases très brèves
+    // Enveloppe triangulaire : le volume monte de 0 jusqu'à son maximum au
+    // beau milieu de la phase, puis redescend à 0 — pas de palier au sommet.
     gain.gain.setValueAtTime(0, t0);
-    gain.gain.linearRampToValueAtTime(0.12, t0 + fade);
-    gain.gain.setValueAtTime(0.12, t0 + Math.max(fade, durationSec - fade));
+    gain.gain.linearRampToValueAtTime(0.12, t0 + durationSec / 2);
     gain.gain.linearRampToValueAtTime(0, t0 + durationSec);
     osc.connect(gain).connect(breathingAudioCtx.destination);
     osc.start(t0);
@@ -2437,10 +2437,10 @@ function playBreathingNoise(soundType, phase, durationSec) {
     const gain = breathingAudioCtx.createGain();
     node.connect(gain).connect(breathingAudioCtx.destination);
     const peak = BREATHING_NOISE_PEAK[soundType] || 0.18;
-    const fade = Math.min(2, durationSec / 2.2); // fondu long et progressif, réduit sur les phases très brèves
+    // Enveloppe triangulaire : le volume monte de 0 jusqu'à son maximum au
+    // beau milieu de la phase, puis redescend à 0 — pas de palier au sommet.
     gain.gain.setValueAtTime(0, t0);
-    gain.gain.linearRampToValueAtTime(peak, t0 + fade);
-    gain.gain.setValueAtTime(peak, t0 + Math.max(fade, durationSec - fade));
+    gain.gain.linearRampToValueAtTime(peak, t0 + durationSec / 2);
     gain.gain.linearRampToValueAtTime(0, t0 + durationSec);
     src.start(t0);
     src.stop(t0 + durationSec + 0.05);
