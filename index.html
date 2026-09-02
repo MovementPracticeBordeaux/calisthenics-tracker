@@ -237,6 +237,7 @@ function logout() { storeSession(null); location.reload(); }
     <button class="tab active" data-tab="dashboard">Dashboard</button>
     <button class="tab" data-tab="migraine">Migraine</button>
     <button class="tab" data-tab="vie">Santé</button>
+    <button class="tab" data-tab="coach">Coach</button>
   </div>
   <div id="app"></div>
 </div>
@@ -3115,6 +3116,213 @@ function statHtml(label, value, color) {
   return '<div class="stat"><div class="stat-label">' + label + '</div><div class="stat-value"' + (color ? ' style="color:var(--'+color+')"' : '') + '>' + value + "</div></div>";
 }
 
+// ---------------- Coach (chat de questions/réponses) ----------------
+// Inspiré du chat "Zepp Aura" (captures fournies) mais sans aucun appel à un
+// modèle hébergé : chaque question déclenche un calcul direct sur tes
+// propres données, avec les mêmes seuils et méthodes que le reste de
+// l'appli (VFC/FC vs ta moyenne récente, ACWR, etc.) — donc 0 coût, et une
+// interprétation aussi rigoureuse que le reste de l'appli plutôt qu'une
+// génération de texte libre.
+let coachMessages = []; // { role: "user"|"assistant", text }
+let coachData = null; // recalculé une fois par visite de l'onglet, pas à chaque question
+
+function stdDev(arr) {
+  if (arr.length < 2) return null;
+  const m = avgOf(arr);
+  const variance = arr.reduce(function(s, v) { return s + Math.pow(v - m, 2); }, 0) / arr.length;
+  return Math.sqrt(variance);
+}
+function hoursToLabel(hDec) {
+  let h = Math.floor(((hDec % 24) + 24) % 24);
+  let m = Math.round((hDec - Math.floor(hDec)) * 60);
+  if (m === 60) { m = 0; h = (h + 1) % 24; }
+  return h + "h" + String(m).padStart(2, "0");
+}
+function buildCoachData(wearable, sessions, migraines, gripRows) {
+  function avgField(arr, field) {
+    const v = arr.map(function(x) { return x[field]; }).filter(function(x) { return x != null; });
+    return v.length ? avgOf(v) : null;
+  }
+  const last14 = wearable.filter(function(w) { return w.day >= daysAgo(14); });
+  const last7 = wearable.filter(function(w) { return w.day >= daysAgo(7); });
+  // Baseline de comparaison : les 3-4 semaines qui précèdent la fenêtre
+  // "récente", pas tout l'historique — pour capter une vraie tendance
+  // actuelle plutôt qu'une moyenne diluée sur des mois.
+  const baseline = wearable.filter(function(w) { return w.day < daysAgo(7) && w.day >= daysAgo(30); });
+
+  const loadByDay = {};
+  sessions.forEach(function(s) { if (s.correctedLoad) loadByDay[s.date] = (loadByDay[s.date] || 0) + s.correctedLoad; });
+  function avgDailyLoadSince(daysBack) {
+    const cutoff = daysAgo(daysBack);
+    let sum = 0;
+    Object.keys(loadByDay).forEach(function(d) { if (d >= cutoff) sum += loadByDay[d]; });
+    return sum / daysBack;
+  }
+
+  const migDays = migraines.map(function(m) { return m.day; });
+  const migWearable = wearable.filter(function(w) { return migDays.indexOf(w.day) !== -1; });
+  const otherWearable = wearable.filter(function(w) { return migDays.indexOf(w.day) === -1; });
+
+  const gripSorted = gripRows.slice().sort(function(a, b) { return a.day < b.day ? -1 : 1; });
+  const gripRecent = gripSorted.slice(-3).map(function(g) { return g.value_kg; });
+  const gripBase = gripSorted.slice(0, -3).map(function(g) { return g.value_kg; });
+
+  return {
+    sleepAvg14: avgField(last14, "sleep_total_min"),
+    wakeHours14: last14.map(function(w) { return w.wake_hour; }).filter(function(x) { return x != null; }),
+    hrvRecent: avgField(last7, "hrv_avg"), hrvBaseline: avgField(baseline, "hrv_avg"),
+    hrRecent: avgField(last7, "hr_resting"), hrBaseline: avgField(baseline, "hr_resting"),
+    stressRecent: avgField(last7, "stress_avg"), stressBaseline: avgField(baseline, "stress_avg"),
+    load7: sessions.length ? avgDailyLoadSince(7) : null,
+    load28: sessions.length ? avgDailyLoadSince(28) : null,
+    gripRecentAvg: gripRecent.length ? avgOf(gripRecent) : null,
+    gripBaseAvg: gripBase.length >= 2 ? avgOf(gripBase) : null,
+    migraineDaysCount: migDays.length,
+    sleepOnMigraineDays: avgField(migWearable, "sleep_total_min"),
+    sleepOnOtherDays: avgField(otherWearable, "sleep_total_min"),
+  };
+}
+function coachAnswerSleepAvg(d) {
+  if (d.sleepAvg14 == null) return "Pas encore assez de données de sommeil récentes pour calculer une moyenne fiable.";
+  const h = Math.floor(d.sleepAvg14 / 60), m = Math.round(d.sleepAvg14 % 60);
+  const qual = d.sleepAvg14 < 360 ? "nettement sous les 7-9h recommandées"
+    : d.sleepAvg14 < 420 ? "un peu court par rapport aux 7-9h recommandées"
+    : d.sleepAvg14 <= 540 ? "dans la fourchette recommandée de 7-9h"
+    : "plus long que la fourchette habituelle";
+  return "Sur les 14 derniers jours, tu as dormi en moyenne " + h + "h" + String(m).padStart(2, "0") + " par nuit — " + qual + ".";
+}
+function coachAnswerSleepRegularity(d) {
+  if (d.wakeHours14.length < 5) return "Pas encore assez de nuits enregistrées (avec heure de réveil) pour évaluer la régularité de ton sommeil.";
+  const avgWake = avgOf(d.wakeHours14);
+  const sd = stdDev(d.wakeHours14);
+  // Approximation simple, pas l'algorithme propriétaire de Zepp : un écart-type
+  // de 0h = 100% de régularité, un écart-type de 2h ou plus = 0%.
+  const regularity = Math.max(0, Math.min(100, Math.round(100 - (sd / 2) * 100)));
+  const note = regularity >= 80 ? "des horaires de réveil très réguliers — excellent pour la qualité de récupération"
+    : regularity >= 60 ? "des horaires de réveil relativement réguliers, avec quelques écarts"
+    : "des horaires de réveil assez variés, ce qui peut nuire à la qualité de ton sommeil";
+  return "Ta régularité de sommeil sur les 14 derniers jours est d'environ " + regularity + "% — tu as " + note + ". Heure de réveil moyenne : " + hoursToLabel(avgWake) + ". Pour favoriser la récupération, vise un réveil entre " + hoursToLabel(avgWake - 0.25) + " et " + hoursToLabel(avgWake + 0.25) + ".";
+}
+function coachAnswerHrvTrend(d) {
+  if (d.hrvRecent == null || d.hrvBaseline == null || d.hrvBaseline <= 0) return "Pas encore assez de données de VFC pour dégager une tendance.";
+  const pct = ((d.hrvRecent - d.hrvBaseline) / d.hrvBaseline) * 100;
+  const note = pct <= -15 ? "en baisse notable" : pct <= -5 ? "légèrement en baisse"
+    : pct >= 15 ? "en nette hausse — bon signe de récupération" : pct >= 5 ? "légèrement en hausse" : "stable";
+  return "Ta VFC moyenne des 7 derniers jours est de " + d.hrvRecent.toFixed(0) + " ms, contre " + d.hrvBaseline.toFixed(0) + " ms sur les 3-4 semaines précédentes (" + (pct >= 0 ? "+" : "") + pct.toFixed(0) + "%) — " + note + ".";
+}
+function coachAnswerHrTrend(d) {
+  if (d.hrRecent == null || d.hrBaseline == null) return "Pas encore assez de données de FC repos pour dégager une tendance.";
+  const diff = d.hrRecent - d.hrBaseline;
+  const note = diff >= 5 ? "nettement au-dessus — signal de fatigue possible" : diff >= 3 ? "un peu au-dessus de d'habitude"
+    : diff <= -3 ? "en dessous de d'habitude — bon signe" : "stable";
+  return "Ta FC repos moyenne des 7 derniers jours est de " + d.hrRecent.toFixed(0) + " bpm, contre " + d.hrBaseline.toFixed(0) + " bpm sur les 3-4 semaines précédentes — " + note + ".";
+}
+function coachAnswerStress(d) {
+  if (d.stressRecent == null) return "Pas encore assez de données de stress récentes.";
+  const label = d.stressRecent >= 50 ? "élevé" : d.stressRecent >= 30 ? "modéré" : "faible";
+  let cmp = "";
+  if (d.stressBaseline != null) {
+    const diff = d.stressRecent - d.stressBaseline;
+    if (diff >= 8) cmp = " — nettement au-dessus de ta moyenne récente (" + d.stressBaseline.toFixed(0) + ")";
+    else if (diff <= -8) cmp = " — nettement en dessous de ta moyenne récente (" + d.stressBaseline.toFixed(0) + "), bon signe";
+  }
+  return "Ton niveau de stress moyen sur les 7 derniers jours est " + label + " (" + d.stressRecent.toFixed(0) + "/100)" + cmp + ".";
+}
+function coachAnswerTrainingLoad(d) {
+  if (d.load7 == null || d.load28 == null || d.load28 === 0) return "Pas encore assez de séances loguées pour évaluer ta charge d'entraînement récente.";
+  const ratio = d.load7 / d.load28;
+  const note = ratio > 1.5 ? "nettement au-dessus de ta charge habituelle — vraie zone à surveiller"
+    : ratio > 1.3 ? "un peu élevée par rapport à ta charge habituelle"
+    : ratio < 0.8 ? "en retrait par rapport à ta charge habituelle — phase plus légère"
+    : "dans une zone favorable, cohérente avec ta charge habituelle";
+  return "Ta charge d'entraînement quotidienne moyenne sur 7 jours (" + d.load7.toFixed(0) + ") comparée aux 28 derniers jours (" + d.load28.toFixed(0) + ") donne un ratio de " + ratio.toFixed(2) + " — " + note + ".";
+}
+function coachAnswerGripTrend(d) {
+  if (d.gripRecentAvg == null || d.gripBaseAvg == null || d.gripBaseAvg <= 0) return "Pas encore assez de mesures de préhension pour dégager une tendance (loggue-la régulièrement dans le Dashboard).";
+  const pct = ((d.gripRecentAvg - d.gripBaseAvg) / d.gripBaseAvg) * 100;
+  const note = pct <= -10 ? "en baisse — signal de fatigue neuromusculaire à surveiller"
+    : pct >= 8 ? "en hausse — bon signe de fraîcheur" : "stable";
+  return "Ta force de préhension récente (" + d.gripRecentAvg.toFixed(1) + " kg en moyenne) est " + note + " par rapport à ta moyenne antérieure (" + d.gripBaseAvg.toFixed(1) + " kg, " + (pct >= 0 ? "+" : "") + pct.toFixed(0) + "%).";
+}
+function coachAnswerMigraineSleep(d) {
+  if (d.migraineDaysCount < 3) return "Pas encore assez de migraines enregistrées (" + d.migraineDaysCount + ") pour comparer de façon fiable avec ton sommeil.";
+  if (d.sleepOnMigraineDays == null || d.sleepOnOtherDays == null) return "Pas assez de nuits de sommeil recoupées avec tes migraines pour conclure.";
+  const diff = d.sleepOnOtherDays - d.sleepOnMigraineDays;
+  const h = Math.floor(Math.abs(diff) / 60), m = Math.round(Math.abs(diff) % 60);
+  if (diff >= 30) return "Sur tes " + d.migraineDaysCount + " migraines enregistrées, tu as dormi en moyenne " + h + "h" + String(m).padStart(2, "0") + " de moins que les autres nuits — un lien avec le manque de sommeil semble plausible chez toi.";
+  if (diff <= -30) return "Sur tes " + d.migraineDaysCount + " migraines enregistrées, tu as même dormi plus que d'habitude — le lien avec un manque de sommeil ne ressort pas de tes données.";
+  return "Sur tes " + d.migraineDaysCount + " migraines enregistrées, ton sommeil la veille n'est pas nettement différent des autres nuits — le lien avec le manque de sommeil n'est pas évident dans tes données.";
+}
+const COACH_QUESTIONS = [
+  { id: "sleep_avg", label: "Ma durée moyenne de sommeil ?", fn: coachAnswerSleepAvg },
+  { id: "sleep_reg", label: "La régularité de mon sommeil ?", fn: coachAnswerSleepRegularity },
+  { id: "hrv_trend", label: "Ma tendance VFC récente ?", fn: coachAnswerHrvTrend },
+  { id: "hr_trend", label: "Ma tendance FC repos ?", fn: coachAnswerHrTrend },
+  { id: "stress", label: "Mon niveau de stress récent ?", fn: coachAnswerStress },
+  { id: "load", label: "Ma charge d'entraînement ?", fn: coachAnswerTrainingLoad },
+  { id: "grip", label: "Ma tendance de préhension ?", fn: coachAnswerGripTrend },
+  { id: "migraine_sleep", label: "Migraines liées au sommeil ?", fn: coachAnswerMigraineSleep },
+];
+async function renderCoach() {
+  const app = document.getElementById("app");
+  if (!coachData) {
+    app.innerHTML = '<div class="muted">Chargement…</div>';
+    try {
+      const results = await Promise.all([
+        listWearable(60),
+        listSessions(60),
+        sb("migraines?select=day,intensity&order=day.desc&limit=60").catch(function() { return []; }),
+        sb("grip_strength?select=day,value_kg&order=day.desc&limit=30").catch(function() { return []; }),
+      ]);
+      coachData = buildCoachData(results[0] || [], results[1] || [], results[2] || [], results[3] || []);
+    } catch (e) {
+      app.innerHTML = '<div class="error-banner"><b>Erreur :</b> ' + esc(e.message) + "</div>";
+      return;
+    }
+  }
+  drawCoach();
+}
+function drawCoach() {
+  const app = document.getElementById("app");
+  let html = '<h1 style="margin-bottom:4px">Coach</h1>';
+  html += '<div class="muted" style="margin-bottom:24px">Pose une question sur tes données récentes</div>';
+
+  html += '<div id="coach-messages" style="display:flex;flex-direction:column;gap:14px;margin-bottom:28px">';
+  if (!coachMessages.length) {
+    html += '<div class="muted" style="text-align:center;padding:24px 0">Choisis une question ci-dessous pour commencer.</div>';
+  }
+  coachMessages.forEach(function(m) {
+    if (m.role === "user") {
+      html += '<div style="align-self:flex-end;max-width:80%;background:var(--gradient);color:var(--bg);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:13px;font-weight:700">' + esc(m.text) + "</div>";
+    } else {
+      html += '<div style="align-self:flex-start;max-width:88%;background:var(--surface);border:1px solid var(--line);border-radius:14px 14px 14px 4px;padding:12px 14px;font-size:13px;line-height:1.5">' + esc(m.text) + "</div>";
+    }
+  });
+  html += "</div>";
+
+  html += '<div class="section-label" style="margin-bottom:12px">Questions suggérées</div>';
+  html += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:28px" id="coach-question-row">';
+  COACH_QUESTIONS.forEach(function(q) {
+    html += '<button class="pill" data-question="' + q.id + '" style="flex:1 1 45%;min-width:140px">' + q.label + "</button>";
+  });
+  html += "</div>";
+
+  html += '<div class="card steel"><div class="muted" style="font-size:11px;line-height:1.6">Réponses calculées directement à partir de tes propres données (pas de génération par IA) — mêmes seuils et méthodes que le reste de l\'appli.</div></div>';
+
+  app.innerHTML = html;
+  document.querySelectorAll("#coach-question-row .pill").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      const q = COACH_QUESTIONS.find(function(x) { return x.id === btn.dataset.question; });
+      if (!q) return;
+      coachMessages.push({ role: "user", text: q.label });
+      coachMessages.push({ role: "assistant", text: q.fn(coachData) });
+      drawCoach();
+      const msgArea = document.getElementById("coach-messages");
+      if (msgArea) msgArea.scrollIntoView({ behavior: "smooth", block: "end" });
+    });
+  });
+}
+
 // ---------------- Navigation ----------------
 function setTab(tab) {
   stopBreathing(); // n'a d'effet que si une séance de respiration guidée tourne
@@ -3125,6 +3333,7 @@ function setTab(tab) {
   else if (tab === "dashboard") renderDashboard();
   else if (tab === "sommeil") renderSommeil();
   else if (tab === "migraine") loadMigraine();
+  else if (tab === "coach") renderCoach();
   else renderVie();
 }
 async function loadCoefficients() {
