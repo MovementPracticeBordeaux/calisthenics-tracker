@@ -2293,7 +2293,6 @@ let migraineSubTab = "logger";
 // expiration / rétention poumons vides), comme les vraies apps de paced
 // breathing — pas juste un ratio inspiration/expiration fixe. Préréglages
 // rapides fournis à titre de point de départ, tout reste modifiable.
-const BREATHING_DURATIONS = [{ label: "1 min", sec: 60 }, { label: "3 min", sec: 180 }, { label: "5 min", sec: 300 }, { label: "10 min", sec: 600 }];
 // Cohérence cardiaque (5.5-0-5.5-0, ~5.5 cycles/min) : le rythme le plus
 // étudié en biofeedback de VFC pour la relaxation (Lehrer & Gevirtz).
 // Carré (4-4-4-4) : technique de "box breathing" classique.
@@ -2391,7 +2390,7 @@ function stopBreathing() {
   const phaseText = document.getElementById("breathing-phase-text");
   const startBtn = document.getElementById("breathing-start-btn");
   const stopBtn = document.getElementById("breathing-stop-btn");
-  if (circle) { circle.style.transitionDuration = "0.6s"; circle.style.transform = "scale(1)"; }
+  if (circle) { circle.style.transitionDuration = "0.6s"; circle.style.transform = "scale(1)"; circle.style.backgroundColor = "var(--steel)"; }
   if (phaseText) phaseText.textContent = "Prêt";
   if (startBtn) startBtn.style.display = "";
   if (stopBtn) stopBtn.style.display = "none";
@@ -2403,6 +2402,11 @@ function updateBreathingVisual(phase, seconds) {
   if (circle && (phase === "inhale" || phase === "exhale")) {
     circle.style.transitionDuration = seconds + "s";
     circle.style.transform = phase === "inhale" ? "scale(1.55)" : "scale(1)";
+    // Poumons pleins (fin d'inspiration / début d'expiration) en rust, poumons
+    // vides (fin d'expiration / début d'inspiration) en steel — le changement
+    // progressif de couleur, en plus de la taille, marque clairement les fins
+    // de phase.
+    circle.style.backgroundColor = phase === "inhale" ? "var(--rust)" : "var(--steel)";
   }
   if (phaseText) phaseText.textContent = BREATHING_PHASE_LABELS[phase];
 }
@@ -2523,9 +2527,9 @@ function drawMigraine() {
       const active = breathingConfig.inhale === p.inhale && breathingConfig.holdFull === p.holdFull && breathingConfig.exhale === p.exhale && breathingConfig.holdEmpty === p.holdEmpty;
       html += '<button class="pill' + (active ? " active" : "") + '" data-preset="' + i + '">' + p.label + "</button>";
     });
-    html += '</div><div class="section-label" style="margin-bottom:14px">Durée de la séance</div><div class="pill-row compact" id="breathing-duration-row" style="margin-bottom:32px">';
-    BREATHING_DURATIONS.forEach(function(d) { html += '<button class="pill' + (breathingConfig.durationSec === d.sec ? " active" : "") + '" data-sec="' + d.sec + '">' + d.label + "</button>"; });
-    html += "</div>";
+    html += '</div><div class="section-label" style="margin-bottom:14px">Durée de la séance</div>';
+    html += '<div style="max-width:160px;margin-bottom:32px"><div class="muted" style="font-size:10px;text-transform:uppercase;margin-bottom:8px">Minutes</div>';
+    html += '<input type="number" min="1" step="1" id="breathing-duration-input" value="' + (breathingConfig.durationSec / 60) + '" style="text-align:center" /></div>';
 
     html += '<div class="section-label" style="margin-bottom:16px">Temps (secondes) — réglable librement</div>';
     html += '<div style="display:flex;gap:20px;flex-wrap:wrap">';
@@ -2549,7 +2553,7 @@ function drawMigraine() {
     html += "</div></div>";
 
     html += '<div style="display:flex;flex-direction:column;align-items:center;padding:48px 0 56px">';
-    html += '<div id="breathing-circle" style="width:150px;height:150px;border-radius:50%;background:var(--gradient);display:flex;align-items:center;justify-content:center;transition:transform 0.6s ease-in-out;transform:scale(1);box-shadow:0 0 30px rgba(242,113,28,0.35)">';
+    html += '<div id="breathing-circle" style="width:150px;height:150px;border-radius:50%;background-color:var(--steel);display:flex;align-items:center;justify-content:center;transition:transform 0.6s ease-in-out,background-color 0.6s ease-in-out;transform:scale(1);box-shadow:0 0 30px rgba(242,113,28,0.35)">';
     html += '<span id="breathing-phase-text" style="font-size:11.5px;font-weight:900;text-transform:uppercase;letter-spacing:.3px;line-height:1.4;color:var(--bg);text-align:center;padding:0 10px;max-width:88px">Prêt</span></div>';
     html += '<button id="breathing-start-btn" style="width:100%;max-width:280px;margin-top:64px;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Démarrer</button>';
     html += '<button id="breathing-stop-btn" style="display:none;width:100%;max-width:280px;margin-top:64px;padding:13px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--chalkDim);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Arrêter</button>';
@@ -2669,9 +2673,15 @@ function wireMigraineEvents() {
     btn.addEventListener("click", function() { stopBreathing(); migraineSubTab = btn.dataset.subtab; drawMigraine(); });
   });
 
-  document.querySelectorAll('#breathing-duration-row .pill').forEach(function(btn) {
-    btn.addEventListener("click", function() { stopBreathing(); breathingConfig.durationSec = Number(btn.dataset.sec); drawMigraine(); });
-  });
+  const durationInput = document.getElementById("breathing-duration-input");
+  if (durationInput) {
+    durationInput.addEventListener("blur", function() {
+      stopBreathing();
+      const minutes = Number(durationInput.value) || 1;
+      breathingConfig.durationSec = Math.max(1, minutes) * 60;
+      drawMigraine();
+    });
+  }
   document.querySelectorAll('#breathing-preset-row .pill').forEach(function(btn) {
     btn.addEventListener("click", function() {
       stopBreathing();
