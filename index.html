@@ -2759,12 +2759,29 @@ function drawMigraine() {
       wireMigraineEvents();
       return;
     }
-    html += '<div class="card" style="margin-bottom:28px"><div class="section-label" style="margin-bottom:14px">Préréglages</div><div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:28px" id="breathing-preset-row">';
+    // Le cercle d'abord, les réglages en dessous — c'est l'outil qu'on vient
+    // utiliser, pas ses paramètres. Préréglage et type de son passent en
+    // menus déroulants stylisés (au lieu d'une grille de boutons) pour
+    // gagner de la place et aérer la page.
+    html += '<div style="display:flex;flex-direction:column;align-items:center;padding:32px 0 48px">';
+    html += '<button id="breathing-focus-enter" style="background:none;border:none;color:var(--steel);font-size:11px;font-weight:700;letter-spacing:.3px;cursor:pointer;margin-bottom:24px;text-transform:uppercase">⤢ Plein écran</button>';
+    html += breathingCircleHtml();
+    html += breathingButtonsHtml();
+    html += "</div>";
+
+    html += '<div class="card" style="margin-bottom:28px"><div class="section-label" style="margin-bottom:14px">Préréglage</div>';
+    html += '<select id="breathing-preset-select" style="width:100%;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:7px;color:var(--chalk);font-size:16px;padding:10px 12px;margin-bottom:28px">';
+    const anyPresetActive = BREATHING_PRESETS.some(function(p) {
+      return breathingConfig.inhale === p.inhale && breathingConfig.holdFull === p.holdFull && breathingConfig.exhale === p.exhale && breathingConfig.holdEmpty === p.holdEmpty;
+    });
+    html += '<option value=""' + (!anyPresetActive ? " selected" : "") + ' disabled>Personnalisé</option>';
     BREATHING_PRESETS.forEach(function(p, i) {
       const active = breathingConfig.inhale === p.inhale && breathingConfig.holdFull === p.holdFull && breathingConfig.exhale === p.exhale && breathingConfig.holdEmpty === p.holdEmpty;
-      html += '<button class="pill' + (active ? " active" : "") + '" data-preset="' + i + '" style="flex:1 1 30%;min-width:100px">' + p.label + "</button>";
+      html += '<option value="' + i + '"' + (active ? " selected" : "") + '>' + p.label + "</option>";
     });
-    html += '</div><div class="section-label" style="margin-bottom:14px">Durée de la séance</div>';
+    html += "</select>";
+
+    html += '<div class="section-label" style="margin-bottom:14px">Durée de la séance</div>';
     html += '<div style="max-width:160px;margin-bottom:32px"><div class="muted" style="font-size:10px;text-transform:uppercase;margin-bottom:8px">Minutes</div>';
     html += '<input type="number" min="1" step="1" id="breathing-duration-input" value="' + (breathingConfig.durationSec / 60) + '" style="text-align:center" /></div>';
 
@@ -2780,16 +2797,16 @@ function drawMigraine() {
     html += "</div></div>";
 
     html += '<div class="card" style="margin-bottom:28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><span>Son</span><span></span></div>';
-    html += '<div class="pill-row compact" id="breathing-sound-row" style="margin-bottom:20px"><button class="pill' + (breathingConfig.soundOn ? " active green" : "") + '" data-sound="1">Activé</button><button class="pill' + (!breathingConfig.soundOn ? " active" : "") + '" data-sound="0">Désactivé</button></div>';
+    html += '<div class="pill-row compact" id="breathing-sound-row" style="margin-bottom:24px"><button class="pill' + (breathingConfig.soundOn ? " active green" : "") + '" data-sound="1">Activé</button><button class="pill' + (!breathingConfig.soundOn ? " active" : "") + '" data-sound="0">Désactivé</button></div>';
     html += '<div class="muted" style="font-size:10px;text-transform:uppercase;margin-bottom:8px">Type de son</div>';
-    html += '<div style="display:flex;flex-wrap:wrap;gap:8px" id="breathing-soundtype-row">';
+    html += '<select id="breathing-soundtype-select" style="width:100%;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:7px;color:var(--chalk);font-size:16px;padding:10px 12px">';
     [
       ["tone", "Tonalités"], ["green", "Bruit vert"], ["grey", "Bruit gris"],
       ["white", "Bruit blanc"], ["pink", "Bruit rose"], ["brown", "Bruit brun"],
     ].forEach(function(t) {
-      html += '<button class="pill' + (breathingConfig.soundType === t[0] ? " active" : "") + '" data-soundtype="' + t[0] + '" style="flex:1 1 30%;min-width:100px">' + t[1] + "</button>";
+      html += '<option value="' + t[0] + '"' + (breathingConfig.soundType === t[0] ? " selected" : "") + '>' + t[1] + "</option>";
     });
-    html += "</div>";
+    html += "</select>";
     html += '<div class="muted" style="font-size:10px;margin-top:14px">Son tenu pendant toute la phase, silence pendant les rétentions — la tonalité et le bruit vert varient medium/grave entre inspiration et expiration, les autres couleurs gardent une texture stable. Vert et gris sont les couleurs les plus recommandées contre les migraines ; blanc/rose/brun sont des alternatives plus classiques.</div></div>';
 
     html += '<div class="card" style="margin-bottom:28px"><div class="stat-row">';
@@ -2798,13 +2815,7 @@ function drawMigraine() {
     html += '<div class="stat"><div class="stat-label">Cycles/min</div><div class="stat-value" id="breathing-stat-bpm">–</div></div>';
     html += "</div></div>";
 
-    html += '<div style="display:flex;flex-direction:column;align-items:center;padding:48px 0 56px">';
-    html += '<button id="breathing-focus-enter" style="background:none;border:none;color:var(--steel);font-size:11px;font-weight:700;letter-spacing:.3px;cursor:pointer;margin-bottom:24px;text-transform:uppercase">⤢ Plein écran</button>';
-    html += breathingCircleHtml();
-    html += breathingButtonsHtml();
-    html += "</div>";
-
-    html += '<div class="card steel" style="margin-top:28px"><div class="section-label" style="margin-bottom:14px">À savoir</div><div style="font-size:12px;color:var(--chalkDim);line-height:1.6">La respiration lente (le préréglage "Cohérence", ~5,5 cycles/min) est le rythme le plus étudié en biofeedback de variabilité cardiaque pour la relaxation. Utile contre le stress et la tension nerveuse — deux déclencheurs fréquents listés dans l\'onglet Logger — mais c\'est un outil de gestion au quotidien, pas un traitement d\'une crise en cours ni un substitut à un avis médical.</div></div>';
+    html += '<div class="card steel"><div class="section-label" style="margin-bottom:14px">À savoir</div><div style="font-size:12px;color:var(--chalkDim);line-height:1.6">La respiration lente (le préréglage "Cohérence", ~5,5 cycles/min) est le rythme le plus étudié en biofeedback de variabilité cardiaque pour la relaxation. Utile contre le stress et la tension nerveuse — deux déclencheurs fréquents listés dans l\'onglet Logger — mais c\'est un outil de gestion au quotidien, pas un traitement d\'une crise en cours ni un substitut à un avis médical.</div></div>';
 
     app.innerHTML = html;
     updateBreathingIdleStats();
@@ -2927,15 +2938,14 @@ function wireMigraineEvents() {
       drawMigraine();
     });
   }
-  document.querySelectorAll('#breathing-preset-row .pill').forEach(function(btn) {
-    btn.addEventListener("click", function() {
-      stopBreathing();
-      const p = BREATHING_PRESETS[Number(btn.dataset.preset)];
-      breathingConfig.inhale = p.inhale; breathingConfig.holdFull = p.holdFull;
-      breathingConfig.exhale = p.exhale; breathingConfig.holdEmpty = p.holdEmpty;
-      if (p.durationSec) breathingConfig.durationSec = p.durationSec;
-      drawMigraine();
-    });
+  const breathingPresetSelect = document.getElementById("breathing-preset-select");
+  if (breathingPresetSelect) breathingPresetSelect.addEventListener("change", function() {
+    stopBreathing();
+    const p = BREATHING_PRESETS[Number(breathingPresetSelect.value)];
+    breathingConfig.inhale = p.inhale; breathingConfig.holdFull = p.holdFull;
+    breathingConfig.exhale = p.exhale; breathingConfig.holdEmpty = p.holdEmpty;
+    if (p.durationSec) breathingConfig.durationSec = p.durationSec;
+    drawMigraine();
   });
   document.querySelectorAll('.breathing-time-input').forEach(function(input) {
     input.addEventListener("blur", function() {
@@ -2947,8 +2957,10 @@ function wireMigraineEvents() {
   document.querySelectorAll('#breathing-sound-row .pill').forEach(function(btn) {
     btn.addEventListener("click", function() { breathingConfig.soundOn = btn.dataset.sound === "1"; drawMigraine(); });
   });
-  document.querySelectorAll('#breathing-soundtype-row .pill').forEach(function(btn) {
-    btn.addEventListener("click", function() { breathingConfig.soundType = btn.dataset.soundtype; drawMigraine(); });
+  const breathingSoundtypeSelect = document.getElementById("breathing-soundtype-select");
+  if (breathingSoundtypeSelect) breathingSoundtypeSelect.addEventListener("change", function() {
+    breathingConfig.soundType = breathingSoundtypeSelect.value;
+    drawMigraine();
   });
   const breathingStartBtn = document.getElementById("breathing-start-btn");
   if (breathingStartBtn) breathingStartBtn.addEventListener("click", startBreathing);
