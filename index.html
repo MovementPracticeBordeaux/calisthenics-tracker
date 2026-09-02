@@ -2289,71 +2289,143 @@ let migraineForm = { startDateTime: nowForDatetimeInput(), endDateTime: "", inte
 let migraineSubTab = "logger";
 
 // ---------------- Respiration guidée (paced breathing) ----------------
-// Rythme lent (~6 cycles/min avec 4-6) : la fréquence la plus étudiée en
-// biofeedback de VFC pour la relaxation (Lehrer & Gevirtz) — utile contre le
-// stress et la tension nerveuse, deux déclencheurs fréquents de migraine
-// listés ci-dessus. Un outil de gestion, pas un traitement de la crise.
+// 4 temps librement réglables (inspiration / rétention poumons pleins /
+// expiration / rétention poumons vides), comme les vraies apps de paced
+// breathing — pas juste un ratio inspiration/expiration fixe. Préréglages
+// rapides fournis à titre de point de départ, tout reste modifiable.
 const BREATHING_DURATIONS = [{ label: "1 min", sec: 60 }, { label: "3 min", sec: 180 }, { label: "5 min", sec: 300 }, { label: "10 min", sec: 600 }];
-const BREATHING_PACES = [{ label: "Détente · 4-6", inhale: 4, exhale: 6 }, { label: "Équilibré · 4-4", inhale: 4, exhale: 4 }];
-let breathingConfig = { durationSec: 180, inhale: 4, exhale: 6 };
-let breathingRun = null; // { startedAt, phaseTimeoutId, tickIntervalId } ou null si aucune séance en cours
+// Cohérence cardiaque (5.5-0-5.5-0, ~5.5 cycles/min) : le rythme le plus
+// étudié en biofeedback de VFC pour la relaxation (Lehrer & Gevirtz).
+// Carré (4-4-4-4) : technique de "box breathing" classique.
+// 4-7-8 : technique de relaxation popularisée par Dr. Andrew Weil.
+const BREATHING_PRESETS = [
+  { label: "Cohérence", inhale: 5.5, holdFull: 0, exhale: 5.5, holdEmpty: 0 },
+  { label: "Carré 4-4-4-4", inhale: 4, holdFull: 4, exhale: 4, holdEmpty: 4 },
+  { label: "4-7-8", inhale: 4, holdFull: 7, exhale: 8, holdEmpty: 0 },
+];
+const BREATHING_PHASE_ORDER = ["inhale", "holdFull", "exhale", "holdEmpty"];
+const BREATHING_PHASE_LABELS = { inhale: "Inspirez", holdFull: "Retenez (poumons pleins)", exhale: "Expirez", holdEmpty: "Retenez (poumons vides)" };
+let breathingConfig = { durationSec: 300, inhale: 4, holdFull: 0, exhale: 6, holdEmpty: 0, soundOn: true };
+let breathingRun = null; // { startedAt, phaseTimeoutId, tickIntervalId, breaths } ou null si aucune séance en cours
+let breathingAudioCtx = null, breathingWakeLock = null;
 
 function formatBreathingTime(sec) {
   const m = Math.floor(sec / 60), s = Math.max(0, Math.round(sec % 60));
   return m + ":" + String(s).padStart(2, "0");
+}
+function breathingCycleSeconds() {
+  return (Number(breathingConfig.inhale)||0) + (Number(breathingConfig.holdFull)||0) + (Number(breathingConfig.exhale)||0) + (Number(breathingConfig.holdEmpty)||0);
+}
+// Petit bip distinct pour l'inspiration (aigu) et l'expiration (grave) — Web
+// Audio pur, pas de fichier son à charger. Le contexte audio n'est créé qu'au
+// premier "Démarrer" (geste utilisateur), requis par les politiques autoplay.
+function playBreathingTone(freq) {
+  if (!breathingConfig.soundOn) return;
+  try {
+    if (!breathingAudioCtx) breathingAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (breathingAudioCtx.state === "suspended") breathingAudioCtx.resume();
+    const t0 = breathingAudioCtx.currentTime;
+    const osc = breathingAudioCtx.createOscillator();
+    const gain = breathingAudioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.15, t0 + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.4);
+    osc.connect(gain).connect(breathingAudioCtx.destination);
+    osc.start(t0);
+    osc.stop(t0 + 0.45);
+  } catch (e) {}
+}
+// Empêche l'écran de s'éteindre pendant la séance (l'animation s'arrêterait
+// sinon) — dégrade silencieusement si l'API n'est pas supportée.
+function requestBreathingWakeLock() {
+  if (!("wakeLock" in navigator)) return;
+  navigator.wakeLock.request("screen").then(function(lock) { breathingWakeLock = lock; }).catch(function() {});
+}
+function releaseBreathingWakeLock() {
+  if (breathingWakeLock) { breathingWakeLock.release().catch(function() {}); breathingWakeLock = null; }
+}
+function updateBreathingIdleStats() {
+  const clockEl = document.getElementById("breathing-stat-clock");
+  const breathsEl = document.getElementById("breathing-stat-breaths");
+  const bpmEl = document.getElementById("breathing-stat-bpm");
+  const cycle = breathingCycleSeconds();
+  if (clockEl) clockEl.textContent = formatBreathingTime(breathingConfig.durationSec);
+  if (breathsEl) breathsEl.textContent = cycle > 0 ? Math.round(breathingConfig.durationSec / cycle) : "–";
+  if (bpmEl) bpmEl.textContent = cycle > 0 ? (60 / cycle).toFixed(1) : "–";
 }
 // Arrête proprement toute séance en cours — appelé au clic sur "Arrêter",
 // en changeant de sous-onglet/d'onglet, ou avant d'en démarrer une nouvelle.
 // Ne touche au DOM que s'il existe encore (peut être appelé après un
 // re-rendu qui a déjà remplacé la vue).
 function stopBreathing() {
+  releaseBreathingWakeLock();
   if (!breathingRun) return;
   clearTimeout(breathingRun.phaseTimeoutId);
   clearInterval(breathingRun.tickIntervalId);
   breathingRun = null;
   const circle = document.getElementById("breathing-circle");
   const phaseText = document.getElementById("breathing-phase-text");
-  const countdown = document.getElementById("breathing-countdown");
   const startBtn = document.getElementById("breathing-start-btn");
   const stopBtn = document.getElementById("breathing-stop-btn");
   if (circle) { circle.style.transitionDuration = "0.6s"; circle.style.transform = "scale(1)"; }
   if (phaseText) phaseText.textContent = "Prêt";
-  if (countdown) countdown.textContent = formatBreathingTime(breathingConfig.durationSec) + " au total";
   if (startBtn) startBtn.style.display = "";
   if (stopBtn) stopBtn.style.display = "none";
+  updateBreathingIdleStats();
 }
-function runBreathingPhase(phase) {
+function updateBreathingVisual(phase, seconds) {
+  const circle = document.getElementById("breathing-circle");
+  const phaseText = document.getElementById("breathing-phase-text");
+  if (circle && (phase === "inhale" || phase === "exhale")) {
+    circle.style.transitionDuration = seconds + "s";
+    circle.style.transform = phase === "inhale" ? "scale(1.55)" : "scale(1)";
+  }
+  if (phaseText) phaseText.textContent = BREATHING_PHASE_LABELS[phase];
+}
+function runBreathingPhase(orderIdx) {
   if (!breathingRun) return;
   const elapsed = (Date.now() - breathingRun.startedAt) / 1000;
   if (elapsed >= breathingConfig.durationSec) { finishBreathing(); return; }
-  const circle = document.getElementById("breathing-circle");
-  const phaseText = document.getElementById("breathing-phase-text");
-  const seconds = phase === "inhale" ? breathingConfig.inhale : breathingConfig.exhale;
-  if (circle) { circle.style.transitionDuration = seconds + "s"; circle.style.transform = phase === "inhale" ? "scale(1.55)" : "scale(1)"; }
-  if (phaseText) phaseText.textContent = phase === "inhale" ? "Inspirez" : "Expirez";
-  breathingRun.phaseTimeoutId = setTimeout(function() { runBreathingPhase(phase === "inhale" ? "exhale" : "inhale"); }, seconds * 1000);
+  // Saute les phases à durée nulle (ex. pas de rétention configurée).
+  let idx = orderIdx % BREATHING_PHASE_ORDER.length, guard = 0;
+  let phase = BREATHING_PHASE_ORDER[idx], seconds = Number(breathingConfig[phase]) || 0;
+  while (seconds <= 0 && guard < BREATHING_PHASE_ORDER.length) {
+    idx = (idx + 1) % BREATHING_PHASE_ORDER.length;
+    phase = BREATHING_PHASE_ORDER[idx];
+    seconds = Number(breathingConfig[phase]) || 0;
+    guard++;
+  }
+  if (guard >= BREATHING_PHASE_ORDER.length) { finishBreathing(); return; } // les 4 temps sont à 0
+  if (phase === "inhale") { breathingRun.breaths++; playBreathingTone(660); }
+  else if (phase === "exhale") { playBreathingTone(440); }
+  updateBreathingVisual(phase, seconds);
+  const breathsEl = document.getElementById("breathing-stat-breaths");
+  if (breathsEl) breathsEl.textContent = breathingRun.breaths;
+  breathingRun.phaseTimeoutId = setTimeout(function() { runBreathingPhase(idx + 1); }, seconds * 1000);
 }
 function finishBreathing() {
   stopBreathing();
   const phaseText = document.getElementById("breathing-phase-text");
-  const countdown = document.getElementById("breathing-countdown");
   if (phaseText) phaseText.textContent = "Terminé";
-  if (countdown) countdown.textContent = "Séance terminée";
 }
 function startBreathing() {
   stopBreathing();
+  if (breathingCycleSeconds() <= 0) return; // rien à faire si les 4 temps sont à 0
+  requestBreathingWakeLock();
   const startBtn = document.getElementById("breathing-start-btn");
   const stopBtn = document.getElementById("breathing-stop-btn");
   if (startBtn) startBtn.style.display = "none";
   if (stopBtn) stopBtn.style.display = "";
-  breathingRun = { startedAt: Date.now(), phaseTimeoutId: null, tickIntervalId: null };
+  breathingRun = { startedAt: Date.now(), phaseTimeoutId: null, tickIntervalId: null, breaths: 0 };
   breathingRun.tickIntervalId = setInterval(function() {
-    const countdown = document.getElementById("breathing-countdown");
-    if (!countdown || !breathingRun) return;
+    const clockEl = document.getElementById("breathing-stat-clock");
+    if (!clockEl || !breathingRun) return;
     const elapsed = (Date.now() - breathingRun.startedAt) / 1000;
-    countdown.textContent = formatBreathingTime(breathingConfig.durationSec - elapsed) + " restantes";
+    clockEl.textContent = formatBreathingTime(breathingConfig.durationSec - elapsed);
   }, 250);
-  runBreathingPhase("inhale");
+  runBreathingPhase(0);
 }
 
 async function getWearableForDate2(dateStr) {
@@ -2423,23 +2495,47 @@ function drawMigraine() {
   html += "</div>";
 
   if (migraineSubTab === "respiration") {
-    html += '<div class="card"><div class="section-label">Durée</div><div class="pill-row compact" id="breathing-duration-row" style="margin-bottom:14px">';
+    html += '<div class="card"><div class="section-label">Préréglages</div><div class="pill-row compact" id="breathing-preset-row" style="margin-bottom:14px">';
+    BREATHING_PRESETS.forEach(function(p, i) {
+      const active = breathingConfig.inhale === p.inhale && breathingConfig.holdFull === p.holdFull && breathingConfig.exhale === p.exhale && breathingConfig.holdEmpty === p.holdEmpty;
+      html += '<button class="pill' + (active ? " active" : "") + '" data-preset="' + i + '">' + p.label + "</button>";
+    });
+    html += '</div><div class="section-label">Durée de la séance</div><div class="pill-row compact" id="breathing-duration-row" style="margin-bottom:16px">';
     BREATHING_DURATIONS.forEach(function(d) { html += '<button class="pill' + (breathingConfig.durationSec === d.sec ? " active" : "") + '" data-sec="' + d.sec + '">' + d.label + "</button>"; });
-    html += '</div><div class="section-label">Rythme</div><div class="pill-row compact" id="breathing-pace-row">';
-    BREATHING_PACES.forEach(function(p) { html += '<button class="pill' + (breathingConfig.inhale === p.inhale && breathingConfig.exhale === p.exhale ? " active" : "") + '" data-inhale="' + p.inhale + '" data-exhale="' + p.exhale + '">' + p.label + "</button>"; });
-    html += "</div></div>";
-
-    html += '<div style="display:flex;flex-direction:column;align-items:center;padding:30px 0">';
-    html += '<div id="breathing-circle" style="width:140px;height:140px;border-radius:50%;background:var(--gradient);display:flex;align-items:center;justify-content:center;transition:transform 0.6s ease-in-out;transform:scale(1);box-shadow:0 0 30px rgba(242,113,28,0.35)">';
-    html += '<span id="breathing-phase-text" style="font-size:15px;font-weight:900;text-transform:uppercase;letter-spacing:.5px;color:var(--bg)">Prêt</span></div>';
-    html += '<div id="breathing-countdown" class="muted" style="margin-top:22px;font-size:13px">' + formatBreathingTime(breathingConfig.durationSec) + ' au total</div>';
-    html += '<button id="breathing-start-btn" style="width:100%;max-width:280px;margin-top:20px;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Démarrer</button>';
-    html += '<button id="breathing-stop-btn" style="display:none;width:100%;max-width:280px;margin-top:20px;padding:13px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--chalkDim);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Arrêter</button>';
     html += "</div>";
 
-    html += '<div class="card steel"><div class="section-label">À savoir</div><div style="font-size:12px;color:var(--chalkDim);line-height:1.6">La respiration lente (environ 6 cycles/min avec le rythme "Détente") est la fréquence la plus étudiée en biofeedback de variabilité cardiaque pour la relaxation. Utile contre le stress et la tension nerveuse — deux déclencheurs fréquents listés dans l\'onglet Logger — mais c\'est un outil de gestion au quotidien, pas un traitement d\'une crise en cours ni un substitut à un avis médical.</div></div>';
+    html += '<div class="section-label">Temps (secondes) — réglable librement</div>';
+    html += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">';
+    [
+      ["inhale", "Inspiration"], ["holdFull", "Rétention (poumons pleins)"],
+      ["exhale", "Expiration"], ["holdEmpty", "Rétention (poumons vides)"],
+    ].forEach(function(f) {
+      html += '<div style="flex:1;min-width:120px"><div class="muted" style="font-size:10px;text-transform:uppercase;margin-bottom:4px">' + f[1] + '</div>';
+      html += '<input type="number" min="0" step="0.5" class="breathing-time-input" data-field="' + f[0] + '" value="' + breathingConfig[f[0]] + '" style="text-align:center" /></div>';
+    });
+    html += "</div></div>";
+
+    html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Son</span><span></span></div>';
+    html += '<div class="pill-row compact" id="breathing-sound-row"><button class="pill' + (breathingConfig.soundOn ? " active green" : "") + '" data-sound="1">Activé</button><button class="pill' + (!breathingConfig.soundOn ? " active" : "") + '" data-sound="0">Désactivé</button></div>';
+    html += '<div class="muted" style="font-size:10px;margin-top:8px">Un bip aigu au début de l\'inspiration, un bip grave au début de l\'expiration — rien pendant les rétentions.</div></div>';
+
+    html += '<div class="card"><div class="stat-row">';
+    html += '<div class="stat"><div class="stat-label">Temps</div><div class="stat-value" id="breathing-stat-clock">–</div></div>';
+    html += '<div class="stat"><div class="stat-label">Respirations</div><div class="stat-value" id="breathing-stat-breaths">–</div></div>';
+    html += '<div class="stat"><div class="stat-label">Cycles/min</div><div class="stat-value" id="breathing-stat-bpm">–</div></div>';
+    html += "</div></div>";
+
+    html += '<div style="display:flex;flex-direction:column;align-items:center;padding:20px 0 30px">';
+    html += '<div id="breathing-circle" style="width:140px;height:140px;border-radius:50%;background:var(--gradient);display:flex;align-items:center;justify-content:center;transition:transform 0.6s ease-in-out;transform:scale(1);box-shadow:0 0 30px rgba(242,113,28,0.35)">';
+    html += '<span id="breathing-phase-text" style="font-size:13px;font-weight:900;text-transform:uppercase;letter-spacing:.5px;color:var(--bg);text-align:center;padding:0 12px">Prêt</span></div>';
+    html += '<button id="breathing-start-btn" style="width:100%;max-width:280px;margin-top:22px;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Démarrer</button>';
+    html += '<button id="breathing-stop-btn" style="display:none;width:100%;max-width:280px;margin-top:22px;padding:13px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--chalkDim);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Arrêter</button>';
+    html += "</div>";
+
+    html += '<div class="card steel"><div class="section-label">À savoir</div><div style="font-size:12px;color:var(--chalkDim);line-height:1.6">La respiration lente (le préréglage "Cohérence", ~5,5 cycles/min) est le rythme le plus étudié en biofeedback de variabilité cardiaque pour la relaxation. Utile contre le stress et la tension nerveuse — deux déclencheurs fréquents listés dans l\'onglet Logger — mais c\'est un outil de gestion au quotidien, pas un traitement d\'une crise en cours ni un substitut à un avis médical.</div></div>';
 
     app.innerHTML = html;
+    updateBreathingIdleStats();
     wireMigraineEvents();
     return;
   }
@@ -2553,8 +2649,24 @@ function wireMigraineEvents() {
   document.querySelectorAll('#breathing-duration-row .pill').forEach(function(btn) {
     btn.addEventListener("click", function() { stopBreathing(); breathingConfig.durationSec = Number(btn.dataset.sec); drawMigraine(); });
   });
-  document.querySelectorAll('#breathing-pace-row .pill').forEach(function(btn) {
-    btn.addEventListener("click", function() { stopBreathing(); breathingConfig.inhale = Number(btn.dataset.inhale); breathingConfig.exhale = Number(btn.dataset.exhale); drawMigraine(); });
+  document.querySelectorAll('#breathing-preset-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      stopBreathing();
+      const p = BREATHING_PRESETS[Number(btn.dataset.preset)];
+      breathingConfig.inhale = p.inhale; breathingConfig.holdFull = p.holdFull;
+      breathingConfig.exhale = p.exhale; breathingConfig.holdEmpty = p.holdEmpty;
+      drawMigraine();
+    });
+  });
+  document.querySelectorAll('.breathing-time-input').forEach(function(input) {
+    input.addEventListener("blur", function() {
+      stopBreathing();
+      breathingConfig[input.dataset.field] = input.value ? Number(input.value) : 0;
+      drawMigraine();
+    });
+  });
+  document.querySelectorAll('#breathing-sound-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { breathingConfig.soundOn = btn.dataset.sound === "1"; drawMigraine(); });
   });
   const breathingStartBtn = document.getElementById("breathing-start-btn");
   if (breathingStartBtn) breathingStartBtn.addEventListener("click", startBreathing);
