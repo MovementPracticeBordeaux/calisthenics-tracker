@@ -2308,7 +2308,7 @@ let breathingConfig = { durationSec: 300, inhale: 4, holdFull: 0, exhale: 6, hol
 let breathingRun = null; // { startedAt, phaseTimeoutId, tickIntervalId, breaths } ou null si aucune séance en cours
 let breathingAudioCtx = null, breathingWakeLock = null;
 let breathingCurrentOsc = null, breathingCurrentGain = null;
-let breathingNoiseBuffer = null; // bruit blanc brut, réutilisé et filtré à la volée pour le bruit vert
+let breathingNoiseBuffers = {}; // un buffer précalculé par "couleur" qui en a besoin (blanc/rose/brun), réutilisés tant que le sampleRate ne change pas
 
 function formatBreathingTime(sec) {
   const m = Math.floor(sec / 60), s = Math.max(0, Math.round(sec % 60));
@@ -2329,8 +2329,8 @@ function stopBreathingTone() {
       const t0 = breathingAudioCtx.currentTime;
       breathingCurrentGain.gain.cancelScheduledValues(t0);
       breathingCurrentGain.gain.setValueAtTime(breathingCurrentGain.gain.value, t0);
-      breathingCurrentGain.gain.linearRampToValueAtTime(0, t0 + 0.35);
-      breathingCurrentOsc.stop(t0 + 0.4);
+      breathingCurrentGain.gain.linearRampToValueAtTime(0, t0 + 0.7);
+      breathingCurrentOsc.stop(t0 + 0.8);
     } catch (e) {}
   }
   breathingCurrentOsc = null; breathingCurrentGain = null;
@@ -2346,7 +2346,7 @@ function playBreathingTone(freq, durationSec) {
     const gain = breathingAudioCtx.createGain();
     osc.type = "sine";
     osc.frequency.value = freq;
-    const fade = Math.min(0.9, durationSec / 2.5); // fondu long et progressif, réduit sur les phases très brèves
+    const fade = Math.min(2, durationSec / 2.2); // fondu long et progressif, réduit sur les phases très brèves
     gain.gain.setValueAtTime(0, t0);
     gain.gain.linearRampToValueAtTime(0.12, t0 + fade);
     gain.gain.setValueAtTime(0.12, t0 + Math.max(fade, durationSec - fade));
@@ -2358,38 +2358,90 @@ function playBreathingTone(freq, durationSec) {
     osc.onended = function() { if (breathingCurrentOsc === osc) { breathingCurrentOsc = null; breathingCurrentGain = null; } };
   } catch (e) {}
 }
-// Bruit vert : bruit blanc filtré (passe-bande large centré sur les
-// fréquences moyennes/graves) — variante demandée spécifiquement pour la
-// migraine, souvent recommandée (avec le bruit gris) plutôt que les sons
-// binauraux dont l'effet est plus contesté. Même enveloppe et même
-// principe medium/grave inspiration-expiration que les tonalités.
-function playBreathingGreenNoise(centerFreq, durationSec) {
+// Buffer de bruit précalculé pour une "couleur" donnée — rose et brun ont
+// besoin d'un filtrage récursif échantillon par échantillon (pas juste un
+// BiquadFilter), donc on les précalcule une fois dans un buffer bouclé ;
+// blanc reste du bruit brut, réutilisé tel quel ou filtré en direct pour le
+// vert et le gris (voir playBreathingNoise).
+function getBreathingNoiseBuffer(type) {
+  const cached = breathingNoiseBuffers[type];
+  if (cached && cached.sampleRate === breathingAudioCtx.sampleRate) return cached;
+  const len = breathingAudioCtx.sampleRate * 4; // 4s bouclées
+  const buffer = breathingAudioCtx.createBuffer(1, len, breathingAudioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  if (type === "pink") {
+    // Filtre économique à 3 pôles de Paul Kellet — approximation standard
+    // du bruit rose (pente ~-3dB/octave), largement utilisée.
+    let b0 = 0, b1 = 0, b2 = 0;
+    for (let i = 0; i < len; i++) {
+      const white = Math.random() * 2 - 1;
+      b0 = 0.99886 * b0 + white * 0.0555179;
+      b1 = 0.99332 * b1 + white * 0.0750759;
+      b2 = 0.96900 * b2 + white * 0.1538520;
+      data[i] = (b0 + b1 + b2 + white * 0.1848) * 0.11;
+    }
+  } else if (type === "brown") {
+    // Marche aléatoire (intégration du bruit blanc) avec fuite pour éviter
+    // toute dérive continue du signal.
+    let last = 0;
+    for (let i = 0; i < len; i++) {
+      const white = Math.random() * 2 - 1;
+      last = (last + 0.02 * white) / 1.02;
+      data[i] = last * 3.5;
+    }
+  } else {
+    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+  }
+  breathingNoiseBuffers[type] = buffer;
+  return buffer;
+}
+const BREATHING_NOISE_PEAK = { green: 0.22, grey: 0.14, white: 0.15, pink: 0.2, brown: 0.3 };
+// Bruits colorés : vert et gris sont les couleurs les plus recommandées
+// spécifiquement contre les migraines (blanc/rose/brun restent des
+// alternatives plus classiques) — une alternative aux sons binauraux, dont
+// l'effet est plus contesté et qui nécessitent des écouteurs. Seul le vert
+// varie de couleur entre inspiration et expiration (medium/grave, comme les
+// tonalités) ; gris/blanc/rose/brun gardent une texture stable, propre à
+// leur nature.
+function playBreathingNoise(soundType, phase, durationSec) {
   stopBreathingTone();
   if (!breathingConfig.soundOn) return;
   try {
     if (!breathingAudioCtx) breathingAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
     if (breathingAudioCtx.state === "suspended") breathingAudioCtx.resume();
-    if (!breathingNoiseBuffer || breathingNoiseBuffer.sampleRate !== breathingAudioCtx.sampleRate) {
-      const len = breathingAudioCtx.sampleRate * 2; // 2s de bruit blanc, rejoué en boucle
-      breathingNoiseBuffer = breathingAudioCtx.createBuffer(1, len, breathingAudioCtx.sampleRate);
-      const data = breathingNoiseBuffer.getChannelData(0);
-      for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
-    }
+    const bufferType = (soundType === "pink" || soundType === "brown") ? soundType : "white";
+    const buffer = getBreathingNoiseBuffer(bufferType);
     const t0 = breathingAudioCtx.currentTime;
     const src = breathingAudioCtx.createBufferSource();
-    src.buffer = breathingNoiseBuffer;
+    src.buffer = buffer;
     src.loop = true;
-    const filter = breathingAudioCtx.createBiquadFilter();
-    filter.type = "bandpass";
-    filter.frequency.value = centerFreq;
-    filter.Q.value = 0.6; // bande large : texture de bruit, pas un sifflement filtré étroit
+    let node = src;
+    if (soundType === "green") {
+      const filter = breathingAudioCtx.createBiquadFilter();
+      filter.type = "bandpass";
+      filter.frequency.value = phase === "inhale" ? 650 : 350;
+      filter.Q.value = 0.6; // bande large : texture de bruit, pas un sifflement filtré étroit
+      node.connect(filter);
+      node = filter;
+    } else if (soundType === "grey") {
+      // Approximation d'égalisation inverse des courbes isosoniques : creuse
+      // le medium, remonte extrêmes graves et aigus (l'oreille y étant moins
+      // sensible) — la "courbe en sourire" typique d'un bruit gris.
+      const low = breathingAudioCtx.createBiquadFilter();
+      low.type = "lowshelf"; low.frequency.value = 200; low.gain.value = 8;
+      const high = breathingAudioCtx.createBiquadFilter();
+      high.type = "highshelf"; high.frequency.value = 4000; high.gain.value = 10;
+      node.connect(low); low.connect(high);
+      node = high;
+    }
     const gain = breathingAudioCtx.createGain();
-    const fade = Math.min(0.9, durationSec / 2.5); // fondu long et progressif, réduit sur les phases très brèves
+    node.connect(gain).connect(breathingAudioCtx.destination);
+    const peak = BREATHING_NOISE_PEAK[soundType] || 0.18;
+    const fade = Math.min(2, durationSec / 2.2); // fondu long et progressif, réduit sur les phases très brèves
     gain.gain.setValueAtTime(0, t0);
-    gain.gain.linearRampToValueAtTime(0.22, t0 + fade);
-    gain.gain.setValueAtTime(0.22, t0 + Math.max(fade, durationSec - fade));
+    gain.gain.linearRampToValueAtTime(peak, t0 + fade);
+    gain.gain.setValueAtTime(peak, t0 + Math.max(fade, durationSec - fade));
     gain.gain.linearRampToValueAtTime(0, t0 + durationSec);
-    src.connect(filter).connect(gain).connect(breathingAudioCtx.destination);
     src.start(t0);
     src.stop(t0 + durationSec + 0.05);
     breathingCurrentOsc = src; breathingCurrentGain = gain;
@@ -2477,9 +2529,9 @@ function runBreathingPhase(orderIdx) {
     guard++;
   }
   if (guard >= BREATHING_PHASE_ORDER.length) { finishBreathing(); return; } // les 4 temps sont à 0
-  const greenNoise = breathingConfig.soundType === "greenNoise";
-  if (phase === "inhale") { breathingRun.breaths++; greenNoise ? playBreathingGreenNoise(650, seconds) : playBreathingTone(440, seconds); } // medium
-  else if (phase === "exhale") { greenNoise ? playBreathingGreenNoise(350, seconds) : playBreathingTone(220, seconds); } // grave
+  const soundType = breathingConfig.soundType;
+  if (phase === "inhale") { breathingRun.breaths++; soundType === "tone" ? playBreathingTone(440, seconds) : playBreathingNoise(soundType, "inhale", seconds); } // medium
+  else if (phase === "exhale") { soundType === "tone" ? playBreathingTone(220, seconds) : playBreathingNoise(soundType, "exhale", seconds); } // grave
   else { stopBreathingTone(); } // silence pendant les rétentions
   updateBreathingVisual(phase, seconds);
   const breathsEl = document.getElementById("breathing-stat-breaths");
@@ -2599,11 +2651,15 @@ function drawMigraine() {
     html += '<div class="card" style="margin-bottom:28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><span>Son</span><span></span></div>';
     html += '<div class="pill-row compact" id="breathing-sound-row" style="margin-bottom:20px"><button class="pill' + (breathingConfig.soundOn ? " active green" : "") + '" data-sound="1">Activé</button><button class="pill' + (!breathingConfig.soundOn ? " active" : "") + '" data-sound="0">Désactivé</button></div>';
     html += '<div class="muted" style="font-size:10px;text-transform:uppercase;margin-bottom:8px">Type de son</div>';
-    html += '<div class="pill-row compact" id="breathing-soundtype-row">';
-    html += '<button class="pill' + (breathingConfig.soundType !== "greenNoise" ? " active" : "") + '" data-soundtype="tone">Tonalités</button>';
-    html += '<button class="pill' + (breathingConfig.soundType === "greenNoise" ? " active" : "") + '" data-soundtype="greenNoise">Bruit vert</button>';
+    html += '<div style="display:flex;flex-wrap:wrap;gap:8px" id="breathing-soundtype-row">';
+    [
+      ["tone", "Tonalités"], ["green", "Bruit vert"], ["grey", "Bruit gris"],
+      ["white", "Bruit blanc"], ["pink", "Bruit rose"], ["brown", "Bruit brun"],
+    ].forEach(function(t) {
+      html += '<button class="pill' + (breathingConfig.soundType === t[0] ? " active" : "") + '" data-soundtype="' + t[0] + '" style="flex:1 1 30%;min-width:100px">' + t[1] + "</button>";
+    });
     html += "</div>";
-    html += '<div class="muted" style="font-size:10px;margin-top:14px">Une tonalité (ou un bruit vert filtré, selon le choix ci-dessus) moyen(ne) tenu(e) pendant toute l\'inspiration, grave pendant toute l\'expiration — silence pendant les rétentions. Le bruit vert est l\'une des couleurs de bruit les plus recommandées contre les migraines, avec le bruit gris.</div></div>';
+    html += '<div class="muted" style="font-size:10px;margin-top:14px">Son tenu pendant toute la phase, silence pendant les rétentions — la tonalité et le bruit vert varient medium/grave entre inspiration et expiration, les autres couleurs gardent une texture stable. Vert et gris sont les couleurs les plus recommandées contre les migraines ; blanc/rose/brun sont des alternatives plus classiques.</div></div>';
 
     html += '<div class="card" style="margin-bottom:28px"><div class="stat-row">';
     html += '<div class="stat"><div class="stat-label">Temps</div><div class="stat-value" id="breathing-stat-clock">–</div></div>';
