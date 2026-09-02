@@ -2518,44 +2518,44 @@ function drawMigraine() {
   html += "</div>";
 
   if (migraineSubTab === "respiration") {
-    html += '<div class="card"><div class="section-label">Préréglages</div><div class="pill-row compact" id="breathing-preset-row" style="margin-bottom:14px">';
+    html += '<div class="card" style="margin-bottom:28px"><div class="section-label" style="margin-bottom:14px">Préréglages</div><div class="pill-row compact" id="breathing-preset-row" style="margin-bottom:28px">';
     BREATHING_PRESETS.forEach(function(p, i) {
       const active = breathingConfig.inhale === p.inhale && breathingConfig.holdFull === p.holdFull && breathingConfig.exhale === p.exhale && breathingConfig.holdEmpty === p.holdEmpty;
       html += '<button class="pill' + (active ? " active" : "") + '" data-preset="' + i + '">' + p.label + "</button>";
     });
-    html += '</div><div class="section-label">Durée de la séance</div><div class="pill-row compact" id="breathing-duration-row" style="margin-bottom:16px">';
+    html += '</div><div class="section-label" style="margin-bottom:14px">Durée de la séance</div><div class="pill-row compact" id="breathing-duration-row" style="margin-bottom:32px">';
     BREATHING_DURATIONS.forEach(function(d) { html += '<button class="pill' + (breathingConfig.durationSec === d.sec ? " active" : "") + '" data-sec="' + d.sec + '">' + d.label + "</button>"; });
     html += "</div>";
 
-    html += '<div class="section-label">Temps (secondes) — réglable librement</div>';
-    html += '<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:10px">';
+    html += '<div class="section-label" style="margin-bottom:16px">Temps (secondes) — réglable librement</div>';
+    html += '<div style="display:flex;gap:20px;flex-wrap:wrap">';
     [
       ["inhale", "Inspiration"], ["holdFull", "Rétention (poumons pleins)"],
       ["exhale", "Expiration"], ["holdEmpty", "Rétention (poumons vides)"],
     ].forEach(function(f) {
-      html += '<div style="flex:1;min-width:120px"><div class="muted" style="font-size:10px;text-transform:uppercase;margin-bottom:4px">' + f[1] + '</div>';
+      html += '<div style="flex:1;min-width:120px"><div class="muted" style="font-size:10px;text-transform:uppercase;margin-bottom:8px">' + f[1] + '</div>';
       html += '<input type="number" min="0" step="0.5" class="breathing-time-input" data-field="' + f[0] + '" value="' + breathingConfig[f[0]] + '" style="text-align:center" /></div>';
     });
     html += "</div></div>";
 
-    html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Son</span><span></span></div>';
+    html += '<div class="card" style="margin-bottom:28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><span>Son</span><span></span></div>';
     html += '<div class="pill-row compact" id="breathing-sound-row"><button class="pill' + (breathingConfig.soundOn ? " active green" : "") + '" data-sound="1">Activé</button><button class="pill' + (!breathingConfig.soundOn ? " active" : "") + '" data-sound="0">Désactivé</button></div>';
-    html += '<div class="muted" style="font-size:10px;margin-top:8px">Une tonalité moyenne tenue pendant toute l\'inspiration, une tonalité grave tenue pendant toute l\'expiration — silence pendant les rétentions.</div></div>';
+    html += '<div class="muted" style="font-size:10px;margin-top:14px">Une tonalité moyenne tenue pendant toute l\'inspiration, une tonalité grave tenue pendant toute l\'expiration — silence pendant les rétentions.</div></div>';
 
-    html += '<div class="card"><div class="stat-row">';
+    html += '<div class="card" style="margin-bottom:28px"><div class="stat-row">';
     html += '<div class="stat"><div class="stat-label">Temps</div><div class="stat-value" id="breathing-stat-clock">–</div></div>';
     html += '<div class="stat"><div class="stat-label">Respirations</div><div class="stat-value" id="breathing-stat-breaths">–</div></div>';
     html += '<div class="stat"><div class="stat-label">Cycles/min</div><div class="stat-value" id="breathing-stat-bpm">–</div></div>';
     html += "</div></div>";
 
-    html += '<div style="display:flex;flex-direction:column;align-items:center;padding:30px 0 36px">';
+    html += '<div style="display:flex;flex-direction:column;align-items:center;padding:48px 0 56px">';
     html += '<div id="breathing-circle" style="width:150px;height:150px;border-radius:50%;background:var(--gradient);display:flex;align-items:center;justify-content:center;transition:transform 0.6s ease-in-out;transform:scale(1);box-shadow:0 0 30px rgba(242,113,28,0.35)">';
     html += '<span id="breathing-phase-text" style="font-size:11.5px;font-weight:900;text-transform:uppercase;letter-spacing:.3px;line-height:1.4;color:var(--bg);text-align:center;padding:0 10px;max-width:88px">Prêt</span></div>';
-    html += '<button id="breathing-start-btn" style="width:100%;max-width:280px;margin-top:40px;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Démarrer</button>';
-    html += '<button id="breathing-stop-btn" style="display:none;width:100%;max-width:280px;margin-top:40px;padding:13px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--chalkDim);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Arrêter</button>';
+    html += '<button id="breathing-start-btn" style="width:100%;max-width:280px;margin-top:64px;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Démarrer</button>';
+    html += '<button id="breathing-stop-btn" style="display:none;width:100%;max-width:280px;margin-top:64px;padding:13px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--chalkDim);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Arrêter</button>';
     html += "</div>";
 
-    html += '<div class="card steel"><div class="section-label">À savoir</div><div style="font-size:12px;color:var(--chalkDim);line-height:1.6">La respiration lente (le préréglage "Cohérence", ~5,5 cycles/min) est le rythme le plus étudié en biofeedback de variabilité cardiaque pour la relaxation. Utile contre le stress et la tension nerveuse — deux déclencheurs fréquents listés dans l\'onglet Logger — mais c\'est un outil de gestion au quotidien, pas un traitement d\'une crise en cours ni un substitut à un avis médical.</div></div>';
+    html += '<div class="card steel" style="margin-top:28px"><div class="section-label" style="margin-bottom:14px">À savoir</div><div style="font-size:12px;color:var(--chalkDim);line-height:1.6">La respiration lente (le préréglage "Cohérence", ~5,5 cycles/min) est le rythme le plus étudié en biofeedback de variabilité cardiaque pour la relaxation. Utile contre le stress et la tension nerveuse — deux déclencheurs fréquents listés dans l\'onglet Logger — mais c\'est un outil de gestion au quotidien, pas un traitement d\'une crise en cours ni un substitut à un avis médical.</div></div>';
 
     app.innerHTML = html;
     updateBreathingIdleStats();
