@@ -3133,12 +3133,6 @@ function stdDev(arr) {
   const variance = arr.reduce(function(s, v) { return s + Math.pow(v - m, 2); }, 0) / arr.length;
   return Math.sqrt(variance);
 }
-function hoursToLabel(hDec) {
-  let h = Math.floor(((hDec % 24) + 24) % 24);
-  let m = Math.round((hDec - Math.floor(hDec)) * 60);
-  if (m === 60) { m = 0; h = (h + 1) % 24; }
-  return h + "h" + String(m).padStart(2, "0");
-}
 function buildCoachData(wearable, sessions, migraines, gripRows) {
   function avgField(arr, field) {
     const v = arr.map(function(x) { return x[field]; }).filter(function(x) { return x != null; });
@@ -3170,7 +3164,11 @@ function buildCoachData(wearable, sessions, migraines, gripRows) {
 
   return {
     sleepAvg14: avgField(last14, "sleep_total_min"),
-    wakeHours14: last14.map(function(w) { return w.wake_hour; }).filter(function(x) { return x != null; }),
+    // Pas d'heure de coucher/réveil fiable : Gadgetbridge ne remonte que des
+    // totaux par stade (léger/profond/paradoxal), pas d'horodatage de début/
+    // fin de nuit exploitable (voir sync_to_supabase.py) — la régularité se
+    // mesure donc sur la DURÉE de sommeil nuit après nuit, pas les horaires.
+    sleepDurations14: last14.map(function(w) { return w.sleep_total_min; }).filter(function(x) { return x != null; }),
     hrvRecent: avgField(last7, "hrv_avg"), hrvBaseline: avgField(baseline, "hrv_avg"),
     hrRecent: avgField(last7, "hr_resting"), hrBaseline: avgField(baseline, "hr_resting"),
     stressRecent: avgField(last7, "stress_avg"), stressBaseline: avgField(baseline, "stress_avg"),
@@ -3193,16 +3191,20 @@ function coachAnswerSleepAvg(d) {
   return "Sur les 14 derniers jours, tu as dormi en moyenne " + h + "h" + String(m).padStart(2, "0") + " par nuit — " + qual + ".";
 }
 function coachAnswerSleepRegularity(d) {
-  if (d.wakeHours14.length < 5) return "Pas encore assez de nuits enregistrées (avec heure de réveil) pour évaluer la régularité de ton sommeil.";
-  const avgWake = avgOf(d.wakeHours14);
-  const sd = stdDev(d.wakeHours14);
-  // Approximation simple, pas l'algorithme propriétaire de Zepp : un écart-type
-  // de 0h = 100% de régularité, un écart-type de 2h ou plus = 0%.
-  const regularity = Math.max(0, Math.min(100, Math.round(100 - (sd / 2) * 100)));
-  const note = regularity >= 80 ? "des horaires de réveil très réguliers — excellent pour la qualité de récupération"
-    : regularity >= 60 ? "des horaires de réveil relativement réguliers, avec quelques écarts"
-    : "des horaires de réveil assez variés, ce qui peut nuire à la qualité de ton sommeil";
-  return "Ta régularité de sommeil sur les 14 derniers jours est d'environ " + regularity + "% — tu as " + note + ". Heure de réveil moyenne : " + hoursToLabel(avgWake) + ". Pour favoriser la récupération, vise un réveil entre " + hoursToLabel(avgWake - 0.25) + " et " + hoursToLabel(avgWake + 0.25) + ".";
+  if (d.sleepDurations14.length < 5) return "Pas encore assez de nuits enregistrées pour évaluer la régularité de ton sommeil.";
+  const avgDur = avgOf(d.sleepDurations14);
+  const sd = stdDev(d.sleepDurations14); // en minutes
+  // Régularité de la DURÉE de sommeil nuit après nuit, pas des horaires de
+  // coucher/réveil — Gadgetbridge ne remonte que des totaux par stade
+  // (léger/profond/paradoxal), pas d'horodatage de coucher/réveil fiable
+  // (voir sync_to_supabase.py). Écart-type de 0min = 100% de régularité,
+  // 60min ou plus = 0% — approximation simple, pas un algorithme validé.
+  const regularity = Math.max(0, Math.min(100, Math.round(100 - (sd / 60) * 100)));
+  const h = Math.floor(avgDur / 60), m = Math.round(avgDur % 60);
+  const note = regularity >= 80 ? "une durée de sommeil très régulière nuit après nuit"
+    : regularity >= 60 ? "une durée de sommeil relativement régulière, avec quelques écarts"
+    : "une durée de sommeil assez variable d'une nuit à l'autre";
+  return "Ta régularité de durée de sommeil sur les 14 derniers jours est d'environ " + regularity + "% (moyenne " + h + "h" + String(m).padStart(2, "0") + ", écart-type ±" + Math.round(sd) + " min) — tu as " + note + ". (Je n'ai pas d'heure de coucher/réveil fiable à te donner : la montre ne remonte que des durées par stade de sommeil, pas d'horodatage précis du coucher/réveil.)";
 }
 function coachAnswerHrvTrend(d) {
   if (d.hrvRecent == null || d.hrvBaseline == null || d.hrvBaseline <= 0) return "Pas encore assez de données de VFC pour dégager une tendance.";
