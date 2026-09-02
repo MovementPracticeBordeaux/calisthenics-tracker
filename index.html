@@ -2288,6 +2288,74 @@ function nowForDatetimeInput() {
 let migraineForm = { startDateTime: nowForDatetimeInput(), endDateTime: "", intensity: 5, triggers: [], notes: "" };
 let migraineSubTab = "logger";
 
+// ---------------- Respiration guidée (paced breathing) ----------------
+// Rythme lent (~6 cycles/min avec 4-6) : la fréquence la plus étudiée en
+// biofeedback de VFC pour la relaxation (Lehrer & Gevirtz) — utile contre le
+// stress et la tension nerveuse, deux déclencheurs fréquents de migraine
+// listés ci-dessus. Un outil de gestion, pas un traitement de la crise.
+const BREATHING_DURATIONS = [{ label: "1 min", sec: 60 }, { label: "3 min", sec: 180 }, { label: "5 min", sec: 300 }, { label: "10 min", sec: 600 }];
+const BREATHING_PACES = [{ label: "Détente · 4-6", inhale: 4, exhale: 6 }, { label: "Équilibré · 4-4", inhale: 4, exhale: 4 }];
+let breathingConfig = { durationSec: 180, inhale: 4, exhale: 6 };
+let breathingRun = null; // { startedAt, phaseTimeoutId, tickIntervalId } ou null si aucune séance en cours
+
+function formatBreathingTime(sec) {
+  const m = Math.floor(sec / 60), s = Math.max(0, Math.round(sec % 60));
+  return m + ":" + String(s).padStart(2, "0");
+}
+// Arrête proprement toute séance en cours — appelé au clic sur "Arrêter",
+// en changeant de sous-onglet/d'onglet, ou avant d'en démarrer une nouvelle.
+// Ne touche au DOM que s'il existe encore (peut être appelé après un
+// re-rendu qui a déjà remplacé la vue).
+function stopBreathing() {
+  if (!breathingRun) return;
+  clearTimeout(breathingRun.phaseTimeoutId);
+  clearInterval(breathingRun.tickIntervalId);
+  breathingRun = null;
+  const circle = document.getElementById("breathing-circle");
+  const phaseText = document.getElementById("breathing-phase-text");
+  const countdown = document.getElementById("breathing-countdown");
+  const startBtn = document.getElementById("breathing-start-btn");
+  const stopBtn = document.getElementById("breathing-stop-btn");
+  if (circle) { circle.style.transitionDuration = "0.6s"; circle.style.transform = "scale(1)"; }
+  if (phaseText) phaseText.textContent = "Prêt";
+  if (countdown) countdown.textContent = formatBreathingTime(breathingConfig.durationSec) + " au total";
+  if (startBtn) startBtn.style.display = "";
+  if (stopBtn) stopBtn.style.display = "none";
+}
+function runBreathingPhase(phase) {
+  if (!breathingRun) return;
+  const elapsed = (Date.now() - breathingRun.startedAt) / 1000;
+  if (elapsed >= breathingConfig.durationSec) { finishBreathing(); return; }
+  const circle = document.getElementById("breathing-circle");
+  const phaseText = document.getElementById("breathing-phase-text");
+  const seconds = phase === "inhale" ? breathingConfig.inhale : breathingConfig.exhale;
+  if (circle) { circle.style.transitionDuration = seconds + "s"; circle.style.transform = phase === "inhale" ? "scale(1.55)" : "scale(1)"; }
+  if (phaseText) phaseText.textContent = phase === "inhale" ? "Inspirez" : "Expirez";
+  breathingRun.phaseTimeoutId = setTimeout(function() { runBreathingPhase(phase === "inhale" ? "exhale" : "inhale"); }, seconds * 1000);
+}
+function finishBreathing() {
+  stopBreathing();
+  const phaseText = document.getElementById("breathing-phase-text");
+  const countdown = document.getElementById("breathing-countdown");
+  if (phaseText) phaseText.textContent = "Terminé";
+  if (countdown) countdown.textContent = "Séance terminée";
+}
+function startBreathing() {
+  stopBreathing();
+  const startBtn = document.getElementById("breathing-start-btn");
+  const stopBtn = document.getElementById("breathing-stop-btn");
+  if (startBtn) startBtn.style.display = "none";
+  if (stopBtn) stopBtn.style.display = "";
+  breathingRun = { startedAt: Date.now(), phaseTimeoutId: null, tickIntervalId: null };
+  breathingRun.tickIntervalId = setInterval(function() {
+    const countdown = document.getElementById("breathing-countdown");
+    if (!countdown || !breathingRun) return;
+    const elapsed = (Date.now() - breathingRun.startedAt) / 1000;
+    countdown.textContent = formatBreathingTime(breathingConfig.durationSec - elapsed) + " restantes";
+  }, 250);
+  runBreathingPhase("inhale");
+}
+
 async function getWearableForDate2(dateStr) {
   const rows = await sb("wearable_daily?day=eq." + dateStr + "&select=*");
   return rows && rows[0] ? rows[0] : null;
@@ -2351,7 +2419,30 @@ function drawMigraine() {
   html += '<div class="pill-row compact" id="migraine-subtab-row" style="margin-bottom:16px">';
   html += '<button class="pill' + (migraineSubTab === "logger" ? " active" : "") + '" data-subtab="logger">Logger</button>';
   html += '<button class="pill' + (migraineSubTab === "historique" ? " active" : "") + '" data-subtab="historique">Historique & tendances</button>';
+  html += '<button class="pill' + (migraineSubTab === "respiration" ? " active" : "") + '" data-subtab="respiration">Respiration</button>';
   html += "</div>";
+
+  if (migraineSubTab === "respiration") {
+    html += '<div class="card"><div class="section-label">Durée</div><div class="pill-row compact" id="breathing-duration-row" style="margin-bottom:14px">';
+    BREATHING_DURATIONS.forEach(function(d) { html += '<button class="pill' + (breathingConfig.durationSec === d.sec ? " active" : "") + '" data-sec="' + d.sec + '">' + d.label + "</button>"; });
+    html += '</div><div class="section-label">Rythme</div><div class="pill-row compact" id="breathing-pace-row">';
+    BREATHING_PACES.forEach(function(p) { html += '<button class="pill' + (breathingConfig.inhale === p.inhale && breathingConfig.exhale === p.exhale ? " active" : "") + '" data-inhale="' + p.inhale + '" data-exhale="' + p.exhale + '">' + p.label + "</button>"; });
+    html += "</div></div>";
+
+    html += '<div style="display:flex;flex-direction:column;align-items:center;padding:30px 0">';
+    html += '<div id="breathing-circle" style="width:140px;height:140px;border-radius:50%;background:var(--gradient);display:flex;align-items:center;justify-content:center;transition:transform 0.6s ease-in-out;transform:scale(1);box-shadow:0 0 30px rgba(242,113,28,0.35)">';
+    html += '<span id="breathing-phase-text" style="font-size:15px;font-weight:900;text-transform:uppercase;letter-spacing:.5px;color:var(--bg)">Prêt</span></div>';
+    html += '<div id="breathing-countdown" class="muted" style="margin-top:22px;font-size:13px">' + formatBreathingTime(breathingConfig.durationSec) + ' au total</div>';
+    html += '<button id="breathing-start-btn" style="width:100%;max-width:280px;margin-top:20px;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Démarrer</button>';
+    html += '<button id="breathing-stop-btn" style="display:none;width:100%;max-width:280px;margin-top:20px;padding:13px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--chalkDim);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Arrêter</button>';
+    html += "</div>";
+
+    html += '<div class="card steel"><div class="section-label">À savoir</div><div style="font-size:12px;color:var(--chalkDim);line-height:1.6">La respiration lente (environ 6 cycles/min avec le rythme "Détente") est la fréquence la plus étudiée en biofeedback de variabilité cardiaque pour la relaxation. Utile contre le stress et la tension nerveuse — deux déclencheurs fréquents listés dans l\'onglet Logger — mais c\'est un outil de gestion au quotidien, pas un traitement d\'une crise en cours ni un substitut à un avis médical.</div></div>';
+
+    app.innerHTML = html;
+    wireMigraineEvents();
+    return;
+  }
 
   if (migraineSubTab === "logger") {
   html += '<div class="card">';
@@ -2456,8 +2547,19 @@ function drawMigraine() {
 
 function wireMigraineEvents() {
   document.querySelectorAll('#migraine-subtab-row .pill').forEach(function(btn) {
-    btn.addEventListener("click", function() { migraineSubTab = btn.dataset.subtab; drawMigraine(); });
+    btn.addEventListener("click", function() { stopBreathing(); migraineSubTab = btn.dataset.subtab; drawMigraine(); });
   });
+
+  document.querySelectorAll('#breathing-duration-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { stopBreathing(); breathingConfig.durationSec = Number(btn.dataset.sec); drawMigraine(); });
+  });
+  document.querySelectorAll('#breathing-pace-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { stopBreathing(); breathingConfig.inhale = Number(btn.dataset.inhale); breathingConfig.exhale = Number(btn.dataset.exhale); drawMigraine(); });
+  });
+  const breathingStartBtn = document.getElementById("breathing-start-btn");
+  if (breathingStartBtn) breathingStartBtn.addEventListener("click", startBreathing);
+  const breathingStopBtn = document.getElementById("breathing-stop-btn");
+  if (breathingStopBtn) breathingStopBtn.addEventListener("click", stopBreathing);
 
   const startInput = document.getElementById("mig-start");
   if (startInput) startInput.addEventListener("change", function() { migraineForm.startDateTime = startInput.value; drawMigraine(); });
@@ -2619,6 +2721,7 @@ function statHtml(label, value, color) {
 
 // ---------------- Navigation ----------------
 function setTab(tab) {
+  stopBreathing(); // n'a d'effet que si une séance de respiration guidée tourne
   currentTab = tab;
   document.querySelectorAll(".tab[data-tab]").forEach(function(t) { t.classList.toggle("active", t.dataset.tab === tab); });
   if (tab === "seance") loadSeance();
