@@ -2528,7 +2528,7 @@ function drawMigraine() {
     html += "</div>";
 
     html += '<div class="section-label">Temps (secondes) — réglable librement</div>';
-    html += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">';
+    html += '<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:10px">';
     [
       ["inhale", "Inspiration"], ["holdFull", "Rétention (poumons pleins)"],
       ["exhale", "Expiration"], ["holdEmpty", "Rétention (poumons vides)"],
@@ -2548,11 +2548,11 @@ function drawMigraine() {
     html += '<div class="stat"><div class="stat-label">Cycles/min</div><div class="stat-value" id="breathing-stat-bpm">–</div></div>';
     html += "</div></div>";
 
-    html += '<div style="display:flex;flex-direction:column;align-items:center;padding:20px 0 30px">';
+    html += '<div style="display:flex;flex-direction:column;align-items:center;padding:30px 0 36px">';
     html += '<div id="breathing-circle" style="width:150px;height:150px;border-radius:50%;background:var(--gradient);display:flex;align-items:center;justify-content:center;transition:transform 0.6s ease-in-out;transform:scale(1);box-shadow:0 0 30px rgba(242,113,28,0.35)">';
     html += '<span id="breathing-phase-text" style="font-size:11.5px;font-weight:900;text-transform:uppercase;letter-spacing:.3px;line-height:1.4;color:var(--bg);text-align:center;padding:0 10px;max-width:88px">Prêt</span></div>';
-    html += '<button id="breathing-start-btn" style="width:100%;max-width:280px;margin-top:22px;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Démarrer</button>';
-    html += '<button id="breathing-stop-btn" style="display:none;width:100%;max-width:280px;margin-top:22px;padding:13px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--chalkDim);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Arrêter</button>';
+    html += '<button id="breathing-start-btn" style="width:100%;max-width:280px;margin-top:40px;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Démarrer</button>';
+    html += '<button id="breathing-stop-btn" style="display:none;width:100%;max-width:280px;margin-top:40px;padding:13px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--chalkDim);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Arrêter</button>';
     html += "</div>";
 
     html += '<div class="card steel"><div class="section-label">À savoir</div><div style="font-size:12px;color:var(--chalkDim);line-height:1.6">La respiration lente (le préréglage "Cohérence", ~5,5 cycles/min) est le rythme le plus étudié en biofeedback de variabilité cardiaque pour la relaxation. Utile contre le stress et la tension nerveuse — deux déclencheurs fréquents listés dans l\'onglet Logger — mais c\'est un outil de gestion au quotidien, pas un traitement d\'une crise en cours ni un substitut à un avis médical.</div></div>';
