@@ -2391,6 +2391,8 @@ function stopBreathing() {
   const startBtn = document.getElementById("breathing-start-btn");
   const stopBtn = document.getElementById("breathing-stop-btn");
   if (circle) { circle.style.transitionDuration = "0.6s"; circle.style.transform = "scale(1)"; circle.style.backgroundColor = "var(--steel)"; }
+  const ballTrack = document.getElementById("breathing-ball-track");
+  if (ballTrack) { ballTrack.style.transition = "none"; ballTrack.style.transform = "rotate(0deg)"; }
   if (phaseText) phaseText.textContent = "Prêt";
   if (startBtn) startBtn.style.display = "";
   if (stopBtn) stopBtn.style.display = "none";
@@ -2407,6 +2409,18 @@ function updateBreathingVisual(phase, seconds) {
     // progressif de couleur, en plus de la taille, marque clairement les fins
     // de phase.
     circle.style.backgroundColor = phase === "inhale" ? "var(--rust)" : "var(--steel)";
+  }
+  const ballTrack = document.getElementById("breathing-ball-track");
+  if (ballTrack) {
+    // Repart de son point de départ à chaque phase (y compris les
+    // rétentions) et boucle en un tour complet exactement à la durée de la
+    // phase — il faut casser la transition en cours avant d'en relancer une,
+    // d'où le reflow forcé entre les deux affectations de style.
+    ballTrack.style.transition = "none";
+    ballTrack.style.transform = "rotate(0deg)";
+    void ballTrack.offsetWidth;
+    ballTrack.style.transition = "transform " + seconds + "s linear";
+    ballTrack.style.transform = "rotate(-360deg)";
   }
   if (phaseText) phaseText.textContent = BREATHING_PHASE_LABELS[phase];
 }
@@ -2553,8 +2567,15 @@ function drawMigraine() {
     html += "</div></div>";
 
     html += '<div style="display:flex;flex-direction:column;align-items:center;padding:48px 0 56px">';
-    html += '<div id="breathing-circle" style="width:150px;height:150px;border-radius:50%;background-color:var(--steel);display:flex;align-items:center;justify-content:center;transition:transform 0.6s ease-in-out,background-color 0.6s ease-in-out;transform:scale(1);box-shadow:0 0 30px rgba(242,113,28,0.35)">';
+    html += '<div style="position:relative;width:172px;height:172px">';
+    html += '<div id="breathing-circle" style="position:absolute;top:11px;left:11px;width:150px;height:150px;border-radius:50%;background-color:var(--steel);display:flex;align-items:center;justify-content:center;transition:transform 0.6s ease-in-out,background-color 0.6s ease-in-out;transform:scale(1);box-shadow:0 0 30px rgba(242,113,28,0.35)">';
     html += '<span id="breathing-phase-text" style="font-size:11.5px;font-weight:900;text-transform:uppercase;letter-spacing:.3px;line-height:1.4;color:var(--bg);text-align:center;padding:0 10px;max-width:88px">Prêt</span></div>';
+    // Bille qui fait un tour complet du cercle (sens antihoraire) sur la durée
+    // de chaque phase, y compris les rétentions — repère visuel de temps qui
+    // s'ajoute à la taille et la couleur du cercle.
+    html += '<div id="breathing-ball-track" style="position:absolute;inset:0;transform:rotate(0deg)">';
+    html += '<div id="breathing-ball" style="position:absolute;top:-6px;left:50%;margin-left:-6px;width:12px;height:12px;border-radius:50%;background:var(--chalk);box-shadow:0 0 8px rgba(245,243,239,0.8)"></div>';
+    html += "</div></div>";
     html += '<button id="breathing-start-btn" style="width:100%;max-width:280px;margin-top:64px;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Démarrer</button>';
     html += '<button id="breathing-stop-btn" style="display:none;width:100%;max-width:280px;margin-top:64px;padding:13px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--chalkDim);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Arrêter</button>';
     html += "</div>";
