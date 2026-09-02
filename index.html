@@ -2308,6 +2308,7 @@ const BREATHING_PHASE_LABELS = { inhale: "Inspirez", holdFull: "Retenez (poumons
 let breathingConfig = { durationSec: 300, inhale: 4, holdFull: 0, exhale: 6, holdEmpty: 0, soundOn: true };
 let breathingRun = null; // { startedAt, phaseTimeoutId, tickIntervalId, breaths } ou null si aucune séance en cours
 let breathingAudioCtx = null, breathingWakeLock = null;
+let breathingCurrentOsc = null, breathingCurrentGain = null;
 
 function formatBreathingTime(sec) {
   const m = Math.floor(sec / 60), s = Math.max(0, Math.round(sec % 60));
@@ -2316,10 +2317,26 @@ function formatBreathingTime(sec) {
 function breathingCycleSeconds() {
   return (Number(breathingConfig.inhale)||0) + (Number(breathingConfig.holdFull)||0) + (Number(breathingConfig.exhale)||0) + (Number(breathingConfig.holdEmpty)||0);
 }
-// Petit bip distinct pour l'inspiration (aigu) et l'expiration (grave) — Web
-// Audio pur, pas de fichier son à charger. Le contexte audio n'est créé qu'au
-// premier "Démarrer" (geste utilisateur), requis par les politiques autoplay.
-function playBreathingTone(freq) {
+// Tonalité continue pendant toute la phase — moyenne pour l'inspiration,
+// grave pour l'expiration, silence pendant les rétentions. Web Audio pur
+// (pas de fichier à charger), planifiée sur l'horloge audio elle-même (bien
+// plus précise que setTimeout) pour un fondu d'entrée/sortie propre, calé
+// exactement sur la durée de la phase. Le contexte n'est créé qu'au premier
+// "Démarrer" (geste utilisateur, requis par les politiques autoplay).
+function stopBreathingTone() {
+  if (breathingCurrentOsc && breathingAudioCtx) {
+    try {
+      const t0 = breathingAudioCtx.currentTime;
+      breathingCurrentGain.gain.cancelScheduledValues(t0);
+      breathingCurrentGain.gain.setValueAtTime(breathingCurrentGain.gain.value, t0);
+      breathingCurrentGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.08);
+      breathingCurrentOsc.stop(t0 + 0.1);
+    } catch (e) {}
+  }
+  breathingCurrentOsc = null; breathingCurrentGain = null;
+}
+function playBreathingTone(freq, durationSec) {
+  stopBreathingTone(); // coupe une tonalité précédente qui jouerait encore
   if (!breathingConfig.soundOn) return;
   try {
     if (!breathingAudioCtx) breathingAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -2329,12 +2346,16 @@ function playBreathingTone(freq) {
     const gain = breathingAudioCtx.createGain();
     osc.type = "sine";
     osc.frequency.value = freq;
+    const fade = Math.min(0.15, durationSec / 4); // court fondu, adapté aux phases très brèves
     gain.gain.setValueAtTime(0.0001, t0);
-    gain.gain.exponentialRampToValueAtTime(0.15, t0 + 0.03);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.4);
+    gain.gain.exponentialRampToValueAtTime(0.12, t0 + fade);
+    gain.gain.setValueAtTime(0.12, t0 + Math.max(fade, durationSec - fade));
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + durationSec);
     osc.connect(gain).connect(breathingAudioCtx.destination);
     osc.start(t0);
-    osc.stop(t0 + 0.45);
+    osc.stop(t0 + durationSec + 0.05);
+    breathingCurrentOsc = osc; breathingCurrentGain = gain;
+    osc.onended = function() { if (breathingCurrentOsc === osc) { breathingCurrentOsc = null; breathingCurrentGain = null; } };
   } catch (e) {}
 }
 // Empêche l'écran de s'éteindre pendant la séance (l'animation s'arrêterait
@@ -2361,6 +2382,7 @@ function updateBreathingIdleStats() {
 // re-rendu qui a déjà remplacé la vue).
 function stopBreathing() {
   releaseBreathingWakeLock();
+  stopBreathingTone();
   if (!breathingRun) return;
   clearTimeout(breathingRun.phaseTimeoutId);
   clearInterval(breathingRun.tickIntervalId);
@@ -2398,8 +2420,9 @@ function runBreathingPhase(orderIdx) {
     guard++;
   }
   if (guard >= BREATHING_PHASE_ORDER.length) { finishBreathing(); return; } // les 4 temps sont à 0
-  if (phase === "inhale") { breathingRun.breaths++; playBreathingTone(660); }
-  else if (phase === "exhale") { playBreathingTone(440); }
+  if (phase === "inhale") { breathingRun.breaths++; playBreathingTone(440, seconds); } // tonalité moyenne
+  else if (phase === "exhale") { playBreathingTone(220, seconds); } // tonalité grave
+  else { stopBreathingTone(); } // silence pendant les rétentions
   updateBreathingVisual(phase, seconds);
   const breathsEl = document.getElementById("breathing-stat-breaths");
   if (breathsEl) breathsEl.textContent = breathingRun.breaths;
@@ -2517,7 +2540,7 @@ function drawMigraine() {
 
     html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Son</span><span></span></div>';
     html += '<div class="pill-row compact" id="breathing-sound-row"><button class="pill' + (breathingConfig.soundOn ? " active green" : "") + '" data-sound="1">Activé</button><button class="pill' + (!breathingConfig.soundOn ? " active" : "") + '" data-sound="0">Désactivé</button></div>';
-    html += '<div class="muted" style="font-size:10px;margin-top:8px">Un bip aigu au début de l\'inspiration, un bip grave au début de l\'expiration — rien pendant les rétentions.</div></div>';
+    html += '<div class="muted" style="font-size:10px;margin-top:8px">Une tonalité moyenne tenue pendant toute l\'inspiration, une tonalité grave tenue pendant toute l\'expiration — silence pendant les rétentions.</div></div>';
 
     html += '<div class="card"><div class="stat-row">';
     html += '<div class="stat"><div class="stat-label">Temps</div><div class="stat-value" id="breathing-stat-clock">–</div></div>';
