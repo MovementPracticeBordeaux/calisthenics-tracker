@@ -496,6 +496,7 @@ async function listWearable(limit) {
 // ---------------- État global ----------------
 let currentTab = "seance";
 let lifeloadEditing = false;
+let gripEditing = false;
 let napQuality = "moyenne";
 let napDuration = 30;
 let currentDate = todayISO();
@@ -1268,6 +1269,7 @@ async function renderDashboard() {
     sb("workout_sessions?day=eq." + today + "&activity_type=eq.trajet&select=training_effect_aerobic,training_effect_anaerobic").catch(function() { return []; }),
     sb("migraines?select=day").catch(function() { return []; }),
     sb("migraines?day=eq." + today + "&select=intensity").catch(function() { return []; }),
+    sb("grip_strength?select=day,value_kg&order=day.desc&limit=30").catch(function() { return []; }),
   ]);
   const sessions = results[0] || [], wearable = results[1] || [];
   const dismissedDates = (results[2] || []).map(function(r) { return r.day; });
@@ -1276,6 +1278,7 @@ async function renderDashboard() {
   const lifeloadRows = results[6] || [], napRows = results[7] || [];
   const todayFitSessions = results[8] || [], todayTrips = results[9] || [];
   const migRows = results[10] || [], todayMigRows = results[11] || [];
+  const gripRows = results[12] || [];
 
   const todayTotalLoad = sessions.filter(function(s){ return s.date === today; }).reduce(function(s,x){ return s + (x.correctedLoad || 0); }, 0);
   const todayWearable = wearable.find(function(w){ return w.day === today; }) || null;
@@ -1381,6 +1384,24 @@ async function renderDashboard() {
     if (respDiff >= 2) lines.push({ tone: "warn", text: "Fréquence respiratoire nocturne à " + todayWearable.resp_rate_avg.toFixed(1) + " resp/min, au-dessus de ta moyenne (" + respBaseline.toFixed(1) + ") — à surveiller sur plusieurs nuits (signe précoce possible de fatigue ou début de maladie)." });
   }
 
+  // Force de préhension (dynamomètre) — marqueur de fatigue neuromusculaire
+  // validé en sciences du sport (proxy peu coûteux et rapide, à la place de
+  // tests de saut type CMJ) : une chute vs ta propre moyenne récente signale
+  // une récupération incomplète, indépendamment du ressenti subjectif. Le
+  // bruit jour/jour est faible (contrairement à la VFC), d'où des seuils
+  // plus serrés. Nécessite au moins 3 mesures précédentes pour une
+  // comparaison fiable — pas de baseline sur une poignée de valeurs.
+  const todayGripRow = gripRows.find(function(g){ return g.day === today; });
+  const gripHistory = gripRows.filter(function(g){ return g.day !== today && g.day >= daysAgo(14); });
+  const gripBaseline = gripHistory.length >= 3 ? avgOf(gripHistory.map(function(g){ return g.value_kg; })) : null;
+  let gripPct = null;
+  if (todayGripRow && gripBaseline != null && gripBaseline > 0) {
+    gripPct = ((todayGripRow.value_kg - gripBaseline) / gripBaseline) * 100;
+    if (gripPct <= -15) lines.push({ tone: "warn", text: "Force de préhension à " + todayGripRow.value_kg + " kg, " + gripPct.toFixed(0) + "% sous ta moyenne récente (" + gripBaseline.toFixed(1) + " kg) — fatigue neuromusculaire marquée, récupération probablement incomplète." });
+    else if (gripPct <= -10) lines.push({ tone: "warn", text: "Force de préhension à " + todayGripRow.value_kg + " kg, " + gripPct.toFixed(0) + "% sous ta moyenne récente (" + gripBaseline.toFixed(1) + " kg) — signal de fatigue à surveiller." });
+    else if (gripPct >= 8) lines.push({ tone: "good", text: "Force de préhension à " + todayGripRow.value_kg + " kg, en hausse — bon signe de fraîcheur neuromusculaire." });
+  }
+
   const lifeload = (lifeloadRows && lifeloadRows[0]) ? lifeloadRows[0].state : null;
 
   const napQWeight = { bonne: 1.0, moyenne: 0.6, mauvaise: 0.2 };
@@ -1458,6 +1479,10 @@ async function renderDashboard() {
   let score = 100, signals = 0;
   if (hrDiff != null) { signals++; if (hrDiff >= 10) score -= 30; else if (hrDiff >= 5) score -= 15; else if (hrDiff >= 3) score -= 3; else if (hrDiff <= -3) score += 5; }
   if (hrvPct != null) { signals++; if (hrvPct <= -30) score -= 25; else if (hrvPct <= -20) score -= 15; else if (hrvPct <= -10) score -= 5; else if (hrvPct >= 15) score += 10; }
+  // Seuils plus serrés que la VFC : le bruit jour/jour de la force de
+  // préhension est faible (littérature : CV ~3-5%), donc un écart de 10-15%
+  // est déjà un signal net, pas une fluctuation normale.
+  if (gripPct != null) { signals++; if (gripPct <= -15) score -= 25; else if (gripPct <= -10) score -= 15; else if (gripPct <= -5) score -= 5; else if (gripPct >= 8) score += 10; }
   if (stressDiff != null) { signals++; if (stressDiff >= 10) score -= 25; else if (stressDiff >= 5) score -= 10; }
   if (loadRatio != null) { signals++; } // le score réagit désormais en continu via atlWake ci-dessous, pas juste à un seuil
   // Panier "charge / fatigue" — dépense du jour, fatigue accumulée, effort
@@ -1712,6 +1737,7 @@ async function renderDashboard() {
     if (stressTierNow) checklist.push({ label: "Stress", tier: stressTierNow, note: Math.round(todayWearable.stress_avg) });
     if (hrTierNow) checklist.push({ label: "FC repos", tier: hrTierNow, note: (todayWearable && todayWearable.hr_resting != null ? todayWearable.hr_resting : Math.round(avgOf(hrSeries.map(function(s){return s.val;}).filter(function(v){return v>0;})))) + " bpm" });
     if (hrvTierNow) checklist.push({ label: "VFC", tier: hrvTierNow, note: (todayWearable && todayWearable.hrv_avg != null ? Math.round(todayWearable.hrv_avg) : Math.round(avgOf(hrvSeries.map(function(s){return s.val;}).filter(function(v){return v>0;})))) + " ms" });
+    if (gripPct != null) checklist.push({ label: "Préhension", tier: gripPct <= -10 ? "red" : gripPct <= -5 ? "amber" : "green", note: todayGripRow.value_kg + " kg · " + (gripPct >= 0 ? "+" : "") + gripPct.toFixed(0) + "%" });
     if (sleepMin != null) checklist.push({ label: "Sommeil", tier: sleepMin < 360 ? "red" : sleepMin < 420 ? "amber" : "green", note: Math.floor(sleepMin/60) + "h" + Math.round(sleepMin%60).toString().padStart(2,'0') });
     if (loadRatio != null) checklist.push({ label: "Fatigue accumulée (réveil)", tier: wakeFatigueDeduction >= 20 ? "red" : wakeFatigueDeduction >= 10 ? "amber" : "green", note: (freshnessBonus > 0 ? "+" + freshnessBonus : "-" + wakeFatigueDeduction) + " pts · ACWR " + loadRatio.toFixed(2) });
     if (todayTotalLoad > 0) checklist.push({ label: "Dépense du jour", tier: todayDepletion >= 25 ? "red" : todayDepletion >= 12 ? "amber" : "green", note: "-" + todayDepletion + " pts (charge " + todayTotalLoad + ")" });
@@ -1744,6 +1770,17 @@ async function renderDashboard() {
       html += '<div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px">';
       html += '<span style="font-size:13px">Ressenti aujourd\'hui : <b>' + esc(currentLabel) + '</b></span>';
       html += '<button id="lifeload-edit-btn" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--steel);font-size:11px;font-weight:700;padding:5px 10px;cursor:pointer">Modifier</button></div>';
+    }
+
+    if (!todayGripRow || gripEditing) {
+      html += '<div class="card"><div class="section-label">Force de préhension (dynamomètre)</div>';
+      html += '<input type="number" min="0" step="0.5" id="grip-input" placeholder="kg" value="' + (todayGripRow ? todayGripRow.value_kg : "") + '" style="width:100%;text-align:center;margin-bottom:12px" />';
+      html += '<button id="grip-validate" style="width:100%;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Enregistrer</button>';
+      html += '<div class="muted" style="font-size:10px;margin-top:10px">Mesure le matin, à jeun, avant tout entraînement ou café — toujours la même main, meilleure de 2 essais.</div></div>';
+    } else {
+      html += '<div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px">';
+      html += '<span style="font-size:13px">Préhension aujourd\'hui : <b>' + todayGripRow.value_kg + ' kg</b>' + (gripPct != null ? ' <span class="muted" style="font-size:11px">(' + (gripPct >= 0 ? "+" : "") + gripPct.toFixed(0) + '% vs récent)</span>' : '') + '</span>';
+      html += '<button id="grip-edit-btn" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--steel);font-size:11px;font-weight:700;padding:5px 10px;cursor:pointer">Modifier</button></div>';
     }
 
     if (stressTierNow) {
@@ -1922,6 +1959,20 @@ async function renderDashboard() {
   });
   const lifeloadEditBtn = document.getElementById("lifeload-edit-btn");
   if (lifeloadEditBtn) lifeloadEditBtn.addEventListener("click", function() { lifeloadEditing = true; renderDashboard(); });
+  const gripValidateBtn = document.getElementById("grip-validate");
+  if (gripValidateBtn) gripValidateBtn.addEventListener("click", function() {
+    const input = document.getElementById("grip-input");
+    const val = input ? Number(input.value) : 0;
+    if (!val || val <= 0) { alert("Entre une valeur en kg."); return; }
+    gripValidateBtn.textContent = "Enregistrement…";
+    sb("grip_strength", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify({ day: todayISO(), value_kg: val }),
+    }).then(function() { gripEditing = false; renderDashboard(); }).catch(function(e) { alert("Erreur : " + e.message); gripValidateBtn.textContent = "Enregistrer"; });
+  });
+  const gripEditBtn = document.getElementById("grip-edit-btn");
+  if (gripEditBtn) gripEditBtn.addEventListener("click", function() { gripEditing = true; renderDashboard(); });
 }
 // ---------------- Rendu : Sommeil ----------------
 async function renderSommeil() {
