@@ -217,7 +217,13 @@ def build_sleep_stages(db_path, days=30):
     """Décode les stades de sommeil (léger/profond/paradoxal/réveils) depuis les
     8 derniers octets du blob HUAMI_SLEEP_SESSION_SAMPLE.DATA, au format
     4x uint16 little-endian dans l'ordre [paradoxal, léger, profond, réveils].
-    Décodage vérifié manuellement contre les valeurs affichées par Zepp."""
+    Décodage vérifié manuellement contre les valeurs affichées par Zepp.
+
+    Les 8 premiers octets du blob contiennent deux horodatages uint32 LE :
+    les octets 0-3 dupliquent la colonne TIMESTAMP de la ligne (fin de
+    session / réveil), et les octets 4-7 sont un horodatage distinct —
+    confirmé par dump hexadécimal direct (`hex(DATA)`) : c'est le vrai début
+    de la session, c'est-à-dire l'heure de coucher."""
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     cutoff_ms = int((datetime.datetime.now() - datetime.timedelta(days=days)).timestamp() * 1000)
@@ -229,6 +235,7 @@ def build_sleep_stages(db_path, days=30):
     for ts, data in cur.fetchall():
         try:
             rem, light, deep, awake = struct.unpack("<HHHH", data[-8:])
+            bedtime_ts = struct.unpack_from("<I", data, 4)[0]
         except struct.error:
             continue
         day = datetime.datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d")
@@ -238,25 +245,29 @@ def build_sleep_stages(db_path, days=30):
         rows.append({
             "day": day, "sleep_total_min": total, "sleep_light_min": light,
             "sleep_deep_min": deep, "sleep_rem_min": rem, "sleep_awake_count": awake,
-            "_ts": ts,
+            "_ts": ts, "_bedtime_ts": bedtime_ts, "_total": total,
         })
     conn.close()
 
-    # Déduplique par jour (garde l'entrée la plus récente si plusieurs sessions
-    # tombent sur la même date) — sinon Postgres refuse le upsert (ON CONFLICT
-    # ne peut pas affecter la même ligne deux fois dans un même envoi).
+    # Déduplique par jour en gardant la session la plus LONGUE, pas la plus
+    # récente : Gadgetbridge peut logguer plusieurs sessions le même jour
+    # (une sieste l'après-midi, une session ré-écrite plusieurs fois pendant
+    # la nuit pendant qu'elle progresse) — prendre "la plus récente"
+    # laissait une sieste courte mais tardive écraser la vraie nuit
+    # (c'est très probablement l'origine d'une "heure de réveil" à 17h37
+    # observée en pratique). La session la plus longue est presque toujours
+    # la vraie nuit, jamais une sieste.
     by_day = {}
     for r in rows:
         d = r["day"]
-        if d not in by_day or r["_ts"] > by_day[d]["_ts"]:
+        if d not in by_day or r["_total"] > by_day[d]["_total"]:
             by_day[d] = r
     for r in by_day.values():
-        # L'horodatage du blob correspond approximativement à l'heure de
-        # finalisation de la session (proche du réveil) — utile pour estimer
-        # la vigilance cognitive dans la journée (heures écoulées depuis le réveil).
-        dt = datetime.datetime.fromtimestamp(r["_ts"] / 1000)
-        r["wake_hour"] = round(dt.hour + dt.minute / 60, 2)
-        del r["_ts"]
+        dt_wake = datetime.datetime.fromtimestamp(r["_ts"] / 1000)
+        dt_bed = datetime.datetime.fromtimestamp(r["_bedtime_ts"] / 1000)
+        r["wake_hour"] = round(dt_wake.hour + dt_wake.minute / 60, 2)
+        r["bedtime_hour"] = round(dt_bed.hour + dt_bed.minute / 60, 2)
+        del r["_ts"], r["_bedtime_ts"], r["_total"]
 
     return list(by_day.values())
 

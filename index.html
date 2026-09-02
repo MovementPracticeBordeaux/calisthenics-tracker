@@ -3127,11 +3127,37 @@ function statHtml(label, value, color) {
 let coachMessages = []; // { role: "user"|"assistant", text }
 let coachData = null; // recalculé une fois par visite de l'onglet, pas à chaque question
 
-function stdDev(arr) {
-  if (arr.length < 2) return null;
-  const m = avgOf(arr);
-  const variance = arr.reduce(function(s, v) { return s + Math.pow(v - m, 2); }, 0) / arr.length;
-  return Math.sqrt(variance);
+function hoursToLabel(hDec) {
+  let h = Math.floor(((hDec % 24) + 24) % 24);
+  let m = Math.round((hDec - Math.floor(hDec)) * 60);
+  if (m === 60) { m = 0; h = (h + 1) % 24; }
+  return h + "h" + String(m).padStart(2, "0");
+}
+// Moyenne d'heures d'horloge (coucher à 23h30 un soir, 00h15 le lendemain) —
+// une moyenne arithmétique naïve casse au passage de minuit (23.5 et 0.25
+// donnent 11.875, alors que la vraie moyenne est ~23h52). On passe donc par
+// des vecteurs sur le cercle des 24h (statistique circulaire standard pour
+// des données d'horloge/rythme circadien).
+function circularMeanHour(hours) {
+  let sx = 0, sy = 0;
+  hours.forEach(function(h) {
+    const rad = (h / 24) * 2 * Math.PI;
+    sx += Math.cos(rad); sy += Math.sin(rad);
+  });
+  let rad = Math.atan2(sy / hours.length, sx / hours.length);
+  if (rad < 0) rad += 2 * Math.PI;
+  return (rad / (2 * Math.PI)) * 24;
+}
+// Longueur du vecteur moyen (R, 0 à 1) : 1 = tous les horaires identiques
+// (très régulier), 0 = horaires dispersés sur toute la journée.
+function circularRegularity(hours) {
+  let sx = 0, sy = 0;
+  hours.forEach(function(h) {
+    const rad = (h / 24) * 2 * Math.PI;
+    sx += Math.cos(rad); sy += Math.sin(rad);
+  });
+  const n = hours.length;
+  return Math.sqrt(sx * sx + sy * sy) / n;
 }
 function buildCoachData(wearable, sessions, migraines, gripRows) {
   function avgField(arr, field) {
@@ -3164,11 +3190,8 @@ function buildCoachData(wearable, sessions, migraines, gripRows) {
 
   return {
     sleepAvg14: avgField(last14, "sleep_total_min"),
-    // Pas d'heure de coucher/réveil fiable : Gadgetbridge ne remonte que des
-    // totaux par stade (léger/profond/paradoxal), pas d'horodatage de début/
-    // fin de nuit exploitable (voir sync_to_supabase.py) — la régularité se
-    // mesure donc sur la DURÉE de sommeil nuit après nuit, pas les horaires.
-    sleepDurations14: last14.map(function(w) { return w.sleep_total_min; }).filter(function(x) { return x != null; }),
+    bedtimeHours14: last14.map(function(w) { return w.bedtime_hour; }).filter(function(x) { return x != null; }),
+    wakeHours14: last14.map(function(w) { return w.wake_hour; }).filter(function(x) { return x != null; }),
     hrvRecent: avgField(last7, "hrv_avg"), hrvBaseline: avgField(baseline, "hrv_avg"),
     hrRecent: avgField(last7, "hr_resting"), hrBaseline: avgField(baseline, "hr_resting"),
     stressRecent: avgField(last7, "stress_avg"), stressBaseline: avgField(baseline, "stress_avg"),
@@ -3191,20 +3214,23 @@ function coachAnswerSleepAvg(d) {
   return "Sur les 14 derniers jours, tu as dormi en moyenne " + h + "h" + String(m).padStart(2, "0") + " par nuit — " + qual + ".";
 }
 function coachAnswerSleepRegularity(d) {
-  if (d.sleepDurations14.length < 5) return "Pas encore assez de nuits enregistrées pour évaluer la régularité de ton sommeil.";
-  const avgDur = avgOf(d.sleepDurations14);
-  const sd = stdDev(d.sleepDurations14); // en minutes
-  // Régularité de la DURÉE de sommeil nuit après nuit, pas des horaires de
-  // coucher/réveil — Gadgetbridge ne remonte que des totaux par stade
-  // (léger/profond/paradoxal), pas d'horodatage de coucher/réveil fiable
-  // (voir sync_to_supabase.py). Écart-type de 0min = 100% de régularité,
-  // 60min ou plus = 0% — approximation simple, pas un algorithme validé.
-  const regularity = Math.max(0, Math.min(100, Math.round(100 - (sd / 60) * 100)));
-  const h = Math.floor(avgDur / 60), m = Math.round(avgDur % 60);
-  const note = regularity >= 80 ? "une durée de sommeil très régulière nuit après nuit"
-    : regularity >= 60 ? "une durée de sommeil relativement régulière, avec quelques écarts"
-    : "une durée de sommeil assez variable d'une nuit à l'autre";
-  return "Ta régularité de durée de sommeil sur les 14 derniers jours est d'environ " + regularity + "% (moyenne " + h + "h" + String(m).padStart(2, "0") + ", écart-type ±" + Math.round(sd) + " min) — tu as " + note + ". (Je n'ai pas d'heure de coucher/réveil fiable à te donner : la montre ne remonte que des durées par stade de sommeil, pas d'horodatage précis du coucher/réveil.)";
+  if (d.bedtimeHours14.length < 5 || d.wakeHours14.length < 5) {
+    return "Pas encore assez de nuits avec heure de coucher/réveil enregistrée — relance ta synchro (sync_to_supabase.py) pour les récupérer.";
+  }
+  const avgBed = circularMeanHour(d.bedtimeHours14);
+  const avgWake = circularMeanHour(d.wakeHours14);
+  // Régularité = longueur du vecteur moyen (R, statistique circulaire) sur
+  // le coucher et le réveil, moyennée — 1 = horaires identiques tous les
+  // jours, 0 = horaires dispersés sur toute la journée.
+  const regularity = Math.round(((circularRegularity(d.bedtimeHours14) + circularRegularity(d.wakeHours14)) / 2) * 100);
+  // Seuils recalibrés sur la vraie échelle de R (pas 0-100 linéaire) : même un
+  // horaire assez dispersé sur plusieurs heures garde un R élevé (~85-90%)
+  // tant que ça reste dans une même moitié de journée — seul un vrai
+  // désordre façon travail posté fait chuter R nettement (<50%).
+  const note = regularity >= 95 ? "des horaires de coucher et de réveil très réguliers — excellent pour la qualité de récupération"
+    : regularity >= 80 ? "des horaires relativement réguliers, avec quelques écarts"
+    : "des horaires assez variés, ce qui peut nuire à la qualité de ton sommeil";
+  return "Ta régularité de sommeil sur les 14 derniers jours est d'environ " + regularity + "% — tu as " + note + ". Coucher moyen : " + hoursToLabel(avgBed) + ". Réveil moyen : " + hoursToLabel(avgWake) + ". Pour favoriser la récupération, vise un réveil entre " + hoursToLabel(avgWake - 0.25) + " et " + hoursToLabel(avgWake + 0.25) + ".";
 }
 function coachAnswerHrvTrend(d) {
   if (d.hrvRecent == null || d.hrvBaseline == null || d.hrvBaseline <= 0) return "Pas encore assez de données de VFC pour dégager une tendance.";
