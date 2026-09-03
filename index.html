@@ -2032,9 +2032,158 @@ async function loadEntrainement() {
     }).catch(function(e) { status.textContent = "Erreur : " + e.message; });
   });
 }
+let recuperationSubTab = "jour";
 async function loadRecuperation() {
   const app = document.getElementById("app");
-  app.innerHTML = '<h1>Récupération</h1><div class="muted">Contenu en cours de refonte — arrive dans le prochain commit.</div>';
+  app.innerHTML = '<div class="muted">Chargement…</div>';
+  const today = todayISO();
+  let errorMsg = "";
+  const [wearable, todayNaps, migraines, workouts] = await Promise.all([
+    listWearable(40).catch(function(e) { errorMsg = errorMsg || e.message; return []; }),
+    sb("naps?day=eq." + today + "&select=*&order=created_at.asc").catch(function() { return []; }),
+    sb("migraines?select=day,intensity&order=day.desc&limit=90").catch(function() { return []; }),
+    sb("workout_sessions?select=start_time,hrr_1min,duration_min,training_effect_aerobic,training_effect_anaerobic&activity_type=eq.seance&order=start_time.asc&limit=200").catch(function() { return []; }),
+  ]);
+
+  const last14 = []; for (let i = 13; i >= 0; i--) last14.push(daysAgo(i));
+  const nights = last14.map(function(d) {
+    const w = wearable.find(function(x){ return x.day === d; });
+    return { date: d, total: w ? w.sleep_total_min : null, light: w ? w.sleep_light_min : null, deep: w ? w.sleep_deep_min : null, rem: w ? w.sleep_rem_min : null, awake: w ? w.sleep_awake_count : null };
+  });
+  const withSleep = nights.filter(function(n) { return n.total != null; });
+  const latest = withSleep.length ? withSleep[withSleep.length - 1] : null;
+  const avgTotal = withSleep.length ? avgOf(withSleep.map(function(n){ return n.total; })) : null;
+
+  let sleepScore = null, sleepTier = null, sleepTierColor = "muted";
+  if (latest) {
+    sleepScore = 100;
+    const totalH = latest.total / 60;
+    if (totalH < 6) sleepScore -= 35; else if (totalH < 7) sleepScore -= 12; else if (totalH > 9.5) sleepScore -= 8;
+    const deepPct = Math.round((latest.deep / latest.total) * 100);
+    const remPct = Math.round((latest.rem / latest.total) * 100);
+    if (deepPct < 13) sleepScore -= 15; else if (deepPct > 23) sleepScore -= 5;
+    if (remPct < 15) sleepScore -= 15; else if (remPct < 20 || remPct > 25) sleepScore -= 5;
+    sleepScore = Math.max(0, Math.min(100, sleepScore));
+    sleepTier = sleepScore >= 70 ? "Bon" : sleepScore >= 40 ? "Correct" : "Insuffisant";
+    sleepTierColor = sleepScore >= 70 ? "green" : sleepScore >= 40 ? "amber" : "red";
+  }
+
+  const pai7 = wearable.filter(function(w){ return w.day >= daysAgo(6); });
+  const weeklyPai = pai7.reduce(function(s, w){ return s + (w.pai_low||0) + (w.pai_moderate||0) + (w.pai_high||0); }, 0);
+
+  const totalNapMin = todayNaps.reduce(function(s, n) { return s + n.duration_min; }, 0);
+  const todayMigRow = migraines.find(function(m){ return m.day === today; });
+
+  let html = "";
+  if (errorMsg) html += '<div class="error-banner"><b>Erreur :</b> ' + esc(errorMsg) + "</div>";
+  html += '<h1 style="margin-bottom:4px">Récupération</h1>';
+  html += '<div class="muted" style="margin-bottom:18px">' + formatDateLabel(today) + "</div>";
+
+  html += '<div class="pill-row compact" style="margin-bottom:16px" id="recuperation-subtab-row">';
+  [["jour","Aujourd'hui"],["tendance","Tendance"]].forEach(function(p) {
+    html += '<button class="pill' + (recuperationSubTab === p[0] ? " active" : "") + '" data-subtab="' + p[0] + '">' + p[1] + "</button>";
+  });
+  html += "</div>";
+
+  if (recuperationSubTab === "jour") {
+    if (!latest) {
+      html += '<div class="card"><div class="muted" style="text-align:center;padding:16px 0">Pas encore de nuit trackée récente.</div></div>';
+    } else {
+      const h = Math.floor(latest.total / 60), m = latest.total % 60;
+      html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Sommeil</span><span>' + tierDot(sleepTierColor) + '</span></div>';
+      html += '<div style="padding:18px 0">' + circleGaugeHtml(sleepScore, 100, { sublabel: sleepTier, size: 200, strokeWidth: 16 }) + "</div>";
+      html += '<div style="text-align:center;padding-top:14px;border-top:1px solid var(--line);font-size:13px"><b>' + h + 'h' + (m<10?'0':'') + m + '</b>';
+      if (avgTotal != null) html += ' <span class="muted">· moyenne 14j : ' + Math.floor(avgTotal/60) + 'h' + Math.round(avgTotal%60).toString().padStart(2,'0') + '</span>';
+      html += "</div>";
+      // PAI en style jauge de stress (tourniquet horizontal) plutôt qu'en
+      // anneau — décision actée avec l'utilisateur, rattaché sous l'anneau
+      // Sommeil comme la Vigilance l'est sous l'anneau Forme.
+      html += '<div style="text-align:center;padding-top:10px;font-size:12px">PAI cette semaine</div>';
+      html += stressGaugeHtml(Math.min(weeklyPai, 100), weeklyPai >= 100 ? "Objectif atteint" : "/ 100", false);
+      html += "</div>";
+
+      const stageTotal = latest.total || 1;
+      const deepPct = Math.round((latest.deep/stageTotal)*100), remPct = Math.round((latest.rem/stageTotal)*100), lightPct = Math.round((latest.light/stageTotal)*100);
+      const stagesTier = (deepPct < 13 || remPct < 15) ? "amber" : "green";
+
+      const checklist = [];
+      checklist.push({ label: "Sommeil", tier: sleepTierColor, note: sleepScore + "/100 · " + sleepTier });
+      checklist.push({ label: "Stades", tier: stagesTier, note: "Léger " + lightPct + "% · Profond " + deepPct + "% · Paradoxal " + remPct + "%" });
+      if (latest.awake != null) checklist.push({ label: "Réveils détectés", tier: "steel", note: latest.awake });
+      checklist.push({ label: "Sieste", tier: totalNapMin > 0 ? "green" : "steel", note: totalNapMin > 0 ? totalNapMin + " min" : "Aucune — via le Coach" });
+      if (todayMigRow) checklist.push({ label: "Migraine", tier: "red", note: (todayMigRow.intensity || "–") + "/10" });
+
+      html += '<div class="card"><div class="section-label">Récap du jour</div>';
+      checklist.forEach(function(c) {
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
+        html += '<span style="font-size:13px">' + c.label + (c.note != null ? ' <span class="muted" style="font-size:11px">· ' + esc(String(c.note)) + '</span>' : '') + "</span>";
+        html += '<span>' + tierDot(c.tier) + "</span></div>";
+      });
+      html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></div>';
+    }
+  } else {
+    const sleepWeekBars = last14.slice(-7).map(function(n) { return { label: formatDateLabel(n.date).slice(0,2), val: n.total ? Math.round(n.total/60*10)/10 : 0 }; });
+    const month = []; for (let i = 29; i >= 0; i--) month.push(daysAgo(i));
+    const sleepMonthLine = [];
+    for (let w = 0; w < 5; w++) {
+      const bd = month.slice(w*6, w*6+6); if (!bd.length) continue;
+      const vals = wearable.filter(function(x){ return bd.indexOf(x.day) !== -1 && x.sleep_total_min != null; }).map(function(x){ return x.sleep_total_min/60; });
+      sleepMonthLine.push({ label: bd[0].slice(8,10)+"-"+bd[bd.length-1].slice(8,10), val: vals.length ? avgOf(vals) : 0 });
+    }
+    const recentSleep = withSleep.slice(-7).map(function(n){ return n.total; });
+    const olderSleep = withSleep.slice(-14, -7).map(function(n){ return n.total; });
+    let sleepPhrase = "Pas encore assez de nuits pour une tendance.";
+    if (recentSleep.length >= 3 && olderSleep.length >= 3) {
+      const diffMin = avgOf(recentSleep) - avgOf(olderSleep);
+      sleepPhrase = diffMin <= -30 ? "En baisse de " + Math.round(-diffMin) + " min sur les 7 dernières nuits vs les 7 précédentes."
+        : diffMin >= 30 ? "En hausse de " + Math.round(diffMin) + " min sur les 7 dernières nuits."
+        : "Stable sur les 2 dernières semaines.";
+    }
+    html += metricTrendSectionHtml("Durée de sommeil", sleepWeekBars, sleepMonthLine, sleepPhrase, { decimals: 1, unit: "h", qualify: qualifySleepHours });
+
+    // Le PAI se lit nativement en total glissant sur 7 jours, pas jour par
+    // jour — la "semaine" montre la contribution quotidienne au score actuel,
+    // le "mois" montre l'évolution de ce total sur les 4 dernières semaines.
+    const paiDailyBars = last14.slice(-7).map(function(n) {
+      const w = wearable.find(function(x){ return x.day === n.date; });
+      const total = w ? (w.pai_low||0)+(w.pai_moderate||0)+(w.pai_high||0) : 0;
+      return { label: formatDateLabel(n.date).slice(0,2), val: Math.round(total) };
+    });
+    const paiWeeks = [[0,7],[7,14],[14,21],[21,28]];
+    const paiWeeklyLine = paiWeeks.map(function(w, idx) {
+      const days = month.slice(w[0], w[1]);
+      const total = wearable.filter(function(x){ return days.indexOf(x.day) !== -1; }).reduce(function(s,x){ return s + (x.pai_low||0)+(x.pai_moderate||0)+(x.pai_high||0); }, 0);
+      return { label: idx === 0 ? "cette sem." : "-" + idx + "sem", val: Math.round(total) };
+    }).reverse();
+    const paiPhrase = weeklyPai >= 100 ? "Objectif hebdomadaire de 100 atteint." : "À " + Math.round(weeklyPai) + "/100 cette semaine — vise 100 pour le bénéfice cardiovasculaire associé.";
+    html += metricTrendSectionHtml("PAI", paiDailyBars, paiWeeklyLine, paiPhrase, { showAvg: false });
+
+    const hrrRows = workouts.filter(function(w){
+      if (w.hrr_1min == null) return false;
+      const te = (Number(w.training_effect_aerobic) || 0) + (Number(w.training_effect_anaerobic) || 0);
+      return w.duration_min >= 15 && te >= 1.0;
+    });
+    if (hrrRows.length >= 3) {
+      const hrrBars = hrrRows.slice(-7).map(function(w) { return { label: formatDateLabel(w.start_time.slice(0,10)).slice(0,2), val: w.hrr_1min }; });
+      const hrrLine = hrrRows.slice(-15).map(function(w) { return { label: formatDateLabel(w.start_time.slice(0,10)).slice(0,2), val: w.hrr_1min }; });
+      const hrrRecentAvg = avgOf(hrrRows.slice(-3).map(function(w){ return w.hrr_1min; }));
+      html += metricTrendSectionHtml("Récupération cardiaque (HRR, 1min)", hrrBars, hrrLine, "Moyenne récente : " + hrrRecentAvg.toFixed(0) + " bpm — approximatif (capteur poignet, immobilité post-effort non garantie).", { unit: " bpm" });
+    }
+
+    const migWeek = migraines.filter(function(m){ return m.day >= daysAgo(6); });
+    const migMonth = migraines.filter(function(m){ return m.day >= daysAgo(29); });
+    html += '<div class="card"><div class="section-label">Fréquence des migraines</div><div class="stat-row">';
+    html += statHtml("Cette semaine", migWeek.length, migWeek.length >= 2 ? "amber" : null);
+    html += statHtml("Ce mois-ci", migMonth.length, migMonth.length >= 3 ? "amber" : null);
+    html += "</div></div>";
+
+    html += '<div class="muted" style="font-size:11px;text-align:center;margin:4px 0 16px">Corrélation avec le sommeil/stress, déclencheurs fréquents et historique complet : demande au Coach.</div>';
+  }
+
+  app.innerHTML = html;
+  document.querySelectorAll('#recuperation-subtab-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { recuperationSubTab = btn.dataset.subtab; loadRecuperation(); });
+  });
 }
 // ---------------- Rendu : Sommeil ----------------
 async function renderSommeil() {
@@ -2259,9 +2408,9 @@ function scoreTierGradient(tier) {
 let gaugeIdCounter = 0;
 // Jauge horizontale façon Zepp : repère triangulaire sur une échelle de
 // graduations, plutôt qu'un anneau — pour le stress notamment.
-function stressGaugeHtml(value, sublabel) {
+function stressGaugeHtml(value, sublabel, invert) {
   const pct = Math.max(0, Math.min(1, value / 100));
-  const tier = scoreTierColor(pct, true);
+  const tier = scoreTierColor(pct, invert !== false);
   const color = "var(--" + tier + ")";
   const tickCount = 24;
   const pointerLeft = pct * 100;
