@@ -1043,11 +1043,12 @@ async function renderForme() {
       const baseline = wearable.filter(function(w){ return w.day < daysAgo(6) && w.day >= daysAgo(29) && w[field] != null; }).map(function(w){ return w[field]; });
       return { recent: recent.length ? avgOf(recent) : null, baseline: baseline.length >= 3 ? avgOf(baseline) : null };
     }
+    const migDaySet = migRows.map(function(r){ return r.day; });
     function weekBars(field) {
       const last7 = []; for (let i = 6; i >= 0; i--) last7.push(daysAgo(i));
       return last7.map(function(d) {
         const w = wearable.find(function(x){ return x.day === d; });
-        return { label: formatDateLabel(d).slice(0,2), val: (w && w[field] != null) ? w[field] : 0 };
+        return { label: formatDateLabel(d).slice(0,2), val: (w && w[field] != null) ? w[field] : 0, migraine: migDaySet.indexOf(d) !== -1 };
       });
     }
     function monthLine(field) {
@@ -1056,7 +1057,7 @@ async function renderForme() {
       for (let w = 0; w < 5; w++) {
         const bd = month.slice(w*6, w*6+6); if (!bd.length) continue;
         const vals = wearable.filter(function(x){ return bd.indexOf(x.day) !== -1; }).map(function(x){return x[field];}).filter(function(v){return v!=null;});
-        b.push({ label: bd[0].slice(8,10)+"-"+bd[bd.length-1].slice(8,10), val: vals.length ? avgOf(vals) : 0 });
+        b.push({ label: bd[0].slice(8,10)+"-"+bd[bd.length-1].slice(8,10), val: vals.length ? avgOf(vals) : 0, migraine: bd.some(function(d){ return migDaySet.indexOf(d) !== -1; }) });
       }
       return b;
     }
@@ -1098,13 +1099,16 @@ async function loadEntrainement() {
   app.innerHTML = '<div class="muted">Chargement…</div>';
   const today = todayISO();
   let errorMsg = "";
-  const [sessions, gripRows, wearable, dismissedRows, trainingCoefs] = await Promise.all([
+  const [sessions, gripRows, wearable, dismissedRows, trainingCoefs, migraines, kzWorkouts] = await Promise.all([
     listSessions(90).catch(function(e) { errorMsg = errorMsg || e.message; return []; }),
     sb("grip_strength?select=day,value_kg&order=day.desc&limit=30").catch(function() { return []; }),
     listWearable(14).catch(function() { return []; }),
     sb("dismissed_activity_flags?select=day").catch(function() { return []; }),
     sb("training_coefficients?select=*&order=category,label").catch(function() { return []; }),
+    sb("migraines?select=day&order=day.desc&limit=60").catch(function() { return []; }),
+    sb("workout_sessions?select=day,kz_leger_min,kz_intensif_min,kz_aerobique_min,kz_anaerobie_min,kz_vo2max_min,kz_hrmax_used,kz_hrrest_used&activity_type=eq.seance&kz_leger_min=not.is.null&order=day.desc&limit=60").catch(function() { return []; }),
   ]);
+  const migDaySet = migraines.map(function(m){ return m.day; });
 
   const todaySessions = sessions.filter(function(s){ return s.date === today; });
   const todayTotalLoad = todaySessions.reduce(function(s,x){ return s + (x.correctedLoad || 0); }, 0);
@@ -1218,14 +1222,14 @@ async function loadEntrainement() {
     const prev7 = []; for (let i = 13; i >= 7; i--) prev7.push(daysAgo(i));
     const loadWeekBars = last7.map(function(d) {
       const total = sessions.filter(function(s){ return s.date === d; }).reduce(function(s,x){ return s + (x.correctedLoad || 0); }, 0);
-      return { label: formatDateLabel(d).slice(0,2), val: total };
+      return { label: formatDateLabel(d).slice(0,2), val: total, migraine: migDaySet.indexOf(d) !== -1 };
     });
     const month = []; for (let i = 29; i >= 0; i--) month.push(daysAgo(i));
     const loadMonthLine = [];
     for (let w = 0; w < 5; w++) {
       const bd = month.slice(w*6, w*6+6); if (!bd.length) continue;
       const total = sessions.filter(function(s){ return bd.indexOf(s.date) !== -1; }).reduce(function(s,x){ return s + (x.correctedLoad || 0); }, 0);
-      loadMonthLine.push({ label: bd[0].slice(8,10)+"-"+bd[bd.length-1].slice(8,10), val: total });
+      loadMonthLine.push({ label: bd[0].slice(8,10)+"-"+bd[bd.length-1].slice(8,10), val: total, migraine: bd.some(function(d){ return migDaySet.indexOf(d) !== -1; }) });
     }
     const totalLoad7 = sessions.filter(function(s){ return last7.indexOf(s.date) !== -1; }).reduce(function(s,x){ return s + (x.correctedLoad || 0); }, 0);
     const prevLoad7 = sessions.filter(function(s){ return prev7.indexOf(s.date) !== -1; }).reduce(function(s,x){ return s + (x.correctedLoad || 0); }, 0);
@@ -1240,12 +1244,12 @@ async function loadEntrainement() {
     }
     html += metricTrendSectionHtml("Charge d'entraînement", loadWeekBars, loadMonthLine, chargePhrase, {});
 
-    const gripWeekBars = last7.map(function(d) { const g = gripRows.find(function(x){ return x.day === d; }); return { label: formatDateLabel(d).slice(0,2), val: g ? g.value_kg : 0 }; });
+    const gripWeekBars = last7.map(function(d) { const g = gripRows.find(function(x){ return x.day === d; }); return { label: formatDateLabel(d).slice(0,2), val: g ? g.value_kg : 0, migraine: migDaySet.indexOf(d) !== -1 }; });
     const gripMonthLine = [];
     for (let w = 0; w < 5; w++) {
       const bd = month.slice(w*6, w*6+6); if (!bd.length) continue;
       const vals = gripRows.filter(function(g){ return bd.indexOf(g.day) !== -1; }).map(function(g){ return g.value_kg; });
-      gripMonthLine.push({ label: bd[0].slice(8,10)+"-"+bd[bd.length-1].slice(8,10), val: vals.length ? avgOf(vals) : 0 });
+      gripMonthLine.push({ label: bd[0].slice(8,10)+"-"+bd[bd.length-1].slice(8,10), val: vals.length ? avgOf(vals) : 0, migraine: bd.some(function(d){ return migDaySet.indexOf(d) !== -1; }) });
     }
     const gripSorted = gripRows.slice().sort(function(a,b){ return a.day < b.day ? -1 : 1; });
     const gripRecent = gripSorted.slice(-3).map(function(g){ return g.value_kg; });
@@ -1261,7 +1265,34 @@ async function loadEntrainement() {
     }
     html += metricTrendSectionHtml("Force de préhension", gripWeekBars, gripMonthLine, gripPhrase, { unit: " kg", decimals: 1 });
 
-    html += '<div class="muted" style="font-size:11px;text-align:center;margin:4px 0 16px">Zones cardiaques, charge par discipline et recommandations tirage/poussée : demande au Coach.</div>';
+    // Zones cardiaques (Karvonen) — visuel restauré ici tel quel (barres par
+    // zone) après avoir disparu en ne devenant qu'une réponse texte du Coach ;
+    // assez important pour rester visible sans avoir à poser la question.
+    const kz30 = kzWorkouts.filter(function(w){ return w.day >= daysAgo(29); });
+    if (kz30.length > 0) {
+      const kzTot = { l: 0, i: 0, a: 0, an: 0, v: 0 };
+      kz30.forEach(function(w) {
+        kzTot.l += Number(w.kz_leger_min) || 0; kzTot.i += Number(w.kz_intensif_min) || 0;
+        kzTot.a += Number(w.kz_aerobique_min) || 0; kzTot.an += Number(w.kz_anaerobie_min) || 0;
+        kzTot.v += Number(w.kz_vo2max_min) || 0;
+      });
+      const kzGrand = kzTot.l + kzTot.i + kzTot.a + kzTot.an + kzTot.v;
+      if (kzGrand > 0) {
+        const kzRows = [
+          ["Léger", kzTot.l, "steel"], ["Intensif", kzTot.i, "green"],
+          ["Aérobique", kzTot.a, "amber"], ["Anaérobie", kzTot.an, "rust"], ["VO2 max", kzTot.v, "red"],
+        ];
+        html += '<div class="card"><div class="section-label">Zones cardiaques — 30 derniers jours</div>';
+        kzRows.forEach(function(r) {
+          const pct = Math.round((r[1] / kzGrand) * 100);
+          html += '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>' + r[0] + '</span><span class="muted">' + Math.round(r[1]) + " min · " + pct + "%</span></div>";
+          html += '<div style="height:7px;background:var(--surfaceRaised);border-radius:4px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:var(--' + r[2] + ')"></div></div></div>';
+        });
+        html += '<div class="muted" style="font-size:10px;margin-top:8px">Méthode Karvonen (réserve cardiaque), FC max ' + kz30[0].kz_hrmax_used + ', FC repos ' + kz30[0].kz_hrrest_used + '. Plus juste que le %FCmax des montres (qui ignore la FC repos), mais reste une estimation.</div></div>';
+      }
+    }
+
+    html += '<div class="muted" style="font-size:11px;text-align:center;margin:4px 0 16px">Charge par discipline et recommandations tirage/poussée : demande au Coach.</div>';
 
     html += '<details class="card"><summary class="section-label" style="cursor:pointer;list-style:none">Réglages avancés — coefficients de charge</summary>';
     html += '<div style="margin-top:10px">';
@@ -1422,13 +1453,14 @@ async function loadRecuperation() {
       html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></div>';
     }
   } else {
-    const sleepWeekBars = nights.slice(-7).map(function(n) { return { label: formatDateLabel(n.date).slice(0,2), val: n.total ? Math.round(n.total/60*10)/10 : 0 }; });
+    const migDaySet = migraines.map(function(m){ return m.day; });
+    const sleepWeekBars = nights.slice(-7).map(function(n) { return { label: formatDateLabel(n.date).slice(0,2), val: n.total ? Math.round(n.total/60*10)/10 : 0, migraine: migDaySet.indexOf(n.date) !== -1 }; });
     const month = []; for (let i = 29; i >= 0; i--) month.push(daysAgo(i));
     const sleepMonthLine = [];
     for (let w = 0; w < 5; w++) {
       const bd = month.slice(w*6, w*6+6); if (!bd.length) continue;
       const vals = wearable.filter(function(x){ return bd.indexOf(x.day) !== -1 && x.sleep_total_min != null; }).map(function(x){ return x.sleep_total_min/60; });
-      sleepMonthLine.push({ label: bd[0].slice(8,10)+"-"+bd[bd.length-1].slice(8,10), val: vals.length ? avgOf(vals) : 0 });
+      sleepMonthLine.push({ label: bd[0].slice(8,10)+"-"+bd[bd.length-1].slice(8,10), val: vals.length ? avgOf(vals) : 0, migraine: bd.some(function(d){ return migDaySet.indexOf(d) !== -1; }) });
     }
     const recentSleep = withSleep.slice(-7).map(function(n){ return n.total; });
     const olderSleep = withSleep.slice(-14, -7).map(function(n){ return n.total; });
@@ -1447,13 +1479,13 @@ async function loadRecuperation() {
     const paiDailyBars = last14.slice(-7).map(function(d) {
       const w = wearable.find(function(x){ return x.day === d; });
       const total = w ? (w.pai_low||0)+(w.pai_moderate||0)+(w.pai_high||0) : 0;
-      return { label: formatDateLabel(d).slice(0,2), val: Math.round(total) };
+      return { label: formatDateLabel(d).slice(0,2), val: Math.round(total), migraine: migDaySet.indexOf(d) !== -1 };
     });
     const paiWeeks = [[0,7],[7,14],[14,21],[21,28]];
     const paiWeeklyLine = paiWeeks.map(function(w, idx) {
       const days = month.slice(w[0], w[1]);
       const total = wearable.filter(function(x){ return days.indexOf(x.day) !== -1; }).reduce(function(s,x){ return s + (x.pai_low||0)+(x.pai_moderate||0)+(x.pai_high||0); }, 0);
-      return { label: idx === 0 ? "cette sem." : "-" + idx + "sem", val: Math.round(total) };
+      return { label: idx === 0 ? "cette sem." : "-" + idx + "sem", val: Math.round(total), migraine: days.some(function(d){ return migDaySet.indexOf(d) !== -1; }) };
     }).reverse();
     const paiPhrase = weeklyPai >= 100 ? "Objectif hebdomadaire de 100 atteint." : "À " + Math.round(weeklyPai) + "/100 cette semaine — vise 100 pour le bénéfice cardiovasculaire associé.";
     html += metricTrendSectionHtml("PAI", paiDailyBars, paiWeeklyLine, paiPhrase, { showAvg: false });
@@ -1464,8 +1496,8 @@ async function loadRecuperation() {
       return w.duration_min >= 15 && te >= 1.0;
     });
     if (hrrRows.length >= 3) {
-      const hrrBars = hrrRows.slice(-7).map(function(w) { return { label: formatDateLabel(w.start_time.slice(0,10)).slice(0,2), val: w.hrr_1min }; });
-      const hrrLine = hrrRows.slice(-15).map(function(w) { return { label: formatDateLabel(w.start_time.slice(0,10)).slice(0,2), val: w.hrr_1min }; });
+      const hrrBars = hrrRows.slice(-7).map(function(w) { const d = w.start_time.slice(0,10); return { label: formatDateLabel(d).slice(0,2), val: w.hrr_1min, migraine: migDaySet.indexOf(d) !== -1 }; });
+      const hrrLine = hrrRows.slice(-15).map(function(w) { const d = w.start_time.slice(0,10); return { label: formatDateLabel(d).slice(0,2), val: w.hrr_1min, migraine: migDaySet.indexOf(d) !== -1 }; });
       const hrrRecentAvg = avgOf(hrrRows.slice(-3).map(function(w){ return w.hrr_1min; }));
       html += metricTrendSectionHtml("Récupération cardiaque (HRR, 1min)", hrrBars, hrrLine, "Moyenne récente : " + hrrRecentAvg.toFixed(0) + " bpm — approximatif (capteur poignet, immobilité post-effort non garantie).", { unit: " bpm" });
     }
@@ -1587,12 +1619,19 @@ function barChartHtml(items, opts) {
     const isLast = i === items.length - 1;
     const barStyle = isLast && v > 0 ? "background:var(--gradient)" : "background:var(--steel);opacity:0.75";
     html += '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px">';
+    // Migraine ce jour-là (ou dans cette période groupée) — repère visuel
+    // pour situer les migraines dans le temps sur toutes les courbes de
+    // l'appli, pas juste dans l'historique migraine.
+    html += '<span style="font-size:10px;color:var(--rust);line-height:1;height:11px" title="Migraine">' + (item.migraine ? "✦" : "") + "</span>";
     html += '<span style="font-size:9px;color:var(--chalkDim);white-space:nowrap">' + (v > 0 ? v.toFixed(decimals) : "–") + "</span>";
     html += '<div style="width:100%;height:' + h + 'px;' + barStyle + ';border-radius:3px 3px 1px 1px"></div>';
     html += '<span style="font-size:9px;color:var(--muted)">' + (item.label || "") + "</span>";
     html += "</div>";
   });
   html += "</div>";
+  if (items.some(function(item) { return item.migraine; })) {
+    html += '<div class="muted" style="text-align:right;font-size:9px;margin-top:4px"><span style="color:var(--rust)">✦</span> migraine</div>';
+  }
   if (opts.showAvg !== false) {
     const nonZero = vals.filter(function(v) { return v > 0; });
     if (nonZero.length >= 2) {
@@ -1648,6 +1687,11 @@ function lineChartHtml(items, opts) {
     const size = isLast ? 6 : 4;
     const color = isLast ? "var(--pink)" : "var(--steel)";
     html += '<div style="position:absolute;left:' + p.xPct.toFixed(2) + '%;top:' + p.yPct.toFixed(2) + '%;width:' + size + 'px;height:' + size + 'px;border-radius:50%;background:' + color + ';transform:translate(-50%,-50%)"></div>';
+    // Migraine dans cette période (jour ou tranche groupée) — même repère
+    // visuel que barChartHtml, positionné juste au-dessus du point.
+    if (items[i].migraine) {
+      html += '<div style="position:absolute;left:' + p.xPct.toFixed(2) + '%;top:' + p.yPct.toFixed(2) + '%;transform:translate(-50%,-180%);font-size:11px;color:var(--rust)" title="Migraine">✦</div>';
+    }
   });
   html += "</div>";
   html += '<div style="display:flex;justify-content:space-between;margin-top:4px">';
@@ -1655,6 +1699,9 @@ function lineChartHtml(items, opts) {
     html += '<span style="font-size:9px;color:var(--muted);flex:1;text-align:center">' + (item.label || "") + "</span>";
   });
   html += "</div>";
+  if (items.some(function(item) { return item.migraine; })) {
+    html += '<div class="muted" style="text-align:right;font-size:9px;margin-top:4px"><span style="color:var(--rust)">✦</span> migraine</div>';
+  }
   if (opts.showAvg !== false) {
     const nonZero = vals.filter(function(v) { return v > 0; });
     if (nonZero.length >= 2) {
@@ -2284,7 +2331,7 @@ function circularRegularity(hours) {
   const n = hours.length;
   return Math.sqrt(sx * sx + sy * sy) / n;
 }
-function buildCoachData(wearable, sessions, migraines, gripRows, kzWorkouts) {
+function buildCoachData(wearable, sessions, migraines, gripRows, kzWorkouts, lifeloadRows) {
   function avgField(arr, field) {
     const v = arr.map(function(x) { return x[field]; }).filter(function(x) { return x != null; });
     return v.length ? avgOf(v) : null;
@@ -2337,6 +2384,7 @@ function buildCoachData(wearable, sessions, migraines, gripRows, kzWorkouts) {
     sessionsRaw: sessions,
     migrainesRaw: migraines,
     kzWorkouts: kzWorkouts || [],
+    lifeloadRaw: lifeloadRows || [],
   };
 }
 function coachAnswerSleepAvg(d) {
@@ -2499,22 +2547,72 @@ function coachAnswerKarvonen(d) {
   const pct = function(v) { return Math.round((v / grand) * 100); };
   return "Zones cardiaques (Karvonen, 30 derniers jours, FC max " + kz[0].kz_hrmax_used + ", FC repos " + kz[0].kz_hrrest_used + ") : Léger " + pct(tot.l) + "% · Intensif " + pct(tot.i) + "% · Aérobique " + pct(tot.a) + "% · Anaérobie " + pct(tot.an) + "% · VO2 max " + pct(tot.v) + "%.";
 }
+// ---- Croisements entre domaines (Entraînement × Récupération, Forme ×
+// quotidien) — le genre de question qu'un tableau isolé par métrique ne
+// peut pas poser tout seul.
+function coachAnswerLoadVsSleep(d) {
+  const loadByDay = {};
+  d.sessionsRaw.forEach(function(s) { if (s.correctedLoad) loadByDay[s.date] = (loadByDay[s.date] || 0) + s.correctedLoad; });
+  const sleepByDay = {};
+  d.wearableRaw.forEach(function(w) { if (w.sleep_total_min != null) sleepByDay[w.day] = w.sleep_total_min; });
+  const pairs = [];
+  Object.keys(loadByDay).forEach(function(day) {
+    const next = new Date(day + "T00:00:00");
+    next.setDate(next.getDate() + 1);
+    const nextDay = next.toISOString().slice(0, 10);
+    if (sleepByDay[nextDay] != null) pairs.push({ load: loadByDay[day], sleep: sleepByDay[nextDay] });
+  });
+  if (pairs.length < 6) return "Pas encore assez de séances suivies d'une nuit trackée pour comparer (il en faut au moins 6).";
+  const sorted = pairs.slice().sort(function(a, b) { return b.load - a.load; });
+  const half = Math.max(2, Math.floor(sorted.length / 2));
+  const avgHigh = avgOf(sorted.slice(0, half).map(function(p) { return p.sleep; }));
+  const avgLow = avgOf(sorted.slice(-half).map(function(p) { return p.sleep; }));
+  const diff = avgLow - avgHigh;
+  function lbl(min) { return Math.floor(min / 60) + "h" + String(Math.round(min % 60)).padStart(2, "0"); }
+  if (diff >= 30) return "Après tes séances les plus chargées, tu dors en moyenne " + lbl(avgHigh) + " la nuit suivante, contre " + lbl(avgLow) + " après tes séances légères — un vrai écart, tes grosses séances semblent peser sur ton sommeil.";
+  if (diff <= -30) return "Pas de lien négatif visible : tu dors même un peu plus après tes séances chargées (" + lbl(avgHigh) + ") qu'après les légères (" + lbl(avgLow) + ").";
+  return "Pas d'écart net entre le sommeil après une grosse séance (" + lbl(avgHigh) + ") et après une séance légère (" + lbl(avgLow) + ").";
+}
+function coachAnswerLifeloadAccuracy(d) {
+  const wearableByDay = {};
+  d.wearableRaw.forEach(function(w) { wearableByDay[w.day] = w; });
+  const rows = d.lifeloadRaw.filter(function(l) { return wearableByDay[l.day] && wearableByDay[l.day].stress_avg != null; });
+  const bienStress = rows.filter(function(l) { return l.state === "bien"; }).map(function(l) { return wearableByDay[l.day].stress_avg; });
+  const difficile = ["stresse", "fatigue", "malade", "courbature"];
+  const difficileStress = rows.filter(function(l) { return difficile.indexOf(l.state) !== -1; }).map(function(l) { return wearableByDay[l.day].stress_avg; });
+  if (bienStress.length < 3 || difficileStress.length < 3) return "Pas encore assez de jours avec ressenti renseigné et données montre pour comparer (il en faut au moins 3 de chaque).";
+  const avgBien = avgOf(bienStress), avgDifficile = avgOf(difficileStress);
+  const diff = avgDifficile - avgBien;
+  if (diff >= 8) return "Ton ressenti colle bien à tes données mesurées : stress moyen de " + avgDifficile.toFixed(0) + " les jours où tu te sens stressé/fatigué/malade, contre " + avgBien.toFixed(0) + " les jours où tu te sens bien.";
+  if (diff <= -5) return "Écart surprenant : ton stress mesuré est plutôt plus bas (" + avgDifficile.toFixed(0) + ") les jours où tu te sens mal que les jours où tu te sens bien (" + avgBien.toFixed(0) + ") — ton ressenti capte peut-être autre chose que ce que la montre mesure (charge mentale, douleur, sommeil...).";
+  return "Ton ressenti et ton stress mesuré ne sont pas nettement corrélés (" + avgDifficile.toFixed(0) + " vs " + avgBien.toFixed(0) + ") — le ressenti capte sans doute des choses que la montre ne voit pas.";
+}
 const COACH_QUESTIONS = [
-  { id: "sleep_avg", label: "Ma durée moyenne de sommeil ?", fn: coachAnswerSleepAvg },
-  { id: "sleep_reg", label: "La régularité de mon sommeil ?", fn: coachAnswerSleepRegularity },
-  { id: "hrv_trend", label: "Ma tendance VFC récente ?", fn: coachAnswerHrvTrend },
-  { id: "hr_trend", label: "Ma tendance FC repos ?", fn: coachAnswerHrTrend },
-  { id: "stress", label: "Mon niveau de stress récent ?", fn: coachAnswerStress },
-  { id: "load", label: "Ma charge d'entraînement ?", fn: coachAnswerTrainingLoad },
-  { id: "grip", label: "Ma tendance de préhension ?", fn: coachAnswerGripTrend },
-  { id: "migraine_sleep", label: "Migraines liées au sommeil ?", fn: coachAnswerMigraineSleep },
-  { id: "migraine_triggers", label: "Mes déclencheurs de migraine les plus fréquents ?", fn: coachAnswerMigraineTriggers },
-  { id: "migraine_correlation", label: "Un vrai lien entre mes migraines et mes autres signaux (FC/VFC/stress) ?", fn: coachAnswerMigraineCorrelation },
-  { id: "migraine_history", label: "Mon historique de migraines récent ?", fn: coachAnswerMigraineHistory },
-  { id: "training_balance", label: "Mes séances sont-elles équilibrées (tirage/poussée, thèmes) ?", fn: coachAnswerTrainingBalance },
-  { id: "load_by_discipline", label: "Comment se répartit ma charge par discipline ?", fn: coachAnswerLoadByDiscipline },
-  { id: "karvonen", label: "Mes zones cardiaques à l'entraînement (Karvonen) ?", fn: coachAnswerKarvonen },
+  { id: "sleep_avg", label: "Ma durée moyenne de sommeil ?", fn: coachAnswerSleepAvg, domain: "recuperation" },
+  { id: "sleep_reg", label: "La régularité de mon sommeil ?", fn: coachAnswerSleepRegularity, domain: "recuperation" },
+  { id: "migraine_triggers", label: "Mes déclencheurs de migraine les plus fréquents ?", fn: coachAnswerMigraineTriggers, domain: "recuperation" },
+  { id: "migraine_history", label: "Mon historique de migraines récent ?", fn: coachAnswerMigraineHistory, domain: "recuperation" },
+  { id: "hrv_trend", label: "Ma tendance VFC récente ?", fn: coachAnswerHrvTrend, domain: "forme" },
+  { id: "hr_trend", label: "Ma tendance FC repos ?", fn: coachAnswerHrTrend, domain: "forme" },
+  { id: "stress", label: "Mon niveau de stress récent ?", fn: coachAnswerStress, domain: "forme" },
+  { id: "load", label: "Ma charge d'entraînement ?", fn: coachAnswerTrainingLoad, domain: "entrainement" },
+  { id: "grip", label: "Ma tendance de préhension ?", fn: coachAnswerGripTrend, domain: "entrainement" },
+  { id: "training_balance", label: "Mes séances sont-elles équilibrées (tirage/poussée, thèmes) ?", fn: coachAnswerTrainingBalance, domain: "entrainement" },
+  { id: "load_by_discipline", label: "Comment se répartit ma charge par discipline ?", fn: coachAnswerLoadByDiscipline, domain: "entrainement" },
+  { id: "karvonen", label: "Mes zones cardiaques à l'entraînement (Karvonen) ?", fn: coachAnswerKarvonen, domain: "entrainement" },
+  { id: "migraine_sleep", label: "Migraines liées au sommeil ?", fn: coachAnswerMigraineSleep, domain: "hybride" },
+  { id: "migraine_correlation", label: "Un vrai lien entre mes migraines et mes autres signaux (FC/VFC/stress) ?", fn: coachAnswerMigraineCorrelation, domain: "hybride" },
+  { id: "load_vs_sleep", label: "Mes grosses séances dégradent-elles mon sommeil qui suit ?", fn: coachAnswerLoadVsSleep, domain: "hybride" },
+  { id: "lifeload_accuracy", label: "Mon ressenti colle-t-il à mes signaux mesurés ?", fn: coachAnswerLifeloadAccuracy, domain: "hybride" },
 ];
+const COACH_STATS_FILTERS = [
+  { id: "all", label: "Tout" },
+  { id: "recuperation", label: "Récupération" },
+  { id: "entrainement", label: "Entraînement" },
+  { id: "forme", label: "Forme" },
+  { id: "hybride", label: "Croisées" },
+];
+let coachStatsFilter = "all";
 // Ouvert via la petite bulle flottante (pas un onglet de la nav principale) —
 // un calque plein écran par-dessus l'onglet en cours, pour pouvoir le
 // consulter depuis n'importe où sans perdre ce qui était affiché derrière
@@ -2531,8 +2629,9 @@ async function renderCoach() {
         sb("migraines?select=day,intensity,triggers&order=day.desc&limit=90").catch(function() { return []; }),
         sb("grip_strength?select=day,value_kg&order=day.desc&limit=30").catch(function() { return []; }),
         sb("workout_sessions?select=day,kz_leger_min,kz_intensif_min,kz_aerobique_min,kz_anaerobie_min,kz_vo2max_min,kz_hrmax_used,kz_hrrest_used&activity_type=eq.seance&kz_leger_min=not.is.null&order=day.desc&limit=60").catch(function() { return []; }),
+        sb("lifeload?select=day,state&order=day.desc&limit=90").catch(function() { return []; }),
       ]);
-      coachData = buildCoachData(results[0] || [], results[1] || [], results[2] || [], results[3] || [], results[4] || []);
+      coachData = buildCoachData(results[0] || [], results[1] || [], results[2] || [], results[3] || [], results[4] || [], results[5] || []);
     } catch (e) {
       overlay.innerHTML = '<div class="wrap"><div class="error-banner"><b>Erreur :</b> ' + esc(e.message) + "</div></div>";
       return;
@@ -3050,16 +3149,25 @@ function drawCoach() {
     });
     html += "</div>";
 
-    html += '<div class="section-label" style="margin-bottom:14px">Questions suggérées</div>';
+    html += '<div class="section-label" style="margin-bottom:10px">Questions suggérées</div>';
+    html += '<div class="pill-row compact" style="flex-wrap:wrap;gap:6px;margin-bottom:16px" id="coach-stats-filter-row">';
+    COACH_STATS_FILTERS.forEach(function(f) {
+      html += '<button class="pill' + (coachStatsFilter === f.id ? " active" : "") + '" data-filter="' + f.id + '" style="flex:none;padding:8px 12px">' + f.label + "</button>";
+    });
+    html += "</div>";
     // Des phrases complètes, pas des libellés courts — la classe .pill (nowrap
     // + ellipsis + sans marge horizontale) est faite pour de petits labels
     // fixes, pas pour ça : elle tronquait le texte ("Ma durée moyenne de
     // som..."). Liste empilée pleine largeur, texte aligné à gauche et qui
     // peut passer à la ligne, avec un vrai espace autour.
+    const filteredQuestions = COACH_QUESTIONS.filter(function(q) { return coachStatsFilter === "all" || q.domain === coachStatsFilter; });
     html += '<div style="display:flex;flex-direction:column;gap:12px;margin-bottom:28px" id="coach-question-row">';
-    COACH_QUESTIONS.forEach(function(q) {
+    filteredQuestions.forEach(function(q) {
       html += '<button class="coach-question-btn" data-question="' + q.id + '" style="width:100%;text-align:left;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:10px;padding:16px 18px;color:var(--chalk);font-size:14px;font-weight:700;line-height:1.4;white-space:normal;cursor:pointer">' + q.label + "</button>";
     });
+    if (!filteredQuestions.length) {
+      html += '<div class="muted" style="text-align:center;padding:16px 0">Aucune question dans cette catégorie.</div>';
+    }
     html += "</div>";
 
     html += '<div class="card steel"><div class="muted" style="font-size:11px;line-height:1.6">Réponses calculées directement à partir de tes propres données (pas de génération par IA) — mêmes seuils et méthodes que le reste de l\'appli.</div></div>';
@@ -3098,6 +3206,9 @@ function drawCoach() {
     return;
   }
 
+  document.querySelectorAll('#coach-stats-filter-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { coachStatsFilter = btn.dataset.filter; drawCoach(); });
+  });
   document.querySelectorAll("#coach-question-row .coach-question-btn").forEach(function(btn) {
     btn.addEventListener("click", function() {
       const q = COACH_QUESTIONS.find(function(x) { return x.id === btn.dataset.question; });
