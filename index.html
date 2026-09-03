@@ -3549,6 +3549,8 @@ function statHtml(label, value, color) {
 // génération de texte libre.
 let coachMessages = []; // { role: "user"|"assistant", text }
 let coachData = null; // recalculé une fois par visite de l'onglet, pas à chaque question
+let coachMode = "aujourdhui"; // "aujourdhui" (logging) | "stats" (questions)
+let coachFormOpen = null; // null | "seance" | "lifeload" | "sieste" | "migraine"
 
 function hoursToLabel(hDec) {
   let h = Math.floor(((hDec % 24) + 24) % 24);
@@ -3582,7 +3584,7 @@ function circularRegularity(hours) {
   const n = hours.length;
   return Math.sqrt(sx * sx + sy * sy) / n;
 }
-function buildCoachData(wearable, sessions, migraines, gripRows) {
+function buildCoachData(wearable, sessions, migraines, gripRows, kzWorkouts) {
   function avgField(arr, field) {
     const v = arr.map(function(x) { return x[field]; }).filter(function(x) { return x != null; });
     return v.length ? avgOf(v) : null;
@@ -3628,6 +3630,13 @@ function buildCoachData(wearable, sessions, migraines, gripRows) {
     migraineDaysCount: migDays.length,
     sleepOnMigraineDays: avgField(migWearable, "sleep_total_min"),
     sleepOnOtherDays: avgField(otherWearable, "sleep_total_min"),
+    // Données brutes conservées telles quelles pour les questions Statistiques
+    // qui ont besoin de plus que des moyennes précalculées (déclencheurs,
+    // équilibre tirage/poussée, charge par discipline, zones Karvonen...).
+    wearableRaw: wearable,
+    sessionsRaw: sessions,
+    migrainesRaw: migraines,
+    kzWorkouts: kzWorkouts || [],
   };
 }
 function coachAnswerSleepAvg(d) {
@@ -3710,6 +3719,86 @@ function coachAnswerMigraineSleep(d) {
   if (diff <= -30) return "Sur tes " + d.migraineDaysCount + " migraines enregistrées, tu as même dormi plus que d'habitude — le lien avec un manque de sommeil ne ressort pas de tes données.";
   return "Sur tes " + d.migraineDaysCount + " migraines enregistrées, ton sommeil la veille n'est pas nettement différent des autres nuits — le lien avec le manque de sommeil n'est pas évident dans tes données.";
 }
+function coachAnswerMigraineTriggers(d) {
+  const counts = {};
+  d.migrainesRaw.forEach(function(m) { (m.triggers || []).forEach(function(t) { counts[t] = (counts[t] || 0) + 1; }); });
+  const sorted = Object.keys(counts).sort(function(a, b) { return counts[b] - counts[a]; });
+  if (!sorted.length) return "Pas encore de déclencheur enregistré sur tes migraines.";
+  const top = sorted.slice(0, 4).map(function(tid) {
+    const t = TRIGGERS.find(function(x) { return x.id === tid; });
+    return (t ? t.label : tid) + " (" + counts[tid] + "×)";
+  });
+  return "Tes déclencheurs les plus fréquents : " + top.join(", ") + ".";
+}
+function coachAnswerMigraineCorrelation(d) {
+  const migDays = d.migrainesRaw.map(function(m) { return m.day; });
+  if (migDays.length < 3) return "Pas encore assez de migraines enregistrées (" + migDays.length + ") pour une comparaison fiable.";
+  function avgF(arr, f) { const v = arr.map(function(w) { return w[f]; }).filter(function(x) { return x != null; }); return v.length ? avgOf(v) : null; }
+  const migW = d.wearableRaw.filter(function(w) { return migDays.indexOf(w.day) !== -1; });
+  const otherW = d.wearableRaw.filter(function(w) { return migDays.indexOf(w.day) === -1; });
+  const parts = [];
+  const bHr = avgF(otherW, "hr_resting"), mHr = avgF(migW, "hr_resting");
+  if (bHr != null && mHr != null && Math.abs(mHr - bHr) >= 3) parts.push("FC repos " + (mHr > bHr ? "plus haute" : "plus basse") + " (" + mHr.toFixed(0) + " vs " + bHr.toFixed(0) + ")");
+  const bHrv = avgF(otherW, "hrv_avg"), mHrv = avgF(migW, "hrv_avg");
+  if (bHrv != null && mHrv != null && bHrv > 0 && Math.abs((mHrv - bHrv) / bHrv) >= 0.1) parts.push("VFC " + (mHrv < bHrv ? "plus basse" : "plus haute") + " (" + mHrv.toFixed(0) + " vs " + bHrv.toFixed(0) + " ms)");
+  const bStress = avgF(otherW, "stress_avg"), mStress = avgF(migW, "stress_avg");
+  if (bStress != null && mStress != null && Math.abs(mStress - bStress) >= 5) parts.push("Stress " + (mStress > bStress ? "plus élevé" : "plus faible") + " (" + mStress.toFixed(0) + " vs " + bStress.toFixed(0) + ")");
+  if (!parts.length) return "Sur tes " + migDays.length + " migraines enregistrées, aucun de tes signaux mesurés (FC/VFC/stress) ne ressort nettement des autres jours.";
+  return "Sur tes " + migDays.length + " migraines enregistrées, les jours concernés montrent : " + parts.join(", ") + " — corrélation, pas forcément causalité.";
+}
+function coachAnswerMigraineHistory(d) {
+  if (!d.migrainesRaw.length) return "Aucune migraine enregistrée pour l'instant.";
+  const recent = d.migrainesRaw.slice(0, 5).map(function(m) { return formatDateLabel(m.day) + " (" + (m.intensity || "–") + "/10)"; });
+  return "Tes " + Math.min(5, d.migrainesRaw.length) + " dernières migraines : " + recent.join(", ") + ". Total enregistré : " + d.migrainesRaw.length + ".";
+}
+function coachAnswerTrainingBalance(d) {
+  const month = []; for (let i = 29; i >= 0; i--) month.push(daysAgo(i));
+  const monthSessions = d.sessionsRaw.filter(function(s) { return month.indexOf(s.date) !== -1; });
+  if (monthSessions.length < 3) return "Pas encore assez de séances ce mois-ci pour juger de l'équilibre.";
+  function sessionHasTheme(s, themeId) {
+    if (s.entries[themeId]) return true;
+    const disc = Object.keys(SINGLE_THEME_DISCIPLINES).find(function(dd) { return SINGLE_THEME_DISCIPLINES[dd] === themeId; });
+    return disc ? s.discipline === disc : false;
+  }
+  const themeCounts = {};
+  monthSessions.forEach(function(s) { THEMES.forEach(function(t) { if (sessionHasTheme(s, t.id)) themeCounts[t.id] = (themeCounts[t.id] || 0) + 1; }); });
+  const pull = (themeCounts.tirage || 0) + (themeCounts.complet || 0), push = (themeCounts.poussee || 0) + (themeCounts.complet || 0);
+  const parts = [];
+  if (pull + push >= 4) {
+    if (push > 0 && pull / push <= 0.55) parts.push("Poussée bien plus travaillée que Tirage (" + push + " vs " + pull + ")");
+    else if (pull > 0 && push / pull <= 0.55) parts.push("Tirage bien plus travaillé que Poussée (" + pull + " vs " + push + ")");
+    else parts.push("Tirage/Poussée plutôt équilibrés (" + pull + " vs " + push + ")");
+  }
+  const stale = THEMES.filter(function(t) {
+    const relevantIds = (t.id === "tirage" || t.id === "poussee") ? [t.id, "complet"] : [t.id];
+    const last = d.sessionsRaw.filter(function(s) { return relevantIds.some(function(id) { return sessionHasTheme(s, id); }); }).sort(function(a, b) { return a.date < b.date ? 1 : -1; })[0];
+    const days = last ? Math.round((new Date(todayISO()) - new Date(last.date)) / 86400000) : null;
+    return days === null || days >= 10;
+  }).map(function(t) { return t.label; });
+  if (stale.length) parts.push("pas travaillé récemment : " + stale.join(", "));
+  if (!parts.length) return "Tes séances du mois semblent bien réparties entre les thèmes.";
+  return parts.join(" · ") + ".";
+}
+function coachAnswerLoadByDiscipline(d) {
+  const discStats = {};
+  d.sessionsRaw.filter(function(s) { return s.discipline && s.correctedLoad != null && s.discipline.indexOf(" + ") === -1; }).forEach(function(s) {
+    if (!discStats[s.discipline]) discStats[s.discipline] = [];
+    discStats[s.discipline].push(s.correctedLoad);
+  });
+  const rows = Object.keys(discStats).map(function(name) { return { name: name, count: discStats[name].length, avg: Math.round(avgOf(discStats[name])) }; }).sort(function(a, b) { return b.avg - a.avg; });
+  if (!rows.length) return "Pas encore assez de séances loguées pour comparer les disciplines.";
+  return "Charge moyenne par discipline : " + rows.map(function(r) { return r.name + " (" + r.avg + ", " + r.count + " séance(s))"; }).join(", ") + ".";
+}
+function coachAnswerKarvonen(d) {
+  const kz = d.kzWorkouts.filter(function(w) { return w.day >= daysAgo(29); });
+  if (!kz.length) return "Pas encore de séance avec zones cardiaques calculées (Karvonen) sur les 30 derniers jours.";
+  const tot = { l: 0, i: 0, a: 0, an: 0, v: 0 };
+  kz.forEach(function(w) { tot.l += Number(w.kz_leger_min) || 0; tot.i += Number(w.kz_intensif_min) || 0; tot.a += Number(w.kz_aerobique_min) || 0; tot.an += Number(w.kz_anaerobie_min) || 0; tot.v += Number(w.kz_vo2max_min) || 0; });
+  const grand = tot.l + tot.i + tot.a + tot.an + tot.v;
+  if (!grand) return "Pas encore assez de données pour calculer tes zones cardiaques.";
+  const pct = function(v) { return Math.round((v / grand) * 100); };
+  return "Zones cardiaques (Karvonen, 30 derniers jours, FC max " + kz[0].kz_hrmax_used + ", FC repos " + kz[0].kz_hrrest_used + ") : Léger " + pct(tot.l) + "% · Intensif " + pct(tot.i) + "% · Aérobique " + pct(tot.a) + "% · Anaérobie " + pct(tot.an) + "% · VO2 max " + pct(tot.v) + "%.";
+}
 const COACH_QUESTIONS = [
   { id: "sleep_avg", label: "Ma durée moyenne de sommeil ?", fn: coachAnswerSleepAvg },
   { id: "sleep_reg", label: "La régularité de mon sommeil ?", fn: coachAnswerSleepRegularity },
@@ -3719,6 +3808,12 @@ const COACH_QUESTIONS = [
   { id: "load", label: "Ma charge d'entraînement ?", fn: coachAnswerTrainingLoad },
   { id: "grip", label: "Ma tendance de préhension ?", fn: coachAnswerGripTrend },
   { id: "migraine_sleep", label: "Migraines liées au sommeil ?", fn: coachAnswerMigraineSleep },
+  { id: "migraine_triggers", label: "Mes déclencheurs de migraine les plus fréquents ?", fn: coachAnswerMigraineTriggers },
+  { id: "migraine_correlation", label: "Un vrai lien entre mes migraines et mes autres signaux (FC/VFC/stress) ?", fn: coachAnswerMigraineCorrelation },
+  { id: "migraine_history", label: "Mon historique de migraines récent ?", fn: coachAnswerMigraineHistory },
+  { id: "training_balance", label: "Mes séances sont-elles équilibrées (tirage/poussée, thèmes) ?", fn: coachAnswerTrainingBalance },
+  { id: "load_by_discipline", label: "Comment se répartit ma charge par discipline ?", fn: coachAnswerLoadByDiscipline },
+  { id: "karvonen", label: "Mes zones cardiaques à l'entraînement (Karvonen) ?", fn: coachAnswerKarvonen },
 ];
 // Ouvert via la petite bulle flottante (pas un onglet de la nav principale) —
 // un calque plein écran par-dessus l'onglet en cours, pour pouvoir le
@@ -3733,10 +3828,11 @@ async function renderCoach() {
       const results = await Promise.all([
         listWearable(60),
         listSessions(60),
-        sb("migraines?select=day,intensity&order=day.desc&limit=60").catch(function() { return []; }),
+        sb("migraines?select=day,intensity,triggers&order=day.desc&limit=90").catch(function() { return []; }),
         sb("grip_strength?select=day,value_kg&order=day.desc&limit=30").catch(function() { return []; }),
+        sb("workout_sessions?select=day,kz_leger_min,kz_intensif_min,kz_aerobique_min,kz_anaerobie_min,kz_vo2max_min,kz_hrmax_used,kz_hrrest_used&activity_type=eq.seance&kz_leger_min=not.is.null&order=day.desc&limit=60").catch(function() { return []; }),
       ]);
-      coachData = buildCoachData(results[0] || [], results[1] || [], results[2] || [], results[3] || []);
+      coachData = buildCoachData(results[0] || [], results[1] || [], results[2] || [], results[3] || [], results[4] || []);
     } catch (e) {
       overlay.innerHTML = '<div class="wrap"><div class="error-banner"><b>Erreur :</b> ' + esc(e.message) + "</div></div>";
       return;
@@ -3747,43 +3843,469 @@ async function renderCoach() {
 function closeCoach() {
   document.getElementById("coach-overlay").style.display = "none";
 }
+
+// ---- Formulaires embarqués dans le Coach (mode Aujourd'hui) ----
+// Réutilisent tel quel le rendu/les champs du formulaire de séance existant
+// (mêmes ids, mêmes fonctions de sauvegarde) — simplement insérés comme
+// carte dans le Coach plutôt que sur un écran de tab séparé. `editingSession`/
+// `disciplineOtherMode` sont les mêmes globales que celles utilisées par
+// l'ancien onglet Entraînement.
+function coachSaveSessionInBackground() {
+  if (!editingSession) return;
+  const setStatus = function(s) { const el = document.getElementById("save-status"); if (el) el.textContent = s; };
+  saveSessionRow(todayISO(), editingSession)
+    .then(function(id) { if (id) editingSession.id = id; setStatus("Enregistré"); setTimeout(function() { setStatus(""); }, 1400); })
+    .catch(function(e) { setStatus("Erreur : " + e.message); });
+}
+function coachSeanceFormHtml() {
+  const session = editingSession;
+  let html = '<div class="card">';
+  html += '<div class="section-label">Heure de la séance</div>';
+  html += '<input type="time" id="session-time-input" value="' + esc(session.time || "") + '" style="margin-bottom:16px" />';
+  html += '<div class="section-label">Discipline</div>';
+  html += '<select id="discipline-input" style="margin-bottom:16px">';
+  html += '<option value=""' + (!session.discipline ? " selected" : "") + '>— Choisir —</option>';
+  Object.keys(DISCIPLINE_TO_THEMES).forEach(function(d) {
+    html += '<option value="' + esc(d) + '"' + (session.discipline === d ? " selected" : "") + '>' + esc(d) + "</option>";
+  });
+  html += '<option value="__autre__"' + (disciplineOtherMode || (session.discipline && !DISCIPLINE_TO_THEMES[session.discipline]) ? " selected" : "") + '>Autre…</option>';
+  html += "</select>";
+  if (disciplineOtherMode || (session.discipline && !DISCIPLINE_TO_THEMES[session.discipline])) {
+    html += '<input type="text" id="discipline-other" placeholder="Précise la discipline" value="' + esc(session.discipline && !DISCIPLINE_TO_THEMES[session.discipline] ? session.discipline : "") + '" style="margin-top:8px;margin-bottom:16px" />';
+  }
+  html += '<div class="section-label">Objectif de séance</div><div class="pill-row compact" id="goal-row" style="margin-bottom:16px">';
+  GOALS.forEach(function(g) { html += pillHtml(g, session.goal === g.id, "goal"); });
+  html += "</div>";
+  html += '<div class="section-label">Durée</div><div class="pill-row" id="duration-row" style="margin-bottom:' + (session.durationPreset === "plus" ? 10 : 16) + 'px">';
+  DURATIONS.forEach(function(d) { html += pillHtml(d, session.durationPreset === d.id, "duration"); });
+  html += "</div>";
+  if (session.durationPreset === "plus") {
+    html += '<input type="number" id="duration-custom" placeholder="Durée exacte en minutes" value="' + esc(session.duration) + '" style="margin-bottom:16px" />';
+  }
+  html += '<div class="section-label">Objectif atteint ?</div><div class="pill-row" id="achievement-row" style="margin-bottom:16px">';
+  ACHIEVEMENTS.forEach(function(a) { html += pillHtml(a, session.achievement === a.id, "achievement"); });
+  html += "</div>";
+  html += '<div class="section-label">Ton implication (coach vs pratiquant)</div><div class="pill-row compact" id="participation-row" style="margin-bottom:16px">';
+  PARTICIPATION_LEVELS.forEach(function(p) {
+    html += '<button class="pill' + (Math.abs((session.participation != null ? session.participation : 1.0) - p.value) < 0.01 ? " active" : "") + '" data-value="' + p.value + '">' + p.label + "</button>";
+  });
+  html += "</div>";
+  html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">';
+  html += '<span class="section-label" style="margin:0">Intensité globale ressentie</span><span class="rpe-value">' + (session.intensity > 0 ? session.intensity : "–") + "</span></div>";
+  html += rpeLadderHtml("global", session.intensity || 0);
+  const load = computeLoad(session);
+  if (load.sessionLoad !== null) {
+    html += '<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">';
+    html += '<span style="font-size:12px;color:var(--chalkDim)">Charge de séance</span><span style="font-size:20px;font-weight:900">' + load.sessionLoad + "</span></div>";
+    if (load.correctedLoad !== load.sessionLoad) {
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">';
+      html += '<span style="font-size:12px;color:var(--chalkDim)">Charge d\'entraînement</span><span style="font-size:20px;font-weight:900;color:var(--rust)">' + load.correctedLoad + "</span></div>";
+    }
+  }
+
+  const isCalisthenics = session.discipline === "Calisthenics";
+  const singleThemeId = session.discipline ? SINGLE_THEME_DISCIPLINES[session.discipline] : null;
+  if (singleThemeId) {
+    html += '<div class="section-label" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">Niveau des figures travaillées</div>';
+    html += '<div class="pill-row compact" id="niveau-row">';
+    NIVEAUX.forEach(function(n) { html += '<button class="pill' + ((session.niveau || "intermediaire") === n.id ? " active" : "") + '" data-id="' + n.id + '">' + n.label + "</button>"; });
+    html += "</div>";
+    if (session.discipline === "Arm Balance") {
+      const abReps = session.entries[singleThemeId] ? session.entries[singleThemeId].reps : null;
+      html += '<div class="section-label" style="margin-top:14px">Répétitions (optionnel — ex. nombre de tentatives)</div>';
+      html += '<input type="number" min="0" id="single-theme-reps-input" placeholder="Nombre de répétitions" value="' + esc(abReps != null ? abReps : "") + '" />';
+    }
+  }
+  if (isCalisthenics) {
+    html += '<div class="section-label" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">Thèmes travaillés</div>';
+    const CALI_THEMES = THEMES.filter(function(t) { return ["tirage", "poussee", "complet"].indexOf(t.id) !== -1; });
+    CALI_THEMES.forEach(function(t) {
+      const data = session.entries[t.id];
+      const on = !!data;
+      html += '<div class="theme-card' + (on ? " on" : "") + '" data-theme="' + t.id + '" style="margin-bottom:8px">';
+      html += '<button class="theme-head" data-action="toggle-theme" data-theme="' + t.id + '">';
+      html += '<div><div class="theme-label">' + esc(t.label) + '</div><div class="theme-hint">' + esc(t.hint) + "</div></div>";
+      html += '<div class="checkbox' + (on ? " on" : "") + '">' + (on ? "✓" : "") + "</div></button>";
+      if (on) {
+        html += '<div class="theme-body">';
+        html += '<div class="pill-row compact" style="margin-bottom:14px" data-theme-group="contraction" data-theme="' + t.id + '">';
+        CONTRACTIONS.forEach(function(c) { html += '<button class="pill' + (data.contraction === c.id ? " active" : "") + '" data-id="' + c.id + '">' + c.label + "</button>"; });
+        html += "</div>";
+        html += '<div class="section-label">Type d\'effort</div><div class="pill-row compact" style="margin-bottom:14px" data-theme-group="type" data-theme="' + t.id + '">';
+        GOALS.forEach(function(g) { html += '<button class="pill' + (data.type === g.id ? " active" : "") + '" data-id="' + g.id + '">' + g.label + "</button>"; });
+        html += "</div>";
+        html += '<div class="section-label">Niveau des mouvements</div><div class="pill-row compact" style="margin-bottom:14px" data-theme-group="niveau" data-theme="' + t.id + '">';
+        NIVEAUX.forEach(function(n) { html += '<button class="pill' + ((data.niveau || "intermediaire") === n.id ? " active" : "") + '" data-id="' + n.id + '">' + n.label + "</button>"; });
+        html += "</div>";
+        html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><span class="section-label" style="margin:0">Intensité (RPE)</span><span class="rpe-value">' + (data.rpe > 0 ? data.rpe : "–") + "</span></div>";
+        html += rpeLadderHtml("theme:" + t.id, data.rpe || 0);
+        html += '<div class="section-label" style="margin-top:14px">Répétitions (optionnel — ex. total sur un EMOM)</div>';
+        html += '<input type="number" min="0" class="theme-reps-input" data-theme="' + t.id + '" placeholder="Nombre de répétitions" value="' + esc(data.reps != null ? data.reps : "") + '" />';
+        html += "</div>";
+      }
+      html += "</div>";
+    });
+  }
+
+  const activeCount = Object.keys(session.entries).length;
+  let countLabel = "Aucun thème loggé";
+  if (isCalisthenics) countLabel = activeCount > 0 ? activeCount + " thème(s) loggé(s)" : "Aucun thème loggé";
+  else if (singleThemeId) countLabel = "Séance prête";
+  html += '<button id="validate-session" style="width:100%;margin-top:12px;padding:14px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:14px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">' + (session.id ? "Mettre à jour cette séance" : "Valider cette séance") + '</button>';
+  html += '<button id="cancel-session" style="width:100%;margin-top:8px;padding:10px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer">Annuler</button>';
+  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">';
+  html += '<span class="muted">' + countLabel + '</span><span class="status" id="save-status"></span></div>';
+  html += "</div>";
+  return html;
+}
+function wireCoachSeanceFormEvents() {
+  const session = editingSession;
+  const update = function() { drawCoach(); coachSaveSessionInBackground(); };
+
+  const sessionTimeInput = document.getElementById("session-time-input");
+  if (sessionTimeInput) sessionTimeInput.addEventListener("change", function() { session.time = sessionTimeInput.value; coachSaveSessionInBackground(); });
+
+  const discSelect = document.getElementById("discipline-input");
+  if (discSelect) discSelect.addEventListener("change", function() {
+    if (discSelect.value === "__autre__") { disciplineOtherMode = true; session.discipline = ""; drawCoach(); return; }
+    disciplineOtherMode = false;
+    session.entries = {};
+    session.discipline = discSelect.value;
+    update();
+  });
+  const discOther = document.getElementById("discipline-other");
+  if (discOther) discOther.addEventListener("blur", function() { session.discipline = discOther.value; coachSaveSessionInBackground(); });
+
+  document.querySelectorAll('#goal-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { session.goal = session.goal === btn.dataset.id ? null : btn.dataset.id; update(); });
+  });
+  document.querySelectorAll('#duration-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      const preset = DURATIONS.find(function(d) { return d.id === btn.dataset.id; });
+      if (session.durationPreset === preset.id) { session.durationPreset = null; session.duration = ""; }
+      else if (preset.id === "plus") { session.durationPreset = "plus"; }
+      else { session.durationPreset = preset.id; session.duration = preset.minutes; }
+      update();
+    });
+  });
+  const durCustom = document.getElementById("duration-custom");
+  if (durCustom) durCustom.addEventListener("blur", function() { session.duration = durCustom.value; update(); });
+  document.querySelectorAll('#achievement-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { session.achievement = session.achievement === btn.dataset.id ? null : btn.dataset.id; update(); });
+  });
+  document.querySelectorAll('#participation-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { session.participation = Number(btn.dataset.value); update(); });
+  });
+
+  document.querySelectorAll('.rpe-ladder[data-scope="global"] .rpe-bar').forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      const n = Number(btn.dataset.n);
+      session.intensity = session.intensity === n ? 0 : n;
+      update();
+    });
+  });
+
+  document.querySelectorAll('[data-action="toggle-theme"]').forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      const id = btn.dataset.theme;
+      if (session.entries[id]) delete session.entries[id]; else session.entries[id] = { contraction: "dynamique", rpe: 0 };
+      update();
+    });
+  });
+  document.querySelectorAll('[data-theme-group="contraction"]').forEach(function(row) {
+    row.querySelectorAll(".pill").forEach(function(btn) {
+      btn.addEventListener("click", function() { session.entries[row.dataset.theme].contraction = btn.dataset.id; update(); });
+    });
+  });
+  document.querySelectorAll('[data-theme-group="type"]').forEach(function(row) {
+    row.querySelectorAll(".pill").forEach(function(btn) {
+      btn.addEventListener("click", function() { session.entries[row.dataset.theme].type = btn.dataset.id; update(); });
+    });
+  });
+  document.querySelectorAll('[data-theme-group="niveau"]').forEach(function(row) {
+    row.querySelectorAll(".pill").forEach(function(btn) {
+      btn.addEventListener("click", function() { session.entries[row.dataset.theme].niveau = btn.dataset.id; update(); });
+    });
+  });
+  document.querySelectorAll('.theme-reps-input').forEach(function(input) {
+    input.addEventListener("blur", function() {
+      session.entries[input.dataset.theme].reps = input.value ? Number(input.value) : null;
+      coachSaveSessionInBackground();
+    });
+  });
+  document.querySelectorAll('#niveau-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { session.niveau = btn.dataset.id; update(); });
+  });
+  const singleRepsInput = document.getElementById("single-theme-reps-input");
+  if (singleRepsInput) singleRepsInput.addEventListener("blur", function() {
+    const singleThemeId = SINGLE_THEME_DISCIPLINES[session.discipline];
+    if (!session.entries[singleThemeId]) session.entries[singleThemeId] = {};
+    session.entries[singleThemeId].reps = singleRepsInput.value ? Number(singleRepsInput.value) : null;
+    coachSaveSessionInBackground();
+  });
+  document.querySelectorAll('.rpe-ladder').forEach(function(ladder) {
+    if (ladder.dataset.scope === "global") return;
+    const themeId = ladder.dataset.scope.split(":")[1];
+    if (!themeId) return;
+    ladder.querySelectorAll(".rpe-bar").forEach(function(btn) {
+      btn.addEventListener("click", function() {
+        const n = Number(btn.dataset.n);
+        session.entries[themeId].rpe = session.entries[themeId].rpe === n ? 0 : n;
+        update();
+      });
+    });
+  });
+
+  const validateBtn = document.getElementById("validate-session");
+  if (validateBtn) validateBtn.addEventListener("click", function() {
+    validateBtn.textContent = "Enregistrement…";
+    saveSessionRow(todayISO(), session).then(function() {
+      editingSession = null;
+      coachFormOpen = null;
+      coachData = null; // la charge d'entraînement change : force un recalcul pour les questions Statistiques
+      coachMessages.push({ role: "assistant", text: "Séance enregistrée." });
+      renderCoach();
+    }).catch(function(e) {
+      validateBtn.textContent = "Erreur : " + e.message;
+    });
+  });
+  const cancelBtn = document.getElementById("cancel-session");
+  if (cancelBtn) cancelBtn.addEventListener("click", function() { editingSession = null; coachFormOpen = null; drawCoach(); });
+}
+
+function coachLifeloadFormHtml() {
+  const LIFELOAD_OPTIONS = [
+    ["bien", "Bien"], ["neutre", "Neutre"], ["stresse", "Stressé"],
+    ["fatigue", "Fatigué"], ["courbature", "Courbaturé"], ["malade", "Malade"],
+  ];
+  let html = '<div class="card"><div class="section-label">Comment tu te sens aujourd\'hui ?</div>';
+  html += '<div class="pill-row compact" style="flex-wrap:wrap;gap:8px" id="coach-lifeload-row">';
+  LIFELOAD_OPTIONS.forEach(function(o) {
+    html += '<button class="pill" data-value="' + o[0] + '" style="flex:none;padding:9px 14px">' + o[1] + "</button>";
+  });
+  html += "</div>";
+  html += '<button id="coach-form-cancel" style="width:100%;margin-top:16px;padding:10px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer">Annuler</button>';
+  html += "</div>";
+  return html;
+}
+function wireCoachLifeloadFormEvents() {
+  document.querySelectorAll('#coach-lifeload-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      const label = btn.textContent;
+      sb("lifeload", {
+        method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({ day: todayISO(), state: btn.dataset.value }),
+      }).then(function() {
+        coachFormOpen = null;
+        coachMessages.push({ role: "assistant", text: "Ressenti du jour enregistré : " + label + "." });
+        drawCoach();
+      }).catch(function(e) { alert("Erreur : " + e.message); });
+    });
+  });
+  const cancelBtn = document.getElementById("coach-form-cancel");
+  if (cancelBtn) cancelBtn.addEventListener("click", function() { coachFormOpen = null; drawCoach(); });
+}
+
+function coachSiesteFormHtml() {
+  let html = '<div class="card"><div class="section-label">Sieste</div>';
+  html += '<div class="section-label" style="margin-bottom:6px">Qualité</div>';
+  html += '<div class="pill-row compact" id="coach-nap-quality-row" style="margin-bottom:16px">';
+  [["bonne","Bonne"],["moyenne","Moyenne"],["mauvaise","Mauvaise"]].forEach(function(q) {
+    html += '<button class="pill' + (napQuality === q[0] ? " active" : "") + '" data-quality="' + q[0] + '">' + q[1] + "</button>";
+  });
+  html += "</div>";
+  html += '<div class="section-label" style="margin-bottom:6px">Durée</div>';
+  html += '<div class="pill-row compact" id="coach-nap-duration-row" style="margin-bottom:16px">';
+  [20, 30, 45, 60].forEach(function(m) {
+    html += '<button class="pill' + (napDuration === m ? " active" : "") + '" data-duration="' + m + '">' + m + " min</button>";
+  });
+  html += "</div>";
+  html += '<button id="coach-nap-validate" style="width:100%;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Valider la sieste</button>';
+  html += '<button id="coach-form-cancel" style="width:100%;margin-top:8px;padding:10px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer">Annuler</button>';
+  html += "</div>";
+  return html;
+}
+function wireCoachSiesteFormEvents() {
+  document.querySelectorAll('#coach-nap-quality-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { napQuality = btn.dataset.quality; drawCoach(); });
+  });
+  document.querySelectorAll('#coach-nap-duration-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { napDuration = Number(btn.dataset.duration); drawCoach(); });
+  });
+  const validateBtn = document.getElementById("coach-nap-validate");
+  if (validateBtn) validateBtn.addEventListener("click", function() {
+    validateBtn.textContent = "Enregistrement…";
+    sb("naps", {
+      method: "POST", headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({ day: todayISO(), duration_min: napDuration, quality: napQuality }),
+    }).then(function() {
+      coachFormOpen = null;
+      coachMessages.push({ role: "assistant", text: "Sieste de " + napDuration + " min enregistrée." });
+      drawCoach();
+    }).catch(function(e) { alert("Erreur : " + e.message); validateBtn.textContent = "Valider la sieste"; });
+  });
+  const cancelBtn = document.getElementById("coach-form-cancel");
+  if (cancelBtn) cancelBtn.addEventListener("click", function() { coachFormOpen = null; drawCoach(); });
+}
+
+function coachMigraineFormHtml() {
+  let html = '<div class="card"><div class="section-label">Nouvelle migraine</div>';
+  html += '<div class="muted" style="font-size:10px;text-transform:uppercase;margin-bottom:4px">Début</div>';
+  html += '<input type="datetime-local" id="coach-mig-start" value="' + migraineForm.startDateTime + '" max="' + nowForDatetimeInput() + '" style="margin-bottom:10px" />';
+  html += '<div class="muted" style="font-size:10px;text-transform:uppercase;margin-bottom:4px">Fin (laisser vide si en cours)</div>';
+  html += '<input type="datetime-local" id="coach-mig-end" value="' + migraineForm.endDateTime + '" max="' + nowForDatetimeInput() + '" style="margin-bottom:14px" />';
+  html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><span class="section-label" style="margin:0">Intensité</span><span class="rpe-value">' + migraineForm.intensity + "</span></div>";
+  html += rpeLadderHtml("migraine", migraineForm.intensity);
+  html += '<div class="section-label" style="margin-top:14px">Déclencheurs potentiels</div><div class="pill-row compact" style="flex-wrap:wrap;gap:6px">';
+  TRIGGERS.forEach(function(t) {
+    const on = migraineForm.triggers.indexOf(t.id) !== -1;
+    html += '<button class="pill mig-trigger' + (on ? " active" : "") + '" data-id="' + t.id + '" style="flex:none;padding:7px 10px">' + t.label + "</button>";
+  });
+  html += "</div>";
+  html += '<div class="section-label" style="margin-top:14px">Notes</div>';
+  html += '<input type="text" id="coach-mig-notes" placeholder="Contexte, symptômes associés…" value="' + esc(migraineForm.notes) + '" style="margin-bottom:14px" />';
+  html += '<button id="coach-mig-save" style="width:100%;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Enregistrer</button>';
+  html += '<button id="coach-form-cancel" style="width:100%;margin-top:8px;padding:10px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer">Annuler</button>';
+  html += "</div>";
+  return html;
+}
+function wireCoachMigraineFormEvents() {
+  const startInput = document.getElementById("coach-mig-start");
+  if (startInput) startInput.addEventListener("change", function() { migraineForm.startDateTime = startInput.value; drawCoach(); });
+  const endInput = document.getElementById("coach-mig-end");
+  if (endInput) endInput.addEventListener("change", function() { migraineForm.endDateTime = endInput.value; });
+  document.querySelectorAll('.rpe-ladder[data-scope="migraine"] .rpe-bar').forEach(function(btn) {
+    btn.addEventListener("click", function() { migraineForm.intensity = Number(btn.dataset.n); drawCoach(); });
+  });
+  document.querySelectorAll(".mig-trigger").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      const id = btn.dataset.id;
+      const idx = migraineForm.triggers.indexOf(id);
+      if (idx === -1) migraineForm.triggers.push(id); else migraineForm.triggers.splice(idx, 1);
+      drawCoach();
+    });
+  });
+  const notesInput = document.getElementById("coach-mig-notes");
+  if (notesInput) notesInput.addEventListener("input", function() { migraineForm.notes = notesInput.value; });
+  const saveBtn = document.getElementById("coach-mig-save");
+  if (saveBtn) saveBtn.addEventListener("click", function() {
+    saveBtn.textContent = "Enregistrement…";
+    if (!migraineForm.startDateTime) { saveBtn.textContent = "Indique au moins une heure de début"; return; }
+    const startTs = new Date(migraineForm.startDateTime);
+    let endTs = null, durationMin = null;
+    if (migraineForm.endDateTime) { endTs = new Date(migraineForm.endDateTime); durationMin = Math.round((endTs - startTs) / 60000); }
+    sb("migraines", {
+      method: "POST", headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        day: migraineForm.startDateTime.slice(0, 10), intensity: migraineForm.intensity,
+        triggers: migraineForm.triggers, notes: migraineForm.notes || null,
+        start_time: startTs.toISOString(), end_time: endTs ? endTs.toISOString() : null, duration_min: durationMin,
+      }),
+    }).then(function() {
+      migraineForm = { startDateTime: nowForDatetimeInput(), endDateTime: "", intensity: 5, triggers: [], notes: "" };
+      coachFormOpen = null;
+      coachData = null; // les migraines changent les corrélations : force un recalcul
+      coachMessages.push({ role: "assistant", text: "Migraine enregistrée." });
+      renderCoach();
+    }).catch(function(e) { saveBtn.textContent = "Erreur : " + e.message; });
+  });
+  const cancelBtn = document.getElementById("coach-form-cancel");
+  if (cancelBtn) cancelBtn.addEventListener("click", function() { coachFormOpen = null; drawCoach(); });
+}
+const COACH_LOG_BUTTONS = [
+  { id: "seance", label: "Séance" },
+  { id: "lifeload", label: "Ressenti (LifeLoad)" },
+  { id: "sieste", label: "Sieste" },
+  { id: "migraine", label: "Migraine" },
+];
 function drawCoach() {
   const overlay = document.getElementById("coach-overlay");
   let html = '<div class="wrap">';
   html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px"><h1>Coach</h1>';
   html += '<button id="coach-close-btn" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--chalkDim);font-size:11px;font-weight:700;padding:6px 12px;cursor:pointer">✕ Fermer</button></div>';
-  html += '<div class="muted" style="margin-bottom:24px">Pose une question sur tes données récentes</div>';
 
-  html += '<div id="coach-messages" style="display:flex;flex-direction:column;gap:14px;margin-bottom:28px">';
-  if (!coachMessages.length) {
-    html += '<div class="muted" style="text-align:center;padding:24px 0">Choisis une question ci-dessous pour commencer.</div>';
-  }
-  coachMessages.forEach(function(m) {
-    if (m.role === "user") {
-      html += '<div style="align-self:flex-end;max-width:80%;background:var(--gradient);color:var(--bg);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:13px;font-weight:700">' + esc(m.text) + "</div>";
+  html += '<div class="pill-row compact" style="margin:16px 0 24px" id="coach-mode-row">';
+  [["aujourdhui","Aujourd'hui"],["stats","Statistiques"]].forEach(function(m) {
+    html += '<button class="pill' + (coachMode === m[0] ? " active" : "") + '" data-mode="' + m[0] + '">' + m[1] + "</button>";
+  });
+  html += "</div>";
+
+  if (coachMode === "aujourdhui") {
+    if (coachFormOpen) {
+      if (coachFormOpen === "seance") html += coachSeanceFormHtml();
+      else if (coachFormOpen === "lifeload") html += coachLifeloadFormHtml();
+      else if (coachFormOpen === "sieste") html += coachSiesteFormHtml();
+      else if (coachFormOpen === "migraine") html += coachMigraineFormHtml();
     } else {
-      html += '<div style="align-self:flex-start;max-width:88%;background:var(--surface);border:1px solid var(--line);border-radius:14px 14px 14px 4px;padding:12px 14px;font-size:13px;line-height:1.5">' + esc(m.text) + "</div>";
+      html += '<div class="muted" style="margin-bottom:20px">Que veux-tu loguer aujourd\'hui ?</div>';
+      html += '<div style="display:flex;flex-direction:column;gap:12px;margin-bottom:28px" id="coach-log-row">';
+      COACH_LOG_BUTTONS.forEach(function(b) {
+        html += '<button class="coach-question-btn" data-log="' + b.id + '" style="width:100%;text-align:left;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:10px;padding:16px 18px;color:var(--chalk);font-size:14px;font-weight:700;cursor:pointer">' + b.label + "</button>";
+      });
+      html += "</div>";
+      if (coachMessages.length) {
+        html += '<div id="coach-messages" style="display:flex;flex-direction:column;gap:14px">';
+        coachMessages.slice(-6).forEach(function(m) {
+          if (m.role === "assistant") html += '<div style="background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px;font-size:13px;line-height:1.5">' + esc(m.text) + "</div>";
+        });
+        html += "</div>";
+      }
     }
-  });
-  html += "</div>";
+  } else {
+    html += '<div class="muted" style="margin-bottom:24px">Pose une question sur tes données récentes</div>';
 
-  html += '<div class="section-label" style="margin-bottom:14px">Questions suggérées</div>';
-  // Des phrases complètes, pas des libellés courts — la classe .pill (nowrap
-  // + ellipsis + sans marge horizontale) est faite pour de petits labels
-  // fixes, pas pour ça : elle tronquait le texte ("Ma durée moyenne de
-  // som..."). Liste empilée pleine largeur, texte aligné à gauche et qui
-  // peut passer à la ligne, avec un vrai espace autour.
-  html += '<div style="display:flex;flex-direction:column;gap:12px;margin-bottom:28px" id="coach-question-row">';
-  COACH_QUESTIONS.forEach(function(q) {
-    html += '<button class="coach-question-btn" data-question="' + q.id + '" style="width:100%;text-align:left;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:10px;padding:16px 18px;color:var(--chalk);font-size:14px;font-weight:700;line-height:1.4;white-space:normal;cursor:pointer">' + q.label + "</button>";
-  });
-  html += "</div>";
+    html += '<div id="coach-messages" style="display:flex;flex-direction:column;gap:14px;margin-bottom:28px">';
+    if (!coachMessages.length) {
+      html += '<div class="muted" style="text-align:center;padding:24px 0">Choisis une question ci-dessous pour commencer.</div>';
+    }
+    coachMessages.forEach(function(m) {
+      if (m.role === "user") {
+        html += '<div style="align-self:flex-end;max-width:80%;background:var(--gradient);color:var(--bg);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:13px;font-weight:700">' + esc(m.text) + "</div>";
+      } else {
+        html += '<div style="align-self:flex-start;max-width:88%;background:var(--surface);border:1px solid var(--line);border-radius:14px 14px 14px 4px;padding:12px 14px;font-size:13px;line-height:1.5">' + esc(m.text) + "</div>";
+      }
+    });
+    html += "</div>";
 
-  html += '<div class="card steel"><div class="muted" style="font-size:11px;line-height:1.6">Réponses calculées directement à partir de tes propres données (pas de génération par IA) — mêmes seuils et méthodes que le reste de l\'appli.</div></div>';
+    html += '<div class="section-label" style="margin-bottom:14px">Questions suggérées</div>';
+    // Des phrases complètes, pas des libellés courts — la classe .pill (nowrap
+    // + ellipsis + sans marge horizontale) est faite pour de petits labels
+    // fixes, pas pour ça : elle tronquait le texte ("Ma durée moyenne de
+    // som..."). Liste empilée pleine largeur, texte aligné à gauche et qui
+    // peut passer à la ligne, avec un vrai espace autour.
+    html += '<div style="display:flex;flex-direction:column;gap:12px;margin-bottom:28px" id="coach-question-row">';
+    COACH_QUESTIONS.forEach(function(q) {
+      html += '<button class="coach-question-btn" data-question="' + q.id + '" style="width:100%;text-align:left;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:10px;padding:16px 18px;color:var(--chalk);font-size:14px;font-weight:700;line-height:1.4;white-space:normal;cursor:pointer">' + q.label + "</button>";
+    });
+    html += "</div>";
+
+    html += '<div class="card steel"><div class="muted" style="font-size:11px;line-height:1.6">Réponses calculées directement à partir de tes propres données (pas de génération par IA) — mêmes seuils et méthodes que le reste de l\'appli.</div></div>';
+  }
   html += "</div>";
 
   overlay.innerHTML = html;
   document.getElementById("coach-close-btn").addEventListener("click", closeCoach);
+  document.querySelectorAll('#coach-mode-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { coachMode = btn.dataset.mode; coachFormOpen = null; drawCoach(); });
+  });
+
+  if (coachMode === "aujourdhui") {
+    if (coachFormOpen === "seance") wireCoachSeanceFormEvents();
+    else if (coachFormOpen === "lifeload") wireCoachLifeloadFormEvents();
+    else if (coachFormOpen === "sieste") wireCoachSiesteFormEvents();
+    else if (coachFormOpen === "migraine") wireCoachMigraineFormEvents();
+    else {
+      document.querySelectorAll('#coach-log-row .coach-question-btn').forEach(function(btn) {
+        btn.addEventListener("click", function() {
+          coachFormOpen = btn.dataset.log;
+          if (coachFormOpen === "seance") { editingSession = emptySession(); disciplineOtherMode = false; }
+          drawCoach();
+        });
+      });
+    }
+    return;
+  }
+
   document.querySelectorAll("#coach-question-row .coach-question-btn").forEach(function(btn) {
     btn.addEventListener("click", function() {
       const q = COACH_QUESTIONS.find(function(x) { return x.id === btn.dataset.question; });
