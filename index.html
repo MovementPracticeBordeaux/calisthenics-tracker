@@ -87,16 +87,21 @@
      deux taches de couleur qui dérivent lentement en boucle, indépendamment
      du rythme respiratoire, pour donner un aspect vivant/liquide plutôt
      qu'un aplat de couleur figé. */
-  .breathing-water-blob { position: absolute; border-radius: 50%; mix-blend-mode: overlay; filter: blur(6px); opacity: 0.55; }
-  .breathing-water-blob.b1 { width: 130%; height: 130%; top: -35%; left: -30%; background: radial-gradient(circle, #fff 0%, transparent 65%); animation: breathing-water-drift-1 11s ease-in-out infinite; }
-  .breathing-water-blob.b2 { width: 110%; height: 110%; top: 20%; left: 10%; background: radial-gradient(circle, #fff 0%, transparent 60%); animation: breathing-water-drift-2 8.5s ease-in-out infinite; }
+  .breathing-water-blob { position: absolute; border-radius: 50%; mix-blend-mode: overlay; opacity: 0.8; }
+  .breathing-water-blob.b1 { width: 160%; height: 160%; top: -50%; left: -45%; background: radial-gradient(circle, #fff 0%, transparent 58%); animation: breathing-water-drift-1 9s ease-in-out infinite; }
+  .breathing-water-blob.b2 { width: 140%; height: 140%; top: 30%; left: 15%; background: radial-gradient(circle, #fff 0%, transparent 55%); animation: breathing-water-drift-2 7s ease-in-out infinite; }
+  .breathing-water-blob.b3 { width: 125%; height: 125%; top: -15%; left: 45%; background: radial-gradient(circle, #fff 0%, transparent 55%); animation: breathing-water-drift-3 12.5s ease-in-out infinite; }
   @keyframes breathing-water-drift-1 {
-    0%, 100% { transform: translate(0, 0) scale(1); }
-    50% { transform: translate(14%, 10%) scale(1.12); }
+    0%, 100% { transform: translate(0, 0) scale(1); filter: blur(3px) hue-rotate(0deg); }
+    50% { transform: translate(28%, 22%) scale(1.35); filter: blur(7px) hue-rotate(-22deg); }
   }
   @keyframes breathing-water-drift-2 {
-    0%, 100% { transform: translate(0, 0) scale(1); }
-    50% { transform: translate(-12%, -14%) scale(0.92); }
+    0%, 100% { transform: translate(0, 0) scale(1); filter: blur(4px) hue-rotate(0deg); }
+    50% { transform: translate(-26%, -28%) scale(0.75); filter: blur(2px) hue-rotate(20deg); }
+  }
+  @keyframes breathing-water-drift-3 {
+    0%, 100% { transform: translate(0, 0) rotate(0deg) scale(1); filter: blur(5px); }
+    50% { transform: translate(-18%, 24%) rotate(35deg) scale(1.2); filter: blur(2px); }
   }
 </style>
 </head>
@@ -2026,13 +2031,16 @@ function updateBreathingIdleStats() {
 // stopPct%, transparent au-delà — stopPct/opacity/blur bougent ensemble
 // pour donner l'impression que le contour flou "se resserre" (couleur plus
 // franche) à l'inspiration et "s'étale" (plus transparent) à l'expiration.
-function setBreathingGlow(colorVar, stopPct, opacity, blurPx) {
+function setBreathingGlow(colorVar, stopPct, opacity, blurPx, shadow) {
   const glow = document.getElementById("breathing-circle-glow");
   if (!glow) return;
   glow.style.background = "radial-gradient(circle, " + colorVar + " 0%, " + colorVar + " " + stopPct + "%, transparent 100%)";
   glow.style.opacity = opacity;
   glow.style.filter = "blur(" + blurPx + "px)";
+  glow.style.boxShadow = shadow;
 }
+const BREATHING_GLOW_REST = ["var(--purple)", 10, 0.45, 18, "0 0 20px rgba(168,85,247,0.2)"];
+const BREATHING_GLOW_INHALE = ["var(--pink)", 92, 1, 1, "0 0 60px rgba(236,72,153,0.65)"];
 // Arrête proprement toute séance en cours — appelé au clic sur "Arrêter",
 // en changeant de sous-onglet/d'onglet, ou avant d'en démarrer une nouvelle.
 // Ne touche au DOM que s'il existe encore (peut être appelé après un
@@ -2051,7 +2059,7 @@ function stopBreathing() {
   const stopBtn = document.getElementById("breathing-stop-btn");
   if (circle) { circle.style.transitionDuration = "0.6s"; circle.style.transform = "scale(1)"; }
   if (glow) { glow.style.transitionDuration = "0.6s"; }
-  setBreathingGlow("var(--purple)", 30, 0.65, 8);
+  setBreathingGlow.apply(null, BREATHING_GLOW_REST);
   const ballTrack = document.getElementById("breathing-ball-track");
   if (ballTrack) { ballTrack.style.transition = "none"; ballTrack.style.transform = "rotate(0deg)"; }
   breathingBallRotationDeg = 0;
@@ -2073,8 +2081,8 @@ function updateBreathingVisual(phase, seconds) {
     // d'expiration / début d'inspiration) en violet et dégradé étalé (bord
     // flou, couleur plus transparente) — la taille ET le contour marquent
     // ensemble les fins de phase.
-    if (phase === "inhale") setBreathingGlow("var(--pink)", 75, 1, 2);
-    else setBreathingGlow("var(--purple)", 30, 0.65, 8);
+    if (phase === "inhale") setBreathingGlow.apply(null, BREATHING_GLOW_INHALE);
+    else setBreathingGlow.apply(null, BREATHING_GLOW_REST);
   }
   const ballTrack = document.getElementById("breathing-ball-track");
   if (ballTrack) {
@@ -2188,11 +2196,12 @@ function breathingCircleHtml() {
   // transparent — le rayon plein, l'opacité et le flou du bord sont ensuite
   // pilotés par setBreathingGlow() au fil des phases (inspiration = dégradé
   // qui se resserre + couleur plus franche, expiration = l'inverse).
-  html += '<div id="breathing-circle-glow" style="position:absolute;inset:0;border-radius:50%;overflow:hidden;background:radial-gradient(circle, var(--purple) 0%, var(--purple) 30%, transparent 100%);opacity:0.65;filter:blur(8px);transition:filter 0.6s ease-in-out,opacity 0.6s ease-in-out,background 0.6s ease-in-out;box-shadow:0 0 30px rgba(168,85,247,0.35)">';
-  // Effet d'eau : deux taches en dégradé blanc (mix-blend overlay) qui
-  // dérivent lentement en boucle, en continu, indépendamment du rythme
-  // respiratoire — donne un aspect liquide plutôt qu'une couleur figée.
-  html += '<div class="breathing-water-blob b1"></div><div class="breathing-water-blob b2"></div>';
+  html += '<div id="breathing-circle-glow" style="position:absolute;inset:0;border-radius:50%;overflow:hidden;background:radial-gradient(circle, var(--purple) 0%, var(--purple) ' + BREATHING_GLOW_REST[1] + '%, transparent 100%);opacity:' + BREATHING_GLOW_REST[2] + ';filter:blur(' + BREATHING_GLOW_REST[3] + 'px);transition:filter 0.6s ease-in-out,opacity 0.6s ease-in-out,background 0.6s ease-in-out,box-shadow 0.6s ease-in-out;box-shadow:' + BREATHING_GLOW_REST[4] + '">';
+  // Effet d'eau : trois taches en dégradé blanc (mix-blend overlay, léger
+  // hue-rotate) qui dérivent et pulsent en boucle, en continu, indépendamment
+  // du rythme respiratoire — donne un aspect liquide/mouvant plutôt qu'une
+  // couleur figée.
+  html += '<div class="breathing-water-blob b1"></div><div class="breathing-water-blob b2"></div><div class="breathing-water-blob b3"></div>';
   html += "</div>";
   html += '<span id="breathing-phase-text" style="position:relative;z-index:1;font-size:11.5px;font-weight:900;text-transform:uppercase;letter-spacing:.3px;line-height:1.4;color:var(--bg);text-align:center;padding:0 10px;max-width:88px">Prêt</span></div>';
   // Bille qui fait un tour complet du cercle (sens antihoraire) sur la durée
