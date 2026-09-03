@@ -225,22 +225,21 @@ function logout() { storeSession(null); location.reload(); }
 
 <div class="wrap">
   <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:10px">
-    <div style="text-align:center;font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase">
+    <button id="brand-breathing-btn" title="Respiration" style="background:none;border:none;padding:0;cursor:pointer;text-align:center;font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase">
       <span style="color:var(--chalkDim)">MOVEMENT </span><span style="background:var(--gradient);-webkit-background-clip:text;background-clip:text;color:transparent">PRACTICE ✦ SUIVI</span>
-    </div>
+    </button>
     <button id="refresh-btn" title="Rafraîchir les données" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--muted);padding:3px 6px;cursor:pointer;font-size:12px;line-height:1;position:absolute;right:16px">⟳</button>
     <button id="logout-btn" title="Se déconnecter" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--muted);padding:3px 6px;cursor:pointer;font-size:12px;line-height:1;position:absolute;right:52px">⏻</button>
   </div>
   <div class="tabs">
-    <button class="tab" data-tab="seance">Entraînement</button>
-    <button class="tab" data-tab="sommeil">Sommeil</button>
-    <button class="tab active" data-tab="dashboard">Dashboard</button>
-    <button class="tab" data-tab="migraine">Migraine</button>
-    <button class="tab" data-tab="vie">Santé</button>
+    <button class="tab" data-tab="entrainement">Entraînement</button>
+    <button class="tab active" data-tab="forme">Forme</button>
+    <button class="tab" data-tab="recuperation">Récupération</button>
   </div>
   <div id="app"></div>
   <button id="coach-fab" title="Coach" style="position:fixed;bottom:20px;right:20px;width:52px;height:52px;border-radius:50%;background:var(--gradient);border:none;box-shadow:0 4px 16px rgba(0,0,0,0.4);font-size:22px;cursor:pointer;z-index:900;display:flex;align-items:center;justify-content:center">💬</button>
   <div id="coach-overlay" style="display:none;position:fixed;inset:0;z-index:1000;background:var(--bg);overflow-y:auto"></div>
+  <div id="breathing-overlay" style="display:none;position:fixed;inset:0;z-index:1000;background:var(--bg);overflow-y:auto"></div>
 </div>
 
 <script>
@@ -514,7 +513,7 @@ async function listWearable(limit) {
 }
 
 // ---------------- État global ----------------
-let currentTab = "seance";
+let currentTab = "forme";
 let lifeloadEditing = false;
 let gripEditing = false;
 let napQuality = "moyenne";
@@ -1264,10 +1263,10 @@ function wireSeanceEvents() {
 }
 
 // ---------------- Rendu : Dashboard ----------------
-let dashPeriod = "jour";
-async function renderDashboard() {
+let formeSubTab = "jour";
+async function renderForme() {
   const app = document.getElementById("app");
-  app.innerHTML = '<div class="muted">Chargement du dashboard…</div>';
+  app.innerHTML = '<div class="muted">Chargement…</div>';
   const today = todayISO();
   let errorMsg = "";
   // Toutes ces requêtes sont indépendantes les unes des autres — les lancer
@@ -1276,10 +1275,9 @@ async function renderDashboard() {
   // connexion mobile un peu lente, avec un dashboard qui reste bloqué sur
   // "Chargement…" en attendant). Chaque requête garde son propre repli en
   // cas d'échec isolé, exactement comme avant.
-  const results = await Promise.all([
+  const [sessions, wearable, workouts, monthMigraines, monthLifeload, lifeloadRows, napRows, todayFitSessions, todayTrips, migRows, todayMigRows, gripRows] = await Promise.all([
     listSessions(90).catch(function(e) { errorMsg = errorMsg || e.message; return []; }),
     listWearable(40).catch(function(e) { errorMsg = errorMsg || e.message; return []; }),
-    sb("dismissed_activity_flags?select=day").catch(function() { return []; }),
     sb("workout_sessions?select=day,training_effect_aerobic,training_effect_anaerobic&activity_type=eq.seance&order=day.desc&limit=60").catch(function() { return []; }),
     sb("migraines?select=day,intensity&order=day.desc&limit=60").catch(function() { return []; }),
     sb("lifeload?select=day,state&order=day.desc&limit=60").catch(function() { return []; }),
@@ -1291,14 +1289,6 @@ async function renderDashboard() {
     sb("migraines?day=eq." + today + "&select=intensity").catch(function() { return []; }),
     sb("grip_strength?select=day,value_kg&order=day.desc&limit=30").catch(function() { return []; }),
   ]);
-  const sessions = results[0] || [], wearable = results[1] || [];
-  const dismissedDates = (results[2] || []).map(function(r) { return r.day; });
-  const workouts = results[3] || [];
-  const monthMigraines = results[4] || [], monthLifeload = results[5] || [];
-  const lifeloadRows = results[6] || [], napRows = results[7] || [];
-  const todayFitSessions = results[8] || [], todayTrips = results[9] || [];
-  const migRows = results[10] || [], todayMigRows = results[11] || [];
-  const gripRows = results[12] || [];
 
   const todayTotalLoad = sessions.filter(function(s){ return s.date === today; }).reduce(function(s,x){ return s + (x.correctedLoad || 0); }, 0);
   const todayWearable = wearable.find(function(w){ return w.day === today; }) || null;
@@ -1644,43 +1634,16 @@ async function renderDashboard() {
 
   let html = "";
   if (errorMsg) html += '<div class="error-banner"><b>Erreur :</b> ' + esc(errorMsg) + "</div>";
-  html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px"><h1>Dashboard</h1>';
-  if (streak > 0) html += '<span style="color:var(--amber);font-size:13px;font-weight:800">🔥 ' + streak + "j</span>";
-  html += "</div>";
+  html += '<h1 style="margin-bottom:4px">Forme</h1>';
   html += '<div class="muted" style="margin-bottom:18px">' + formatDateLabel(today) + "</div>";
 
-  // Journal (jours récents à compléter)
-  const last14 = [];
-  for (let i = 13; i >= 0; i--) last14.push(daysAgo(i));
-  const journal = last14.map(function(d) {
-    const w = wearable.find(function(x){ return x.day === d; });
-    const s = sessions.find(function(x){ return x.date === d; });
-    const hasSession = sessions.some(function(x){ return x.date === d && (x.discipline || x.intensity > 0 || x.duration); });
-    const signal = w && ((w.intensity_avg && w.intensity_avg > 25) || (w.hr_max_activity && w.hr_max_activity > 140));
-    return { date: d, wearable: w, signal: signal && !hasSession && dismissedDates.indexOf(d) === -1 };
-  });
-  const toComplete = journal.filter(function(j){ return j.signal; });
-  if (toComplete.length) {
-    html += '<div class="card amber"><div class="section-label">Séances possibles non renseignées</div>';
-    html += '<div class="muted" style="margin-bottom:10px">Activité détectée par la montre sans QCM correspondant.</div>';
-    toComplete.forEach(function(g) {
-      html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">';
-      html += '<button class="history-item goto-date" data-date="' + g.date + '" style="flex:1;display:flex;justify-content:space-between;align-items:center;background:var(--surfaceRaised);margin-bottom:0">';
-      html += '<span style="font-weight:700;font-size:12px">' + formatDateLabel(g.date) + "</span>";
-      html += '<span style="color:var(--amber);font-size:11px;font-weight:800">Compléter →</span></button>';
-      html += '<button class="dismiss-flag" data-date="' + g.date + '" title="Ce n\'était pas une séance" style="background:var(--surfaceRaised);border:none;border-radius:8px;color:var(--muted);font-size:15px;padding:10px 12px;cursor:pointer">✕</button>';
-      html += "</div>";
-    });
-    html += "</div>";
-  }
-
-  html += '<div class="pill-row" style="margin-bottom:16px" id="period-row">';
-  [["jour","Jour"],["semaine","Semaine"],["mois","Mois"]].forEach(function(p) {
-    html += '<button class="pill' + (dashPeriod === p[0] ? " active" : "") + '" data-period="' + p[0] + '" style="font-size:11.5px;padding:9px 2px">' + p[1] + "</button>";
+  html += '<div class="pill-row compact" style="margin-bottom:16px" id="forme-subtab-row">';
+  [["jour","Aujourd'hui"],["tendance","Tendance"]].forEach(function(p) {
+    html += '<button class="pill' + (formeSubTab === p[0] ? " active" : "") + '" data-subtab="' + p[0] + '">' + p[1] + "</button>";
   });
   html += "</div>";
 
-  if (dashPeriod === "jour") {
+  if (formeSubTab === "jour") {
     if (migraineAlert) {
       html += '<div class="error-banner" style="background:rgba(242,113,28,0.15);border-color:var(--rust)"><b>⚠ Signaux similaires à une migraine passée :</b> ' + esc(migraineAlert) + "</div>";
     }
@@ -1764,7 +1727,7 @@ async function renderDashboard() {
     if (todayFitEffort > 0) checklist.push({ label: "Effort mesuré (.fit)", tier: todayFitDepletion >= 10 ? "red" : todayFitDepletion >= 5 ? "amber" : "green", note: "-" + todayFitDepletion + " pts · " + todayFitSessions.map(function(w){return w.matched_discipline;}).filter(Boolean).join(", ") });
     if (todayTripEffort > 0) checklist.push({ label: "Trajets à vélo", tier: "green", note: "-" + todayTripDepletion + " pts · " + todayTripCount + " trajet(s)" });
     if (todayMigraine != null) checklist.push({ label: "Migraine", tier: "red", note: todayMigraine + "/10" });
-    if (lifeload) checklist.push({ label: "Ressenti", tier: lifeload === "bien" ? "green" : lifeload === "malade" ? "red" : ["stresse","fatigue"].indexOf(lifeload) !== -1 ? "amber" : "steel", note: lifeload });
+    checklist.push({ label: "Ressenti", tier: lifeload === "bien" ? "green" : lifeload === "malade" ? "red" : ["stresse","fatigue"].indexOf(lifeload) !== -1 ? "amber" : "steel", note: lifeload || "à renseigner dans le Coach" });
 
     html += '<div class="card"><div class="section-label">Récap du jour</div>';
     checklist.forEach(function(c) {
@@ -1773,236 +1736,75 @@ async function renderDashboard() {
       html += '<span>' + tierDot(c.tier) + "</span></div>";
     });
     html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></div>';
-
-    const LIFELOAD_OPTIONS = [
-      ["", "— Choisir —"], ["bien", "Bien"], ["neutre", "Neutre"], ["stresse", "Stressé"],
-      ["fatigue", "Fatigué"], ["courbature", "Courbaturé"], ["malade", "Malade"],
-    ];
-    if (!lifeload || lifeloadEditing) {
-      html += '<div class="card"><div class="section-label">Comment tu te sens aujourd\'hui ?</div>';
-      html += '<select id="lifeload-select" style="width:100%;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:7px;color:var(--chalk);font-size:16px;padding:10px 12px">';
-      LIFELOAD_OPTIONS.forEach(function(o) {
-        html += '<option value="' + o[0] + '"' + (o[0] === (lifeload || "") ? " selected" : "") + '>' + o[1] + "</option>";
-      });
-      html += "</select></div>";
-    } else {
-      const currentLabel = (LIFELOAD_OPTIONS.find(function(o) { return o[0] === lifeload; }) || [,lifeload])[1];
-      html += '<div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px">';
-      html += '<span style="font-size:13px">Ressenti aujourd\'hui : <b>' + esc(currentLabel) + '</b></span>';
-      html += '<button id="lifeload-edit-btn" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--steel);font-size:11px;font-weight:700;padding:5px 10px;cursor:pointer">Modifier</button></div>';
+  } else {
+    // Un bloc par métrique (barres semaine + courbe mois + 1 phrase) — jamais
+    // plus, pour ne pas retomber dans le fourre-tout de l'ancien Dashboard.
+    // Le détail (VFC/FC/stress croisés, migraines, discipline...) va dans le
+    // Coach plutôt qu'ici.
+    function recentVsBaseline(field) {
+      const recent = wearable.filter(function(w){ return w.day >= daysAgo(6) && w[field] != null; }).map(function(w){ return w[field]; });
+      const baseline = wearable.filter(function(w){ return w.day < daysAgo(6) && w.day >= daysAgo(29) && w[field] != null; }).map(function(w){ return w[field]; });
+      return { recent: recent.length ? avgOf(recent) : null, baseline: baseline.length >= 3 ? avgOf(baseline) : null };
     }
-
-    if (!todayGripRow || gripEditing) {
-      html += '<div class="card"><div class="section-label">Force de préhension (dynamomètre)</div>';
-      html += '<input type="number" min="0" step="0.5" id="grip-input" placeholder="kg" value="' + (todayGripRow ? todayGripRow.value_kg : "") + '" style="width:100%;text-align:center;margin-bottom:12px" />';
-      html += '<button id="grip-validate" style="width:100%;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Enregistrer</button>';
-      html += '<div class="muted" style="font-size:10px;margin-top:10px">Mesure le matin, à jeun, avant tout entraînement ou café — toujours la même main, meilleure de 2 essais.</div></div>';
-    } else {
-      html += '<div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px">';
-      html += '<span style="font-size:13px">Préhension aujourd\'hui : <b>' + todayGripRow.value_kg + ' kg</b>' + (gripPct != null ? ' <span class="muted" style="font-size:11px">(' + (gripPct >= 0 ? "+" : "") + gripPct.toFixed(0) + '% vs récent)</span>' : '') + '</span>';
-      html += '<div style="display:flex;gap:8px;flex-shrink:0">';
-      html += '<button id="grip-edit-btn" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--steel);font-size:11px;font-weight:700;padding:5px 10px;cursor:pointer">Modifier</button>';
-      html += '<button id="grip-delete-btn" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--red);font-size:11px;font-weight:700;padding:5px 10px;cursor:pointer">Supprimer</button>';
-      html += "</div></div>";
-    }
-
-    if (stressTierNow) {
-      html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Stress</span><span>' + tierDot(stressTierNow) + '</span></div>';
-      html += stressGaugeHtml(todayWearable.stress_avg, sLabel);
-      if (stressDiff != null) {
-        html += '<div class="muted" style="text-align:center;font-size:11px;margin-top:6px">' + (stressDiff >= 0 ? "+" : "") + stressDiff.toFixed(0) + " vs ta moyenne des 7 derniers jours</div>";
-      }
-      html += "</div>";
-    }
-
-    if (hasHrData) {
-      html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>FC repos (bpm) — 14 jours</span><span>' + tierDot(hrTierNow) + '</span></div>';
-      html += barChartHtml(hrSeries, { unit: " bpm", qualify: qualifyRHR });
-      html += "</div>";
-      html += '<div class="card"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>VFC (ms) — 14 jours</span><span>' + tierDot(hrvTierNow) + '</span></div>';
-      html += barChartHtml(hrvSeries, { unit: " ms", qualify: qualifyHRV });
-      html += "</div>";
-    }
-
-    if (todayWearable) html += wearableCardHtml(Object.assign({}, todayWearable, { day: today }));
-  } else if (dashPeriod === "semaine") {
-    const last7 = []; for (let i = 6; i >= 0; i--) last7.push(daysAgo(i));
-    const week7Wearable = wearable.filter(function(w){ return last7.indexOf(w.day) !== -1; });
-    function dailyTrendBars(field) {
+    function weekBars(field) {
+      const last7 = []; for (let i = 6; i >= 0; i--) last7.push(daysAgo(i));
       return last7.map(function(d) {
-        const w = week7Wearable.find(function(x){ return x.day === d; });
+        const w = wearable.find(function(x){ return x.day === d; });
         return { label: formatDateLabel(d).slice(0,2), val: (w && w[field] != null) ? w[field] : 0 };
       });
     }
-    const hasHrW = week7Wearable.some(function(w){return w.hr_resting!=null;});
-    const hasHrvW = week7Wearable.some(function(w){return w.hrv_avg!=null;});
-    const hasStressW = week7Wearable.some(function(w){return w.stress_avg!=null;});
-    const hasSleepW = week7Wearable.some(function(w){return w.sleep_total_min!=null;});
-    if (hasHrW) {
-      html += '<div class="card"><div class="section-label">FC repos — 7 derniers jours</div>';
-      html += barChartHtml(dailyTrendBars("hr_resting"), { unit: " bpm", qualify: qualifyRHR });
-      html += "</div>";
-    }
-    if (hasHrvW) {
-      html += '<div class="card"><div class="section-label">VFC — 7 derniers jours</div>';
-      html += barChartHtml(dailyTrendBars("hrv_avg"), { unit: " ms", qualify: qualifyHRV });
-      html += "</div>";
-    }
-    if (hasStressW) {
-      html += '<div class="card"><div class="section-label">Stress — 7 derniers jours</div>';
-      html += barChartHtml(dailyTrendBars("stress_avg"), { qualify: qualifyStress });
-      html += "</div>";
-    }
-    if (hasSleepW) {
-      const sleepBarsW = last7.map(function(d) {
-        const w = week7Wearable.find(function(x){ return x.day === d; });
-        const mins = w && w.sleep_total_min != null ? w.sleep_total_min : 0;
-        return { label: formatDateLabel(d).slice(0,2), val: Math.round((mins/60)*10)/10 };
-      });
-      html += '<div class="card"><div class="section-label">Sommeil (h) — 7 derniers jours</div>';
-      html += barChartHtml(sleepBarsW, { decimals: 1, unit: "h", qualify: qualifySleepHours });
-      html += "</div>";
-    }
-    if (!hasHrW && !hasHrvW && !hasStressW && !hasSleepW) {
-      html += '<div class="card"><div class="muted" style="text-align:center;padding:16px 0">Pas encore assez de données montre cette semaine.</div></div>';
-    }
-
-    const weekMig = monthMigraines.filter(function(m){ return last7.indexOf(m.day) !== -1; });
-    if (weekMig.length > 0) {
-      const avgIntensityW = avgOf(weekMig.map(function(m){ return m.intensity || 0; }));
-      html += '<div class="card ' + (weekMig.length >= 2 ? "amber" : "") + '"><div class="section-label">Migraines cette semaine</div><div class="stat-row">';
-      html += statHtml("Nombre", weekMig.length, weekMig.length >= 2 ? "amber" : null);
-      html += statHtml("Intensité moy.", avgIntensityW.toFixed(1) + "/10");
-      html += "</div></div>";
-    }
-
-    html += '<div class="card steel"><div class="muted" style="font-size:12px;text-align:center">Les données d\'entraînement de la semaine sont dans l\'onglet <b style="color:var(--chalk)">Entraînement → Tendances</b>.</div></div>';
-  } else if (dashPeriod === "mois") {
-    const month = []; for (let i = 29; i >= 0; i--) month.push(daysAgo(i));
-    const monthSessions = sessions.filter(function(s){ return month.indexOf(s.date) !== -1; });
-
-    // Tendances physiologiques : moyenne par tranche de ~6 jours plutôt qu'un
-    // chiffre unique — pour voir l'évolution, pas juste l'état actuel.
-    const monthWearableOverview = wearable.filter(function(w){ return month.indexOf(w.day) !== -1; });
-    function weeklyTrendBuckets(field, decimals) {
+    function monthLine(field) {
+      const month = []; for (let i = 29; i >= 0; i--) month.push(daysAgo(i));
       const b = [];
       for (let w = 0; w < 5; w++) {
         const bd = month.slice(w*6, w*6+6); if (!bd.length) continue;
-        const vals = monthWearableOverview.filter(function(x){ return bd.indexOf(x.day) !== -1; }).map(function(x){return x[field];}).filter(function(v){return v!=null;});
+        const vals = wearable.filter(function(x){ return bd.indexOf(x.day) !== -1; }).map(function(x){return x[field];}).filter(function(v){return v!=null;});
         b.push({ label: bd[0].slice(8,10)+"-"+bd[bd.length-1].slice(8,10), val: vals.length ? avgOf(vals) : 0 });
       }
       return b;
     }
-    const hasHr = monthWearableOverview.some(function(w){return w.hr_resting!=null;});
-    const hasHrv = monthWearableOverview.some(function(w){return w.hrv_avg!=null;});
-    const hasStress = monthWearableOverview.some(function(w){return w.stress_avg!=null;});
-    const hasSleep = monthWearableOverview.some(function(w){return w.sleep_total_min!=null;});
-    if (hasHr) {
-      html += '<div class="card"><div class="section-label">FC repos — tendance</div>';
-      html += barChartHtml(weeklyTrendBuckets("hr_resting"), { height: 56, unit: " bpm", qualify: qualifyRHR });
-      html += "</div>";
-    }
-    if (hasHrv) {
-      html += '<div class="card"><div class="section-label">VFC — tendance</div>';
-      html += barChartHtml(weeklyTrendBuckets("hrv_avg"), { height: 56, unit: " ms", qualify: qualifyHRV });
-      html += "</div>";
-    }
-    if (hasStress) {
-      html += '<div class="card"><div class="section-label">Stress — tendance</div>';
-      html += barChartHtml(weeklyTrendBuckets("stress_avg"), { height: 56, qualify: qualifyStress });
-      html += "</div>";
-    }
-    if (hasSleep) {
-      const sleepHourBuckets = weeklyTrendBuckets("sleep_total_min").map(function(b){ return { label: b.label, val: Math.round((b.val/60)*10)/10 }; });
-      html += '<div class="card"><div class="section-label">Sommeil (h) — tendance</div>';
-      html += barChartHtml(sleepHourBuckets, { decimals: 1, height: 56, unit: "h", qualify: qualifySleepHours });
-      html += "</div>";
-    }
-    if (!hasHr && !hasHrv && !hasStress && !hasSleep) {
-      html += '<div class="card"><div class="muted" style="text-align:center;padding:16px 0">Pas encore assez de données montre ce mois-ci.</div></div>';
+    function trendPhrase(rb, invert, unit, decimals) {
+      if (rb.recent == null) return "Pas encore assez de données récentes pour une tendance.";
+      if (rb.baseline == null) return "Pas encore de période de référence assez longue pour comparer.";
+      const pct = rb.baseline ? ((rb.recent - rb.baseline) / rb.baseline) * 100 : 0;
+      const favorable = invert ? pct <= -8 : pct >= 8;
+      const unfavorable = invert ? pct >= 8 : pct <= -8;
+      const recentTxt = rb.recent.toFixed(decimals) + unit;
+      if (favorable) return "En amélioration sur le mois : " + recentTxt + " en moyenne cette semaine, contre " + rb.baseline.toFixed(decimals) + unit + " sur les semaines précédentes.";
+      if (unfavorable) return "En dégradation sur le mois : " + recentTxt + " en moyenne cette semaine, contre " + rb.baseline.toFixed(decimals) + unit + " sur les semaines précédentes — à surveiller.";
+      return "Stable sur le mois, autour de " + recentTxt + " en moyenne.";
     }
 
-    // Migraines du mois
-    const monthMig = monthMigraines.filter(function(m){ return month.indexOf(m.day) !== -1; });
-    if (monthMig.length > 0) {
-      const avgIntensity = avgOf(monthMig.map(function(m){ return m.intensity || 0; }));
-      html += '<div class="card ' + (monthMig.length >= 3 ? "amber" : "") + '"><div class="section-label">Migraines ce mois-ci</div>';
-      html += '<div class="stat-row">';
-      html += statHtml("Nombre", monthMig.length, monthMig.length >= 3 ? "amber" : null);
-      html += statHtml("Intensité moy.", avgIntensity.toFixed(1) + "/10");
-      html += "</div></div>";
-    }
+    const hrvRB = recentVsBaseline("hrv_avg");
+    html += metricTrendSectionHtml("VFC", weekBars("hrv_avg"), monthLine("hrv_avg"), trendPhrase(hrvRB, false, " ms", 0), { unit: " ms", qualify: qualifyHRV });
+    const hrRB = recentVsBaseline("hr_resting");
+    html += metricTrendSectionHtml("FC repos", weekBars("hr_resting"), monthLine("hr_resting"), trendPhrase(hrRB, true, " bpm", 0), { unit: " bpm", qualify: qualifyRHR });
+    const stressRB = recentVsBaseline("stress_avg");
+    html += metricTrendSectionHtml("Stress", weekBars("stress_avg"), monthLine("stress_avg"), trendPhrase(stressRB, true, "", 0), { qualify: qualifyStress });
 
-    // Répartition LifeLoad du mois
-    const monthLL = monthLifeload.filter(function(l){ return month.indexOf(l.day) !== -1; });
+    const monthLL = monthLifeload.filter(function(l){ return l.day >= daysAgo(29); });
     if (monthLL.length >= 5) {
-      const llCounts = {};
-      monthLL.forEach(function(l){ llCounts[l.state] = (llCounts[l.state]||0) + 1; });
-      const llLabels = { bien: "Bien", neutre: "Neutre", stresse: "Stressé", fatigue: "Fatigué", courbature: "Courbaturé", malade: "Malade" };
-      const llColors = { bien: "green", neutre: "steel", stresse: "amber", fatigue: "amber", courbature: "amber", malade: "red" };
-      html += '<div class="card"><div class="section-label">Comment tu t\'es senti ce mois-ci (' + monthLL.length + ' jour(s) renseigné(s))</div>';
-      Object.keys(llCounts).sort(function(a,b){ return llCounts[b]-llCounts[a]; }).forEach(function(k) {
-        const pct = Math.round((llCounts[k]/monthLL.length)*100);
-        html += '<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>' + (llLabels[k]||k) + '</span><span class="muted">' + llCounts[k] + " jour(s)</span></div>";
-        html += '<div style="height:6px;background:var(--surfaceRaised);border-radius:3px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:var(--' + (llColors[k]||"steel") + ')"></div></div></div>';
-      });
-      html += "</div>";
+      const badCount = monthLL.filter(function(l){ return ["stresse","fatigue","malade","courbature"].indexOf(l.state) !== -1; }).length;
+      html += '<div class="card"><div class="section-label">Ressenti</div><div style="font-size:12px;color:var(--chalkDim)">' + badCount + " jour(s) difficile(s) sur " + monthLL.length + " renseigné(s) ce mois-ci.</div></div>";
     }
-
-    html += '<div class="card steel"><div class="muted" style="font-size:12px;text-align:center">Les données d\'entraînement (charge, recommandations, comparaison par discipline) sont désormais dans l\'onglet <b style="color:var(--chalk)">Séance → Tendances</b>.</div></div>';
   }
 
   app.innerHTML = html;
-  document.querySelectorAll('#period-row .pill').forEach(function(btn) {
-    btn.addEventListener("click", function() { dashPeriod = btn.dataset.period; renderDashboard(); });
+  document.querySelectorAll('#forme-subtab-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { formeSubTab = btn.dataset.subtab; renderForme(); });
   });
-  document.querySelectorAll('.goto-date').forEach(function(btn) {
-    btn.addEventListener("click", function() { currentDate = btn.dataset.date; currentTab = "seance"; setTab("seance"); });
-  });
-  document.querySelectorAll('.dismiss-flag').forEach(function(btn) {
-    btn.addEventListener("click", function() {
-      const d = btn.dataset.date;
-      btn.textContent = "…";
-      sb("dismissed_activity_flags", {
-        method: "POST",
-        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-        body: JSON.stringify({ day: d }),
-      }).then(function() { renderDashboard(); }).catch(function(e) { alert("Erreur : " + e.message); });
-    });
-  });
-  const lifeloadSelect = document.getElementById("lifeload-select");
-  if (lifeloadSelect) lifeloadSelect.addEventListener("change", function() {
-    const v = lifeloadSelect.value;
-    if (!v) return;
-    sb("lifeload", {
-      method: "POST",
-      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-      body: JSON.stringify({ day: todayISO(), state: v }),
-    }).then(function() { lifeloadEditing = false; renderDashboard(); }).catch(function(e) { alert("Erreur : " + e.message); });
-  });
-  const lifeloadEditBtn = document.getElementById("lifeload-edit-btn");
-  if (lifeloadEditBtn) lifeloadEditBtn.addEventListener("click", function() { lifeloadEditing = true; renderDashboard(); });
-  const gripValidateBtn = document.getElementById("grip-validate");
-  if (gripValidateBtn) gripValidateBtn.addEventListener("click", function() {
-    const input = document.getElementById("grip-input");
-    const val = input ? Number(input.value) : 0;
-    if (!val || val <= 0) { alert("Entre une valeur en kg."); return; }
-    gripValidateBtn.textContent = "Enregistrement…";
-    sb("grip_strength", {
-      method: "POST",
-      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-      body: JSON.stringify({ day: todayISO(), value_kg: val }),
-    }).then(function() { gripEditing = false; renderDashboard(); }).catch(function(e) { alert("Erreur : " + e.message); gripValidateBtn.textContent = "Enregistrer"; });
-  });
-  const gripEditBtn = document.getElementById("grip-edit-btn");
-  if (gripEditBtn) gripEditBtn.addEventListener("click", function() { gripEditing = true; renderDashboard(); });
-  const gripDeleteBtn = document.getElementById("grip-delete-btn");
-  if (gripDeleteBtn) gripDeleteBtn.addEventListener("click", function() {
-    if (!confirm("Supprimer la mesure de préhension d'aujourd'hui ?")) return;
-    gripDeleteBtn.textContent = "…";
-    sb("grip_strength?day=eq." + todayISO(), { method: "DELETE", headers: { Prefer: "return=minimal" } })
-      .then(function() { renderDashboard(); }).catch(function(e) { alert("Erreur : " + e.message); });
-  });
+}
+
+// TODO(navigation) : Entraînement et Récupération arrivent dans les
+// prochains commits de cette même refonte — onglets fonctionnels mais
+// encore minimaux en attendant.
+async function loadEntrainement() {
+  const app = document.getElementById("app");
+  app.innerHTML = '<h1>Entraînement</h1><div class="muted">Contenu en cours de refonte — arrive dans le prochain commit.</div>';
+}
+async function loadRecuperation() {
+  const app = document.getElementById("app");
+  app.innerHTML = '<h1>Récupération</h1><div class="muted">Contenu en cours de refonte — arrive dans le prochain commit.</div>';
 }
 // ---------------- Rendu : Sommeil ----------------
 async function renderSommeil() {
@@ -2771,6 +2573,142 @@ function breathingButtonsHtml() {
   return html;
 }
 
+// Outil de respiration détaché de tout onglet — ouvert en tapant sur le
+// bandeau de marque, accessible depuis n'importe où (même principe de calque
+// plein écran que le Coach), pour ne pas l'enterrer dans un sous-onglet.
+function openBreathingOverlay() {
+  document.getElementById("breathing-overlay").style.display = "block";
+  drawBreathingOverlay();
+}
+function closeBreathingOverlay() {
+  stopBreathing();
+  breathingFocusMode = false;
+  document.getElementById("breathing-overlay").style.display = "none";
+}
+function drawBreathingOverlay() {
+  const overlay = document.getElementById("breathing-overlay");
+
+  if (breathingFocusMode) {
+    let focusHtml = '<div style="position:fixed;inset:0;z-index:1000;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px">';
+    focusHtml += '<button id="breathing-focus-exit" style="position:absolute;top:24px;right:24px;background:none;border:1px solid var(--line);border-radius:8px;color:var(--chalkDim);font-size:11px;font-weight:700;padding:8px 14px;cursor:pointer;text-transform:uppercase;letter-spacing:.3px">✕ Réduire</button>';
+    focusHtml += breathingCircleHtml();
+    focusHtml += breathingButtonsHtml();
+    focusHtml += "</div>";
+    overlay.innerHTML = focusHtml;
+    updateBreathingIdleStats();
+    wireBreathingOverlayEvents();
+    return;
+  }
+
+  let html = '<div class="wrap">';
+  html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px"><h1>Respiration</h1>';
+  html += '<button id="breathing-overlay-close-btn" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--chalkDim);font-size:11px;font-weight:700;padding:6px 12px;cursor:pointer">✕ Fermer</button></div>';
+  html += '<div class="muted" style="margin-bottom:8px">Cohérence cardiaque, contre le stress et la tension nerveuse</div>';
+
+  html += '<div style="display:flex;flex-direction:column;align-items:center;padding:16px 0 48px">';
+  html += '<button id="breathing-focus-enter" style="background:none;border:none;color:var(--steel);font-size:11px;font-weight:700;letter-spacing:.3px;cursor:pointer;margin-bottom:24px;text-transform:uppercase">⤢ Plein écran</button>';
+  html += breathingCircleHtml();
+  html += breathingButtonsHtml();
+  html += '<div style="display:flex;justify-content:center;flex-wrap:nowrap;gap:28px;margin-top:28px">';
+  html += '<div style="text-align:center"><div class="stat-label">Temps</div><div class="stat-value" id="breathing-stat-clock">–</div></div>';
+  html += '<div style="text-align:center"><div class="stat-label">Respirations</div><div class="stat-value" id="breathing-stat-breaths">–</div></div>';
+  html += '<div style="text-align:center"><div class="stat-label">Cycles/min</div><div class="stat-value" id="breathing-stat-bpm">–</div></div>';
+  html += "</div>";
+  html += "</div>";
+
+  html += '<div class="card" style="margin-bottom:28px"><div class="section-label" style="margin-bottom:14px">Préréglage</div>';
+  html += '<select id="breathing-preset-select" style="width:100%;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:7px;color:var(--chalk);font-size:16px;padding:10px 12px;margin-bottom:28px">';
+  const anyPresetActive = BREATHING_PRESETS.some(function(p) {
+    return breathingConfig.inhale === p.inhale && breathingConfig.holdFull === p.holdFull && breathingConfig.exhale === p.exhale && breathingConfig.holdEmpty === p.holdEmpty;
+  });
+  html += '<option value=""' + (!anyPresetActive ? " selected" : "") + ' disabled>Personnalisé</option>';
+  BREATHING_PRESETS.forEach(function(p, i) {
+    const active = breathingConfig.inhale === p.inhale && breathingConfig.holdFull === p.holdFull && breathingConfig.exhale === p.exhale && breathingConfig.holdEmpty === p.holdEmpty;
+    html += '<option value="' + i + '"' + (active ? " selected" : "") + '>' + p.label + "</option>";
+  });
+  html += "</select>";
+
+  html += '<div class="section-label" style="margin-bottom:14px">Durée de la séance</div>';
+  html += '<div style="max-width:160px;margin-bottom:32px"><div class="muted" style="font-size:10px;text-transform:uppercase;margin-bottom:8px">Minutes</div>';
+  html += '<input type="number" min="1" step="1" id="breathing-duration-input" value="' + (breathingConfig.durationSec / 60) + '" style="text-align:center" /></div>';
+
+  html += '<div class="section-label" style="margin-bottom:16px">Temps (secondes) — réglable librement</div>';
+  html += '<div style="display:flex;gap:20px;flex-wrap:wrap">';
+  [
+    ["inhale", "Inspiration"], ["holdFull", "Rétention (poumons pleins)"],
+    ["exhale", "Expiration"], ["holdEmpty", "Rétention (poumons vides)"],
+  ].forEach(function(f) {
+    html += '<div style="flex:1;min-width:120px"><div class="muted" style="font-size:10px;text-transform:uppercase;margin-bottom:8px">' + f[1] + '</div>';
+    html += '<input type="number" min="0" step="0.5" class="breathing-time-input" data-field="' + f[0] + '" value="' + breathingConfig[f[0]] + '" style="text-align:center" /></div>';
+  });
+  html += "</div></div>";
+
+  html += '<div class="card" style="margin-bottom:28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><span>Son</span><span></span></div>';
+  html += '<div class="pill-row compact" id="breathing-sound-row" style="margin-bottom:24px"><button class="pill' + (breathingConfig.soundOn ? " active green" : "") + '" data-sound="1">Activé</button><button class="pill' + (!breathingConfig.soundOn ? " active" : "") + '" data-sound="0">Désactivé</button></div>';
+  html += '<div class="muted" style="font-size:10px;text-transform:uppercase;margin-bottom:8px">Type de son</div>';
+  html += '<select id="breathing-soundtype-select" style="width:100%;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:7px;color:var(--chalk);font-size:16px;padding:10px 12px">';
+  [
+    ["tone", "Tonalités"], ["green", "Bruit vert"], ["grey", "Bruit gris"],
+    ["white", "Bruit blanc"], ["pink", "Bruit rose"], ["brown", "Bruit brun"],
+  ].forEach(function(t) {
+    html += '<option value="' + t[0] + '"' + (breathingConfig.soundType === t[0] ? " selected" : "") + '>' + t[1] + "</option>";
+  });
+  html += "</select></div>";
+
+  html += '<div class="card steel"><div class="section-label" style="margin-bottom:14px">À savoir</div><div style="font-size:12px;color:var(--chalkDim);line-height:1.6">La respiration lente (le préréglage "Cohérence", ~5,5 cycles/min) est le rythme le plus étudié en biofeedback de variabilité cardiaque pour la relaxation. Utile contre le stress et la tension nerveuse, mais c\'est un outil de gestion au quotidien, pas un traitement d\'une crise en cours ni un substitut à un avis médical.</div></div>';
+  html += "</div>";
+
+  overlay.innerHTML = html;
+  updateBreathingIdleStats();
+  wireBreathingOverlayEvents();
+}
+function wireBreathingOverlayEvents() {
+  const closeBtn = document.getElementById("breathing-overlay-close-btn");
+  if (closeBtn) closeBtn.addEventListener("click", closeBreathingOverlay);
+
+  const durationInput = document.getElementById("breathing-duration-input");
+  if (durationInput) {
+    durationInput.addEventListener("blur", function() {
+      stopBreathing();
+      const minutes = Number(durationInput.value) || 1;
+      breathingConfig.durationSec = Math.max(1, minutes) * 60;
+      drawBreathingOverlay();
+    });
+  }
+  const breathingPresetSelect = document.getElementById("breathing-preset-select");
+  if (breathingPresetSelect) breathingPresetSelect.addEventListener("change", function() {
+    stopBreathing();
+    const p = BREATHING_PRESETS[Number(breathingPresetSelect.value)];
+    breathingConfig.inhale = p.inhale; breathingConfig.holdFull = p.holdFull;
+    breathingConfig.exhale = p.exhale; breathingConfig.holdEmpty = p.holdEmpty;
+    if (p.durationSec) breathingConfig.durationSec = p.durationSec;
+    drawBreathingOverlay();
+  });
+  document.querySelectorAll('.breathing-time-input').forEach(function(input) {
+    input.addEventListener("blur", function() {
+      stopBreathing();
+      breathingConfig[input.dataset.field] = input.value ? Number(input.value) : 0;
+      drawBreathingOverlay();
+    });
+  });
+  document.querySelectorAll('#breathing-sound-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { breathingConfig.soundOn = btn.dataset.sound === "1"; drawBreathingOverlay(); });
+  });
+  const breathingSoundtypeSelect = document.getElementById("breathing-soundtype-select");
+  if (breathingSoundtypeSelect) breathingSoundtypeSelect.addEventListener("change", function() {
+    breathingConfig.soundType = breathingSoundtypeSelect.value;
+    drawBreathingOverlay();
+  });
+  const breathingStartBtn = document.getElementById("breathing-start-btn");
+  if (breathingStartBtn) breathingStartBtn.addEventListener("click", startBreathing);
+  const breathingStopBtn = document.getElementById("breathing-stop-btn");
+  if (breathingStopBtn) breathingStopBtn.addEventListener("click", stopBreathing);
+  const breathingFocusEnterBtn = document.getElementById("breathing-focus-enter");
+  if (breathingFocusEnterBtn) breathingFocusEnterBtn.addEventListener("click", function() { breathingFocusMode = true; drawBreathingOverlay(); });
+  const breathingFocusExitBtn = document.getElementById("breathing-focus-exit");
+  if (breathingFocusExitBtn) breathingFocusExitBtn.addEventListener("click", function() { breathingFocusMode = false; drawBreathingOverlay(); });
+}
+
 async function getWearableForDate2(dateStr) {
   const rows = await sb("wearable_daily?day=eq." + dateStr + "&select=*");
   return rows && rows[0] ? rows[0] : null;
@@ -3482,15 +3420,11 @@ function drawCoach() {
 
 // ---------------- Navigation ----------------
 function setTab(tab) {
-  stopBreathing(); // n'a d'effet que si une séance de respiration guidée tourne
-  breathingFocusMode = false;
   currentTab = tab;
   document.querySelectorAll(".tab[data-tab]").forEach(function(t) { t.classList.toggle("active", t.dataset.tab === tab); });
-  if (tab === "seance") loadSeance();
-  else if (tab === "dashboard") renderDashboard();
-  else if (tab === "sommeil") renderSommeil();
-  else if (tab === "migraine") loadMigraine();
-  else renderVie();
+  if (tab === "entrainement") loadEntrainement();
+  else if (tab === "recuperation") loadRecuperation();
+  else renderForme();
 }
 async function loadCoefficients() {
   try {
@@ -3535,11 +3469,12 @@ document.getElementById("logout-btn").addEventListener("click", function() {
   if (confirm("Se déconnecter ?")) logout();
 });
 document.getElementById("coach-fab").addEventListener("click", renderCoach);
+document.getElementById("brand-breathing-btn").addEventListener("click", openBreathingOverlay);
 // Ne démarre le chargement des données qu'une fois authentifié — appelé par
 // le script du gate (juste après connexion, ou immédiatement si la session
 // stockée est encore valide). Voir ensureAccessToken() plus haut.
 window.mpbOnAuthed = function() {
-  Promise.all([loadCoefficients(), loadSchedule()]).then(function() { setTab("dashboard"); });
+  Promise.all([loadCoefficients(), loadSchedule()]).then(function() { setTab("forme"); });
 };
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", function() { navigator.serviceWorker.register("sw.js").catch(function() {}); });
