@@ -325,44 +325,58 @@ const DISCIPLINE_TO_THEMES = {
 const SINGLE_THEME_DISCIPLINES = { Handstand: "handstand", "Mobilité": "bas", Locomotion: "locomotion", "Arm Balance": "arm_balance", Altinha: "altinha" };
 // Repli si le réseau ou la table ne répond pas au démarrage — l'appli reste
 // utilisable, mais ces valeurs sont normalement remplacées par loadSchedule()
-// avec les vraies données de Supabase (jamais figées ici).
+// avec les vraies données de Supabase (jamais figées ici). Resynchronisé le
+// 2026-09-03 sur le contenu réel de mpb-booking (l'ancien repli datait d'avant
+// plusieurs changements de planning — ex. jeudi 11h : "Mobilité" au lieu du
+// vrai "Arm Balance"/"Altinha" — et faussait le pré-remplissage des séances
+// si jamais la requête réseau échouait avant que loadSchedule() la corrige).
 let CLASS_SCHEDULE = [
   { discipline: "Altinha", jour_semaine: 1, semaine: "B", heure_debut: "11:00", heure_fin: "12:00" },
-  { discipline: "Locomotion", jour_semaine: 1, semaine: "B", heure_debut: "12:15", heure_fin: "13:15" },
+  { discipline: "Mobilité", jour_semaine: 1, semaine: "B", heure_debut: "12:15", heure_fin: "13:15" },
   { discipline: "Calisthenics", jour_semaine: 2, semaine: "A", heure_debut: "12:15", heure_fin: "13:15" },
   { discipline: "Calisthenics", jour_semaine: 2, semaine: "B", heure_debut: "12:15", heure_fin: "13:15" },
   { discipline: "Handstand", jour_semaine: 2, semaine: "B", heure_debut: "19:30", heure_fin: "20:30" },
   { discipline: "Handstand", jour_semaine: 2, semaine: "A", heure_debut: "19:30", heure_fin: "20:30" },
+  { discipline: "Altinha", jour_semaine: 3, semaine: "B", heure_debut: "11:00", heure_fin: "12:00" },
   { discipline: "Mobilité", jour_semaine: 3, semaine: "A", heure_debut: "11:00", heure_fin: "12:00" },
-  { discipline: "Locomotion", jour_semaine: 3, semaine: "B", heure_debut: "12:15", heure_fin: "13:15" },
   { discipline: "Arm Balance", jour_semaine: 3, semaine: "A", heure_debut: "12:15", heure_fin: "13:15" },
-  { discipline: "Mobilité", jour_semaine: 4, semaine: "B", heure_debut: "11:00", heure_fin: "12:00" },
-  { discipline: "Handstand", jour_semaine: 4, semaine: "B", heure_debut: "12:15", heure_fin: "13:15" },
+  { discipline: "Locomotion", jour_semaine: 3, semaine: "B", heure_debut: "12:15", heure_fin: "13:15" },
+  { discipline: "Arm Balance", jour_semaine: 4, semaine: "B", heure_debut: "11:00", heure_fin: "12:00" },
+  { discipline: "Altinha", jour_semaine: 4, semaine: "A", heure_debut: "11:00", heure_fin: "12:00" },
   { discipline: "Handstand", jour_semaine: 4, semaine: "A", heure_debut: "12:15", heure_fin: "13:15" },
+  { discipline: "Handstand", jour_semaine: 4, semaine: "B", heure_debut: "12:15", heure_fin: "13:15" },
   { discipline: "Calisthenics", jour_semaine: 5, semaine: "A", heure_debut: "11:00", heure_fin: "12:00" },
   { discipline: "Locomotion", jour_semaine: 5, semaine: "A", heure_debut: "12:15", heure_fin: "13:15" }
 ].map(function(c){ c.actif = true; return c; });
 let SCHEDULE_REFERENCE = { date_lundi_reference: "2026-08-17", semaine_ce_lundi: "B" };
-let SCHEDULE_VACATIONS = [{ date_debut: "2026-08-06", date_fin: "2026-08-16" }, { date_debut: "2026-10-03", date_fin: "2026-10-11" }];
+let SCHEDULE_VACATIONS = [{ date_debut: "2026-10-03", date_fin: "2026-10-11" }];
 
+// Passe à true si un des 3 appels réseau vers mpb-booking échoue — l'appli
+// reste alors sur le repli codé en dur (CLASS_SCHEDULE ci-dessus), qui peut
+// diverger du vrai planning. Affiché comme avertissement dans Entraînement
+// plutôt que d'échouer silencieusement (c'est exactement ce genre de panne
+// silencieuse qui avait fait tourner l'app sur un ancien planning sans que
+// ça se voie nulle part).
+let scheduleLoadFailed = false;
 async function loadSchedule() {
   // Recharge le vrai planning depuis le site de réservation (mpb-booking) à
   // chaque démarrage de l'appli — toute modification faite sur le site
   // (nouveaux horaires, cours ajouté/retiré, vacances) est reflétée ici
   // automatiquement, plus besoin de la reporter à la main dans une copie
   // séparée qui finissait toujours par diverger.
+  scheduleLoadFailed = false;
   try {
     const rows = await mpbBookingRequest("cours?select=discipline,jour_semaine,semaine,heure_debut,heure_fin,actif");
     if (rows && rows.length) CLASS_SCHEDULE = rows;
-  } catch (e) {}
+  } catch (e) { scheduleLoadFailed = true; console.warn("loadSchedule: cours non synchronisés, repli utilisé —", e.message); }
   try {
     const ref = await mpbBookingRequest("semaine_reference?select=date_lundi_reference,semaine_ce_lundi&limit=1");
     if (ref && ref[0]) SCHEDULE_REFERENCE = ref[0];
-  } catch (e) {}
+  } catch (e) { scheduleLoadFailed = true; console.warn("loadSchedule: semaine de référence non synchronisée, repli utilisé —", e.message); }
   try {
     const vac = await mpbBookingRequest("vacances?select=date_debut,date_fin");
     if (vac) SCHEDULE_VACATIONS = vac;
-  } catch (e) {}
+  } catch (e) { scheduleLoadFailed = true; console.warn("loadSchedule: vacances non synchronisées, repli utilisé —", e.message); }
 }
 
 // ---------------- Utilitaires ----------------
@@ -1140,6 +1154,9 @@ async function loadEntrainement() {
   html += "</div>";
 
   if (entrainementSubTab === "jour") {
+    if (scheduleLoadFailed) {
+      html += '<div class="error-banner"><b>Planning non synchronisé :</b> le site de réservation n\'a pas répondu — le cours prévu ci-dessous peut être obsolète. Réessaie de rafraîchir (⟳ en haut).</div>';
+    }
     if (toComplete.length) {
       html += '<div class="card amber"><div class="section-label">Séances possibles non renseignées</div>';
       html += '<div class="muted" style="margin-bottom:10px">Activité détectée par la montre sans QCM correspondant.</div>';
