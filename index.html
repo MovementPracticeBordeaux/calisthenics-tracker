@@ -2332,6 +2332,99 @@ function barChartHtml(items, opts) {
   return html;
 }
 
+// Graphique en courbe pour la vue mensuelle — même signature d'options que
+// barChartHtml (decimals/height/unit/showAvg/qualify/trendQualify), pour
+// afficher les deux dans metricTrendSectionHtml sans dupliquer de logique.
+// Une courbe distingue visuellement "mois" de "semaine" (barres) au premier
+// coup d'œil, sans avoir à relire les libellés.
+function lineChartHtml(items, opts) {
+  opts = opts || {};
+  const decimals = opts.decimals || 0;
+  const height = opts.height || 64;
+  const unit = opts.unit || "";
+  const vals = items.map(function(i) { return i.val || 0; });
+  const max = Math.max.apply(null, vals.concat([1]));
+  const min = Math.min.apply(null, vals.concat([0]));
+  const range = (max - min) || 1;
+  const w = 100, padY = 6;
+  const usableH = Math.max(1, height - padY * 2);
+  const n = items.length;
+  const stepX = n > 1 ? w / (n - 1) : 0;
+  const points = items.map(function(item, i) {
+    const v = item.val || 0;
+    const x = n > 1 ? i * stepX : w / 2;
+    const y = padY + (usableH - ((v - min) / range) * usableH);
+    return { x: x, y: y };
+  });
+  const pathD = points.map(function(p, i) { return (i === 0 ? "M" : "L") + p.x.toFixed(2) + "," + p.y.toFixed(2); }).join(" ");
+  let html = '<div>';
+  html += '<svg viewBox="0 0 ' + w + ' ' + height + '" preserveAspectRatio="none" style="width:100%;height:' + height + 'px;overflow:visible">';
+  if (n > 1) html += '<path d="' + pathD + '" fill="none" stroke="var(--steel)" stroke-width="1.6" vector-effect="non-scaling-stroke"/>';
+  points.forEach(function(p, i) {
+    const isLast = i === points.length - 1;
+    const r = isLast ? 2.6 : 1.4;
+    const color = isLast ? "var(--pink)" : "var(--steel)";
+    html += '<circle cx="' + p.x.toFixed(2) + '" cy="' + p.y.toFixed(2) + '" r="' + r + '" fill="' + color + '" vector-effect="non-scaling-stroke"/>';
+  });
+  html += "</svg>";
+  html += '<div style="display:flex;justify-content:space-between;margin-top:4px">';
+  items.forEach(function(item) {
+    html += '<span style="font-size:9px;color:var(--muted);flex:1;text-align:center">' + (item.label || "") + "</span>";
+  });
+  html += "</div></div>";
+  if (opts.showAvg !== false) {
+    const nonZero = vals.filter(function(v) { return v > 0; });
+    if (nonZero.length >= 2) {
+      const avgVal = avgOf(nonZero);
+      let tier = null;
+      if (opts.trendQualify) tier = opts.trendQualify(items);
+      else if (opts.qualify) tier = opts.qualify(avgVal);
+      const avgColor = tier ? "var(--" + tier + ")" : "var(--chalk)";
+      const trendNote = opts.trendQualify && tier ? (tier === "green" ? " ↗ en hausse" : tier === "red" ? " ↘ en baisse" : " → stable") : "";
+      html += '<div class="muted" style="text-align:center;font-size:11px;margin-top:8px">moyenne : <b style="color:' + avgColor + '">' + avgVal.toFixed(decimals) + unit + "</b>" + trendNote + "</div>";
+    }
+  }
+  return html;
+}
+
+// Compose un bloc de tendance complet pour une métrique : barres semaine +
+// courbe mois + une seule phrase d'interprétation pratique. Jamais utilisé
+// deux fois pour la même métrique (une section = une métrique), et jamais
+// plus qu'une phrase de commentaire — c'est la règle anti-fourre-tout des
+// onglets Tendance, imposée une fois ici plutôt que rappelée à chaque appel.
+function metricTrendSectionHtml(title, weeklyItems, monthlyItems, interpretation, opts) {
+  opts = opts || {};
+  let html = '<div class="card"><div class="section-label">' + esc(title) + '</div>';
+  html += '<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Semaine</div>';
+  html += barChartHtml(weeklyItems, opts);
+  html += '<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin:14px 0 4px">Mois</div>';
+  html += lineChartHtml(monthlyItems, Object.assign({}, opts, { showAvg: false }));
+  if (interpretation) {
+    html += '<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:12px;color:var(--chalkDim)">' + esc(interpretation) + "</div>";
+  }
+  html += "</div>";
+  return html;
+}
+
+// Score d'entraînement du jour — l'inverse du sommeil : démarre haut selon
+// la fatigue déjà accumulée au réveil (avant la séance du jour), puis se
+// vide au fil des séances loguées dans la journée. Pure et testable seule :
+// mêmes intrants (atlWake/ctl/todayTotalLoad) que le panier fatigue du score
+// Forme (index.html, calcul d'atl/ctl et todayDepletion), pas de nouvelle
+// source de données.
+function computeTrainingEnergy(atlWake, ctl, todayTotalLoad) {
+  let wakeDepletion = 0, sessionDepletion = 0;
+  if (atlWake != null && ctl) {
+    const wakeRatio = atlWake / ctl;
+    wakeDepletion = Math.max(0, Math.min(45, Math.round((wakeRatio - 0.7) * 55)));
+  }
+  if (todayTotalLoad > 0) {
+    sessionDepletion = Math.max(0, Math.min(70, Math.round(todayTotalLoad / 10)));
+  }
+  const energy = Math.max(0, Math.min(100, 100 - wakeDepletion - sessionDepletion));
+  return { energy: energy, wakeDepletion: wakeDepletion, sessionDepletion: sessionDepletion };
+}
+
 // Seuils déjà utilisés ailleurs dans l'appli (stress 0-100 Zepp ; sommeil 7-9h
 // optimal) — réutilisés ici pour rester cohérent, pas de nouveau seuil inventé.
 function qualifyStress(v) { return v >= 50 ? "red" : v >= 30 ? "amber" : "green"; }
