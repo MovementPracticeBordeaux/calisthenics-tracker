@@ -2553,6 +2553,15 @@ function buildCoachData(wearable, sessions, migraines, gripRows, kzWorkouts, lif
     breathingRaw: breathingRows || [],
   };
 }
+// Série journalière (30 jours) pour une réponse à un seul indicateur — une
+// moyenne seule ne montre pas si elle vient d'un plateau stable ou d'une
+// remontée après un creux, la courbe si.
+function coachDailyLineChart(rows, dayField, valField, days) {
+  const list = []; for (let i = (days - 1); i >= 0; i--) list.push(daysAgo(i));
+  const byDay = {};
+  rows.forEach(function(r) { if (r[valField] != null) byDay[r[dayField]] = r[valField]; });
+  return list.map(function(day) { return { label: formatDateLabel(day).slice(0, 2), val: byDay[day] != null ? byDay[day] : 0 }; });
+}
 function coachAnswerSleepAvg(d) {
   if (d.sleepAvg14 == null) return "Pas encore assez de données de sommeil récentes pour calculer une moyenne fiable.";
   const h = Math.floor(d.sleepAvg14 / 60), m = Math.round(d.sleepAvg14 % 60);
@@ -2560,7 +2569,9 @@ function coachAnswerSleepAvg(d) {
     : d.sleepAvg14 < 420 ? "un peu court par rapport aux 7-9h recommandées"
     : d.sleepAvg14 <= 540 ? "dans la fourchette recommandée de 7-9h"
     : "plus long que la fourchette habituelle";
-  return "Sur les 14 derniers jours, tu as dormi en moyenne " + h + "h" + String(m).padStart(2, "0") + " par nuit — " + qual + ".";
+  const chartHtml = lineChartHtml(coachDailyLineChart(d.wearableRaw, "day", "sleep_total_min", 30), { unit: " min", decimals: 0, showAvg: false });
+  const text = "Sur les 14 derniers jours, tu as dormi en moyenne " + h + "h" + String(m).padStart(2, "0") + " par nuit — " + qual + ".";
+  return { text: text, chartHtml: chartHtml };
 }
 function coachAnswerSleepRegularity(d) {
   // Pas d'heure de coucher fiable disponible (voir sync_to_supabase.py) —
@@ -2588,14 +2599,18 @@ function coachAnswerHrvTrend(d) {
   const pct = ((d.hrvRecent - d.hrvBaseline) / d.hrvBaseline) * 100;
   const note = pct <= -15 ? "en baisse notable" : pct <= -5 ? "légèrement en baisse"
     : pct >= 15 ? "en nette hausse — bon signe de récupération" : pct >= 5 ? "légèrement en hausse" : "stable";
-  return "Ta VFC moyenne des 7 derniers jours est de " + d.hrvRecent.toFixed(0) + " ms, contre " + d.hrvBaseline.toFixed(0) + " ms sur les 3-4 semaines précédentes (" + (pct >= 0 ? "+" : "") + pct.toFixed(0) + "%) — " + note + ".";
+  const chartHtml = lineChartHtml(coachDailyLineChart(d.wearableRaw, "day", "hrv_avg", 30), { unit: " ms", decimals: 0, showAvg: false });
+  const text = "Ta VFC moyenne des 7 derniers jours est de " + d.hrvRecent.toFixed(0) + " ms, contre " + d.hrvBaseline.toFixed(0) + " ms sur les 3-4 semaines précédentes (" + (pct >= 0 ? "+" : "") + pct.toFixed(0) + "%) — " + note + ".";
+  return { text: text, chartHtml: chartHtml };
 }
 function coachAnswerHrTrend(d) {
   if (d.hrRecent == null || d.hrBaseline == null) return "Pas encore assez de données de FC repos pour dégager une tendance.";
   const diff = d.hrRecent - d.hrBaseline;
   const note = diff >= 5 ? "nettement au-dessus — signal de fatigue possible" : diff >= 3 ? "un peu au-dessus de d'habitude"
     : diff <= -3 ? "en dessous de d'habitude — bon signe" : "stable";
-  return "Ta FC repos moyenne des 7 derniers jours est de " + d.hrRecent.toFixed(0) + " bpm, contre " + d.hrBaseline.toFixed(0) + " bpm sur les 3-4 semaines précédentes — " + note + ".";
+  const chartHtml = lineChartHtml(coachDailyLineChart(d.wearableRaw, "day", "hr_resting", 30), { unit: " bpm", decimals: 0, showAvg: false });
+  const text = "Ta FC repos moyenne des 7 derniers jours est de " + d.hrRecent.toFixed(0) + " bpm, contre " + d.hrBaseline.toFixed(0) + " bpm sur les 3-4 semaines précédentes — " + note + ".";
+  return { text: text, chartHtml: chartHtml };
 }
 function coachAnswerStress(d) {
   if (d.stressRecent == null) return "Pas encore assez de données de stress récentes.";
@@ -2606,7 +2621,9 @@ function coachAnswerStress(d) {
     if (diff >= 8) cmp = " — nettement au-dessus de ta moyenne récente (" + d.stressBaseline.toFixed(0) + ")";
     else if (diff <= -8) cmp = " — nettement en dessous de ta moyenne récente (" + d.stressBaseline.toFixed(0) + "), bon signe";
   }
-  return "Ton niveau de stress moyen sur les 7 derniers jours est " + label + " (" + d.stressRecent.toFixed(0) + "/100)" + cmp + ".";
+  const chartHtml = lineChartHtml(coachDailyLineChart(d.wearableRaw, "day", "stress_avg", 30), { unit: "", decimals: 0, showAvg: false });
+  const text = "Ton niveau de stress moyen sur les 7 derniers jours est " + label + " (" + d.stressRecent.toFixed(0) + "/100)" + cmp + ".";
+  return { text: text, chartHtml: chartHtml };
 }
 function coachAnswerTrainingLoad(d) {
   if (d.load7 == null || d.load28 == null || d.load28 === 0) return "Pas encore assez de séances loguées pour évaluer ta charge d'entraînement récente.";
@@ -2615,14 +2632,22 @@ function coachAnswerTrainingLoad(d) {
     : ratio > 1.3 ? "un peu élevée par rapport à ta charge habituelle"
     : ratio < 0.8 ? "en retrait par rapport à ta charge habituelle — phase plus légère"
     : "dans une zone favorable, cohérente avec ta charge habituelle";
-  return "Ta charge d'entraînement quotidienne moyenne sur 7 jours (" + d.load7.toFixed(0) + ") comparée aux 28 derniers jours (" + d.load28.toFixed(0) + ") donne un ratio de " + ratio.toFixed(2) + " — " + note + ".";
+  const loadByDay = {};
+  d.sessionsRaw.forEach(function(s) { if (s.correctedLoad) loadByDay[s.date] = (loadByDay[s.date] || 0) + s.correctedLoad; });
+  const last30 = []; for (let i = 29; i >= 0; i--) last30.push(daysAgo(i));
+  const chartHtml = lineChartHtml(last30.map(function(day) { return { label: formatDateLabel(day).slice(0, 2), val: loadByDay[day] || 0 }; }), { unit: "", decimals: 0, showAvg: false });
+  const text = "Ta charge d'entraînement quotidienne moyenne sur 7 jours (" + d.load7.toFixed(0) + ") comparée aux 28 derniers jours (" + d.load28.toFixed(0) + ") donne un ratio de " + ratio.toFixed(2) + " — " + note + ".";
+  return { text: text, chartHtml: chartHtml };
 }
 function coachAnswerGripTrend(d) {
   if (d.gripRecentAvg == null || d.gripBaseAvg == null || d.gripBaseAvg <= 0) return "Pas encore assez de mesures de préhension pour dégager une tendance (loggue-la régulièrement dans le Dashboard).";
   const pct = ((d.gripRecentAvg - d.gripBaseAvg) / d.gripBaseAvg) * 100;
   const note = pct <= -10 ? "en baisse — signal de fatigue neuromusculaire à surveiller"
     : pct >= 8 ? "en hausse — bon signe de fraîcheur" : "stable";
-  return "Ta force de préhension récente (" + d.gripRecentAvg.toFixed(1) + " kg en moyenne) est " + note + " par rapport à ta moyenne antérieure (" + d.gripBaseAvg.toFixed(1) + " kg, " + (pct >= 0 ? "+" : "") + pct.toFixed(0) + "%).";
+  const gripSorted = d.gripRaw.slice().sort(function(a, b) { return a.day < b.day ? -1 : 1; }).slice(-14);
+  const chartHtml = lineChartHtml(gripSorted.map(function(g) { return { label: formatDateLabel(g.day).slice(0, 2), val: g.value_kg }; }), { unit: " kg", decimals: 1, showAvg: false });
+  const text = "Ta force de préhension récente (" + d.gripRecentAvg.toFixed(1) + " kg en moyenne) est " + note + " par rapport à ta moyenne antérieure (" + d.gripBaseAvg.toFixed(1) + " kg, " + (pct >= 0 ? "+" : "") + pct.toFixed(0) + "%).";
+  return { text: text, chartHtml: chartHtml };
 }
 function coachAnswerMigraineSleep(d) {
   if (d.migraineDaysCount < 3) return "Pas encore assez de migraines enregistrées (" + d.migraineDaysCount + ") pour comparer de façon fiable avec ton sommeil.";
@@ -2638,11 +2663,18 @@ function coachAnswerMigraineTriggers(d) {
   d.migrainesRaw.forEach(function(m) { (m.triggers || []).forEach(function(t) { counts[t] = (counts[t] || 0) + 1; }); });
   const sorted = Object.keys(counts).sort(function(a, b) { return counts[b] - counts[a]; });
   if (!sorted.length) return "Pas encore de déclencheur enregistré sur tes migraines.";
-  const top = sorted.slice(0, 4).map(function(tid) {
+  const topIds = sorted.slice(0, 4);
+  const top = topIds.map(function(tid) {
     const t = TRIGGERS.find(function(x) { return x.id === tid; });
     return (t ? t.label : tid) + " (" + counts[tid] + "×)";
   });
-  return "Tes déclencheurs les plus fréquents : " + top.join(", ") + ".";
+  const chartHtml = barChartHtml(topIds.map(function(tid) {
+    const t = TRIGGERS.find(function(x) { return x.id === tid; });
+    return { label: t ? t.label : tid, val: counts[tid] };
+  }), { unit: "×", decimals: 0, showAvg: false });
+  const topTrigger = TRIGGERS.find(function(x) { return x.id === topIds[0]; });
+  const text = "Tes déclencheurs les plus fréquents : " + top.join(", ") + ". " + (topTrigger ? topTrigger.label : topIds[0]) + " ressort nettement en tête" + (topIds.length > 1 && counts[topIds[0]] === counts[topIds[1]] ? " (à égalité)" : "") + ".";
+  return { text: text, chartHtml: chartHtml };
 }
 function coachAnswerMigraineCorrelation(d) {
   const migDays = d.migrainesRaw.map(function(m) { return m.day; });
@@ -2663,7 +2695,16 @@ function coachAnswerMigraineCorrelation(d) {
 function coachAnswerMigraineHistory(d) {
   if (!d.migrainesRaw.length) return "Aucune migraine enregistrée pour l'instant.";
   const recent = d.migrainesRaw.slice(0, 5).map(function(m) { return formatDateLabel(m.day) + " (" + (m.intensity || "–") + "/10)"; });
-  return "Tes " + Math.min(5, d.migrainesRaw.length) + " dernières migraines : " + recent.join(", ") + ". Total enregistré : " + d.migrainesRaw.length + ".";
+  const last30 = d.migrainesRaw.filter(function(m) { return m.day >= daysAgo(29); }).length;
+  const prev30 = d.migrainesRaw.filter(function(m) { return m.day < daysAgo(29) && m.day >= daysAgo(59); }).length;
+  let trend = "";
+  if (last30 > prev30 + 1) trend = " Tendance en hausse sur les 30 derniers jours (" + last30 + " contre " + prev30 + " le mois précédent).";
+  else if (prev30 > last30 + 1) trend = " Tendance en baisse sur les 30 derniers jours (" + last30 + " contre " + prev30 + " le mois précédent).";
+  else if (last30 > 0 || prev30 > 0) trend = " Fréquence plutôt stable sur les 2 derniers mois (" + last30 + " puis " + prev30 + ").";
+  const chartItems = d.migrainesRaw.slice(0, 10).slice().reverse().map(function(m) { return { label: formatDateLabel(m.day).slice(0, 2), val: m.intensity || 0 }; });
+  const chartHtml = barChartHtml(chartItems, { unit: "/10", decimals: 0, showAvg: false });
+  const text = "Tes " + Math.min(5, d.migrainesRaw.length) + " dernières migraines : " + recent.join(", ") + ". Total enregistré : " + d.migrainesRaw.length + "." + trend;
+  return { text: text, chartHtml: chartHtml };
 }
 function coachAnswerTrainingBalance(d) {
   const month = []; for (let i = 29; i >= 0; i--) month.push(daysAgo(i));
@@ -2701,7 +2742,10 @@ function coachAnswerLoadByDiscipline(d) {
   });
   const rows = Object.keys(discStats).map(function(name) { return { name: name, count: discStats[name].length, avg: Math.round(avgOf(discStats[name])) }; }).sort(function(a, b) { return b.avg - a.avg; });
   if (!rows.length) return "Pas encore assez de séances loguées pour comparer les disciplines.";
-  return "Charge moyenne par discipline : " + rows.map(function(r) { return r.name + " (" + r.avg + ", " + r.count + " séance(s))"; }).join(", ") + ".";
+  const chartHtml = barChartHtml(rows.map(function(r) { return { label: r.name, val: r.avg }; }), { unit: "", decimals: 0, showAvg: false });
+  const heaviest = rows[0], lightest = rows[rows.length - 1];
+  const text = "Charge moyenne par discipline : " + rows.map(function(r) { return r.name + " (" + r.avg + ", " + r.count + " séance(s))"; }).join(", ") + "." + (rows.length > 1 ? " " + heaviest.name + " est la discipline la plus chargée, " + lightest.name + " la plus légère." : "");
+  return { text: text, chartHtml: chartHtml };
 }
 function coachAnswerKarvonen(d) {
   const kz = d.kzWorkouts.filter(function(w) { return w.day >= daysAgo(29); });
@@ -2711,7 +2755,41 @@ function coachAnswerKarvonen(d) {
   const grand = tot.l + tot.i + tot.a + tot.an + tot.v;
   if (!grand) return "Pas encore assez de données pour calculer tes zones cardiaques.";
   const pct = function(v) { return Math.round((v / grand) * 100); };
-  return "Zones cardiaques (Karvonen, 30 derniers jours, FC max " + kz[0].kz_hrmax_used + ", FC repos " + kz[0].kz_hrrest_used + ") : Léger " + pct(tot.l) + "% · Intensif " + pct(tot.i) + "% · Aérobique " + pct(tot.a) + "% · Anaérobie " + pct(tot.an) + "% · VO2 max " + pct(tot.v) + "%.";
+  const zones = [
+    { label: "Léger", val: pct(tot.l) }, { label: "Intensif", val: pct(tot.i) }, { label: "Aérobique", val: pct(tot.a) },
+    { label: "Anaérobie", val: pct(tot.an) }, { label: "VO2 max", val: pct(tot.v) },
+  ];
+  const dominant = zones.slice().sort(function(a, b) { return b.val - a.val; })[0];
+  const chartHtml = barChartHtml(zones, { unit: "%", decimals: 0, showAvg: false });
+  const text = "Zones cardiaques (Karvonen, 30 derniers jours, FC max " + kz[0].kz_hrmax_used + ", FC repos " + kz[0].kz_hrrest_used + ") : Léger " + pct(tot.l) + "% · Intensif " + pct(tot.i) + "% · Aérobique " + pct(tot.a) + "% · Anaérobie " + pct(tot.an) + "% · VO2 max " + pct(tot.v) + "%. Ton entraînement se passe surtout en zone " + dominant.label.toLowerCase() + ".";
+  return { text: text, chartHtml: chartHtml };
+}
+// Croise les zones cardiaques Karvonen avec la discipline de la séance
+// (matched_discipline, renseigné par la synchro montre) pour répondre à "quel
+// thème est le plus cardio ?" — la répartition globale seule (coachAnswerKarvonen)
+// ne dit rien de QUELLE discipline pousse le plus dans le haut-régime.
+function coachAnswerKarvonenByDiscipline(d) {
+  const kz = d.kzWorkouts.filter(function(w) { return w.day >= daysAgo(59) && w.matched_discipline; });
+  if (kz.length < 3) return "Pas encore assez de séances avec discipline identifiée et zones cardiaques calculées pour comparer (il en faut au moins 3).";
+  const byDiscipline = {};
+  kz.forEach(function(w) {
+    const disc = w.matched_discipline;
+    if (!byDiscipline[disc]) byDiscipline[disc] = { l: 0, i: 0, a: 0, an: 0, v: 0, count: 0 };
+    const b = byDiscipline[disc];
+    b.l += Number(w.kz_leger_min) || 0; b.i += Number(w.kz_intensif_min) || 0; b.a += Number(w.kz_aerobique_min) || 0;
+    b.an += Number(w.kz_anaerobie_min) || 0; b.v += Number(w.kz_vo2max_min) || 0; b.count++;
+  });
+  const rows = Object.keys(byDiscipline).map(function(name) {
+    const b = byDiscipline[name];
+    const total = b.l + b.i + b.a + b.an + b.v;
+    const cardioPct = total ? Math.round(((b.a + b.an + b.v) / total) * 100) : 0;
+    return { name: name, count: b.count, cardioPct: cardioPct };
+  }).filter(function(r) { return r.count >= 2; }).sort(function(a, b) { return b.cardioPct - a.cardioPct; });
+  if (rows.length < 2) return "Pas encore assez de disciplines différentes avec zones cardiaques calculées pour comparer (il faut au moins 2 disciplines avec 2 séances chacune).";
+  const mostCardio = rows[0], leastCardio = rows[rows.length - 1];
+  const chartHtml = barChartHtml(rows.map(function(r) { return { label: r.name, val: r.cardioPct }; }), { unit: "%", decimals: 0, showAvg: false });
+  const text = "Part du temps en zone aérobique/anaérobie/VO2max par discipline : " + rows.map(function(r) { return r.name + " (" + r.cardioPct + "%, " + r.count + " séance(s))"; }).join(", ") + ". " + mostCardio.name + " ressort comme le thème le plus cardio, " + leastCardio.name + " le moins.";
+  return { text: text, chartHtml: chartHtml };
 }
 // ---- Croisements entre domaines (Entraînement × Récupération, Forme ×
 // quotidien) — le genre de question qu'un tableau isolé par métrique ne
@@ -2777,8 +2855,11 @@ function coachAnswerStressByWeekday(d) {
   const overallAvg = avgOf(stats.map(function(s) { return s.avg; }));
   const sorted = stats.slice().sort(function(a, b) { return b.avg - a.avg; });
   const worst = sorted[0], best = sorted[sorted.length - 1];
-  if (worst.avg - overallAvg >= 6) return "Le " + worst.day + " ressort comme ton jour le plus stressant (stress moyen " + worst.avg.toFixed(0) + " contre " + overallAvg.toFixed(0) + " sur la semaine) — le " + best.day + " est ton jour le plus calme (" + best.avg.toFixed(0) + ").";
-  return "Pas de jour de la semaine qui ressort nettement — stress plutôt stable jour après jour (entre " + best.avg.toFixed(0) + " et " + worst.avg.toFixed(0) + ").";
+  const chartHtml = barChartHtml(stats.map(function(s) { return { label: s.day.slice(0, 3), val: Math.round(s.avg) }; }), { unit: "", decimals: 0, showAvg: false });
+  const text = worst.avg - overallAvg >= 6
+    ? "Le " + worst.day + " ressort comme ton jour le plus stressant (stress moyen " + worst.avg.toFixed(0) + " contre " + overallAvg.toFixed(0) + " sur la semaine) — le " + best.day + " est ton jour le plus calme (" + best.avg.toFixed(0) + ")."
+    : "Pas de jour de la semaine qui ressort nettement — stress plutôt stable jour après jour (entre " + best.avg.toFixed(0) + " et " + worst.avg.toFixed(0) + ").";
+  return { text: text, chartHtml: chartHtml };
 }
 function coachAnswerGripVsForme(d) {
   const wearableByDay = {};
@@ -2835,7 +2916,9 @@ function coachAnswerDisciplineVsForme(d) {
     .sort(function(a, b) { return a.avg - b.avg; });
   if (rows.length < 2) return "Pas encore assez de séances par discipline suivies d'une mesure VFC pour comparer (il faut au moins 2 disciplines avec 3 séances chacune).";
   const lowest = rows[0], highest = rows[rows.length - 1];
-  return "VFC moyenne le lendemain par discipline : " + rows.map(function(r) { return r.name + " (" + r.avg.toFixed(0) + " ms, " + r.count + " séance(s))"; }).join(", ") + ". " + lowest.name + " précède la VFC la plus basse, " + highest.name + " la plus haute.";
+  const chartHtml = barChartHtml(rows.map(function(r) { return { label: r.name, val: Math.round(r.avg) }; }), { unit: " ms", decimals: 0, showAvg: false });
+  const text = "VFC moyenne le lendemain par discipline : " + rows.map(function(r) { return r.name + " (" + r.avg.toFixed(0) + " ms, " + r.count + " séance(s))"; }).join(", ") + ". " + lowest.name + " précède la VFC la plus basse, " + highest.name + " la plus haute.";
+  return { text: text, chartHtml: chartHtml };
 }
 function coachAnswerLoadVsMigraine(d) {
   const loadByDay = {};
@@ -2871,7 +2954,9 @@ function coachAnswerDisciplineVsSleepBefore(d) {
   if (rows.length < 2) return "Pas encore assez de séances par discipline avec une nuit trackée la veille pour comparer.";
   function lbl(min) { return Math.floor(min / 60) + "h" + String(Math.round(min % 60)).padStart(2, "0"); }
   const lowest = rows[0], highest = rows[rows.length - 1];
-  return "Durée de sommeil la nuit précédant chaque type de cours : " + rows.map(function(r) { return r.name + " (" + lbl(r.avg) + ")"; }).join(", ") + ". Les nuits avant " + lowest.name + " sont les plus courtes, celles avant " + highest.name + " les plus longues.";
+  const chartHtml = barChartHtml(rows.map(function(r) { return { label: r.name, val: Math.round(r.avg) }; }), { unit: " min", decimals: 0, showAvg: false });
+  const text = "Durée de sommeil la nuit précédant chaque type de cours : " + rows.map(function(r) { return r.name + " (" + lbl(r.avg) + ")"; }).join(", ") + ". Les nuits avant " + lowest.name + " sont les plus courtes, celles avant " + highest.name + " les plus longues.";
+  return { text: text, chartHtml: chartHtml };
 }
 function coachAnswerThemeVsLifeload(d) {
   const lifeloadByDay = {};
@@ -2908,8 +2993,11 @@ function coachAnswerFatigueByWeekday(d) {
   if (stats.length < 4) return "Pas encore assez de ressentis répartis sur la semaine pour dégager un motif (il faut au moins 2 jours renseignés sur 4 jours différents de la semaine).";
   const sorted = stats.slice().sort(function(a, b) { return b.pct - a.pct; });
   const worst = sorted[0], best = sorted[sorted.length - 1];
-  if (worst.pct - best.pct >= 30) return "Le " + worst.day + " est ton jour le plus fatigant : ressenti difficile (fatigué/stressé/courbaturé) " + worst.pct + "% du temps, contre " + best.pct + "% le " + best.day + ".";
-  return "Pas de jour de la semaine qui ressort nettement pour la fatigue ressentie (entre " + best.pct + "% et " + worst.pct + "% de jours difficiles).";
+  const chartHtml = barChartHtml(stats.map(function(s) { return { label: s.day.slice(0, 3), val: s.pct }; }), { unit: "%", decimals: 0, showAvg: false });
+  const text = worst.pct - best.pct >= 30
+    ? "Le " + worst.day + " est ton jour le plus fatigant : ressenti difficile (fatigué/stressé/courbaturé) " + worst.pct + "% du temps, contre " + best.pct + "% le " + best.day + "."
+    : "Pas de jour de la semaine qui ressort nettement pour la fatigue ressentie (entre " + best.pct + "% et " + worst.pct + "% de jours difficiles).";
+  return { text: text, chartHtml: chartHtml };
 }
 function coachAnswerRpeByDiscipline(d) {
   const byDiscipline = {};
@@ -2923,7 +3011,9 @@ function coachAnswerRpeByDiscipline(d) {
     .sort(function(a, b) { return b.avg - a.avg; });
   if (rows.length < 2) return "Pas encore assez de séances notées (RPE) par discipline pour comparer (il faut au moins 2 disciplines avec 3 séances chacune).";
   const hardest = rows[0], easiest = rows[rows.length - 1];
-  return "RPE moyen par discipline : " + rows.map(function(r) { return r.name + " (" + r.avg.toFixed(1) + "/10, " + r.count + " séance(s))"; }).join(", ") + ". " + hardest.name + " ressort comme la plus exigeante, " + easiest.name + " la plus légère.";
+  const chartHtml = barChartHtml(rows.map(function(r) { return { label: r.name, val: Number(r.avg.toFixed(1)) }; }), { unit: "/10", decimals: 1, showAvg: false });
+  const text = "RPE moyen par discipline : " + rows.map(function(r) { return r.name + " (" + r.avg.toFixed(1) + "/10, " + r.count + " séance(s))"; }).join(", ") + ". " + hardest.name + " ressort comme la plus exigeante, " + easiest.name + " la plus légère.";
+  return { text: text, chartHtml: chartHtml };
 }
 function coachAnswerSleepImpactOnSession(d) {
   const sleepByDay = {};
@@ -2980,11 +3070,52 @@ function coachAnswerBreathingImpact(d) {
   if (!parts.length) return "Pas encore assez de données croisées (stress/sommeil) sur tes jours de respiration pour conclure.";
   return "Sur tes " + breathingDays.length + " séance(s) de respiration terminée(s) : " + parts.join(" ; ") + ".";
 }
+function coachAnswerBestSleepDays(d) {
+  const DAY_NAMES = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
+  const byDay = [[], [], [], [], [], [], []];
+  d.wearableRaw.forEach(function(w) {
+    if (w.sleep_total_min == null) return;
+    byDay[new Date(w.day + "T00:00:00").getDay()].push(w.sleep_total_min);
+  });
+  const stats = byDay.map(function(vals, i) { return { day: DAY_NAMES[i], avg: vals.length >= 2 ? avgOf(vals) : null }; }).filter(function(s) { return s.avg != null; });
+  if (stats.length < 4) return "Pas encore assez de nuits réparties sur la semaine pour dégager un motif (il faut au moins 2 nuits sur 4 jours différents).";
+  function lbl(min) { return Math.floor(min / 60) + "h" + String(Math.round(min % 60)).padStart(2, "0"); }
+  const sorted = stats.slice().sort(function(a, b) { return b.avg - a.avg; });
+  const best = sorted[0], worst = sorted[sorted.length - 1];
+  const chartHtml = barChartHtml(stats.map(function(s) { return { label: s.day.slice(0, 3), val: Math.round(s.avg) }; }), { unit: " min", decimals: 0, showAvg: false });
+  const text = best.avg - worst.avg >= 45
+    ? "Tu dors nettement mieux le " + best.day + " (" + lbl(best.avg) + " en moyenne) que le " + worst.day + " (" + lbl(worst.avg) + ")."
+    : "Pas de jour qui ressort nettement — ton sommeil est plutôt stable jour après jour (entre " + lbl(worst.avg) + " et " + lbl(best.avg) + ").";
+  return { text: text, chartHtml: chartHtml };
+}
+function coachAnswerSleepStagesEvolution(d) {
+  const last14 = d.wearableRaw.filter(function(w) { return w.day >= daysAgo(13) && w.sleep_total_min != null; });
+  const baseline = d.wearableRaw.filter(function(w) { return w.day < daysAgo(13) && w.day >= daysAgo(41) && w.sleep_total_min != null; });
+  if (last14.length < 5) return "Pas encore assez de nuits récentes avec stades de sommeil détaillés pour dégager une tendance (il en faut au moins 5).";
+  function avgField(arr, f) { const v = arr.map(function(w) { return w[f]; }).filter(function(x) { return x != null; }); return v.length ? avgOf(v) : null; }
+  const recent = { deep: avgField(last14, "sleep_deep_min"), light: avgField(last14, "sleep_light_min"), rem: avgField(last14, "sleep_rem_min") };
+  const base = { deep: avgField(baseline, "sleep_deep_min"), light: avgField(baseline, "sleep_light_min"), rem: avgField(baseline, "sleep_rem_min") };
+  function lbl(min) { return min == null ? "–" : Math.floor(min / 60) + "h" + String(Math.round(min % 60)).padStart(2, "0"); }
+  const names = { deep: "profond", light: "léger", rem: "paradoxal" };
+  const parts = [];
+  ["deep", "light", "rem"].forEach(function(key) {
+    if (recent[key] == null || base[key] == null || base[key] <= 0) return;
+    const pct = ((recent[key] - base[key]) / base[key]) * 100;
+    if (Math.abs(pct) >= 15) parts.push("sommeil " + names[key] + " " + (pct > 0 ? "en hausse" : "en baisse") + " (" + lbl(recent[key]) + " contre " + lbl(base[key]) + ")");
+  });
+  const chartHtml = barChartHtml([
+    { label: "Profond", val: Math.round(recent.deep || 0) }, { label: "Léger", val: Math.round(recent.light || 0) }, { label: "Paradoxal", val: Math.round(recent.rem || 0) },
+  ], { unit: " min", decimals: 0, showAvg: false });
+  const text = "Sur les 14 derniers jours, tu dors en moyenne " + lbl(recent.deep) + " en profond, " + lbl(recent.light) + " en léger et " + lbl(recent.rem) + " en paradoxal par nuit" + (parts.length ? " — " + parts.join(", ") + " par rapport aux 4 semaines précédentes" : " — stable par rapport aux 4 semaines précédentes") + ".";
+  return { text: text, chartHtml: chartHtml };
+}
 const COACH_QUESTIONS = [
   { id: "sleep_avg", label: "Ma durée moyenne de sommeil ?", fn: coachAnswerSleepAvg, domain: "recuperation" },
   { id: "sleep_reg", label: "La régularité de mon sommeil ?", fn: coachAnswerSleepRegularity, domain: "recuperation" },
   { id: "migraine_triggers", label: "Mes déclencheurs de migraine les plus fréquents ?", fn: coachAnswerMigraineTriggers, domain: "recuperation" },
   { id: "migraine_history", label: "Mon historique de migraines récent ?", fn: coachAnswerMigraineHistory, domain: "recuperation" },
+  { id: "best_sleep_days", label: "Quels jours je dors le mieux ?", fn: coachAnswerBestSleepDays, domain: "recuperation" },
+  { id: "sleep_stages_evolution", label: "Comment évoluent mes phases de sommeil (profond/léger/paradoxal) ?", fn: coachAnswerSleepStagesEvolution, domain: "recuperation" },
   { id: "hrv_trend", label: "Ma tendance VFC récente ?", fn: coachAnswerHrvTrend, domain: "forme" },
   { id: "hr_trend", label: "Ma tendance FC repos ?", fn: coachAnswerHrTrend, domain: "forme" },
   { id: "stress", label: "Mon niveau de stress récent ?", fn: coachAnswerStress, domain: "forme" },
@@ -2993,6 +3124,7 @@ const COACH_QUESTIONS = [
   { id: "training_balance", label: "Mes séances sont-elles équilibrées (tirage/poussée, thèmes) ?", fn: coachAnswerTrainingBalance, domain: "entrainement" },
   { id: "load_by_discipline", label: "Comment se répartit ma charge par discipline ?", fn: coachAnswerLoadByDiscipline, domain: "entrainement" },
   { id: "karvonen", label: "Mes zones cardiaques à l'entraînement (Karvonen) ?", fn: coachAnswerKarvonen, domain: "entrainement" },
+  { id: "karvonen_by_discipline", label: "Quel thème est le plus cardio ? (zones cardiaques par discipline)", fn: coachAnswerKarvonenByDiscipline, domain: "entrainement" },
   { id: "migraine_sleep", label: "Migraines liées au sommeil ?", fn: coachAnswerMigraineSleep, domain: "hybride" },
   { id: "migraine_correlation", label: "Un vrai lien entre mes migraines et mes autres signaux (FC/VFC/stress) ?", fn: coachAnswerMigraineCorrelation, domain: "hybride" },
   { id: "load_vs_sleep", label: "Mes grosses séances dégradent-elles mon sommeil qui suit ?", fn: coachAnswerLoadVsSleep, domain: "hybride" },
@@ -3033,7 +3165,7 @@ async function renderCoach() {
         listSessions(60),
         sb("migraines?select=day,intensity,triggers&order=day.desc&limit=90").catch(function() { return []; }),
         sb("grip_strength?select=day,value_kg&order=day.desc&limit=30").catch(function() { return []; }),
-        sb("workout_sessions?select=day,kz_leger_min,kz_intensif_min,kz_aerobique_min,kz_anaerobie_min,kz_vo2max_min,kz_hrmax_used,kz_hrrest_used&activity_type=eq.seance&kz_leger_min=not.is.null&order=day.desc&limit=60").catch(function() { return []; }),
+        sb("workout_sessions?select=day,kz_leger_min,kz_intensif_min,kz_aerobique_min,kz_anaerobie_min,kz_vo2max_min,kz_hrmax_used,kz_hrrest_used,matched_discipline&activity_type=eq.seance&kz_leger_min=not.is.null&order=day.desc&limit=60").catch(function() { return []; }),
         sb("lifeload?select=day,state&order=day.desc&limit=90").catch(function() { return []; }),
         sb("naps?select=day,duration_min,quality&order=day.desc&limit=90").catch(function() { return []; }),
         sb("sleep_feeling?select=day,quality&order=day.desc&limit=90").catch(function() { return []; }),
@@ -3592,7 +3724,7 @@ function drawCoach() {
       html += '<div class="muted" style="text-align:center;padding:24px 0">Choisis une question ci-dessous pour commencer.</div>';
     } else {
       html += '<div style="align-self:flex-end;max-width:80%;background:var(--gradient);color:var(--bg);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:13px;font-weight:700">' + esc(coachStatsCurrent.label) + "</div>";
-      html += '<div style="align-self:flex-start;max-width:88%;background:var(--surface);border:1px solid var(--line);border-radius:14px 14px 14px 4px;padding:12px 14px;font-size:13px;line-height:1.5">' + esc(coachStatsCurrent.text) + "</div>";
+      html += '<div style="align-self:flex-start;max-width:88%;background:var(--surface);border:1px solid var(--line);border-radius:14px 14px 14px 4px;padding:12px 14px;font-size:13px;line-height:1.5">' + esc(coachStatsCurrent.text) + (coachStatsCurrent.chartHtml ? '<div style="margin-top:12px">' + coachStatsCurrent.chartHtml + "</div>" : "") + "</div>";
     }
     html += "</div>";
 
@@ -3662,7 +3794,13 @@ function drawCoach() {
     btn.addEventListener("click", function() {
       const q = COACH_QUESTIONS.find(function(x) { return x.id === btn.dataset.question; });
       if (!q) return;
-      coachStatsCurrent = { qid: q.id, label: q.label, text: q.fn(coachData) };
+      // fn() renvoie soit une simple phrase (string), soit { text, chartHtml }
+      // pour les réponses qui valent la peine d'être visualisées (répartition
+      // par catégorie, tendance sur plusieurs jours...) plutôt qu'une liste
+      // de chiffres à lire.
+      const result = q.fn(coachData);
+      const answer = typeof result === "string" ? { text: result, chartHtml: null } : result;
+      coachStatsCurrent = { qid: q.id, label: q.label, text: answer.text, chartHtml: answer.chartHtml || null };
       coachStatsAskedIds[q.id] = true;
       drawCoach();
       const msgArea = document.getElementById("coach-messages");
