@@ -87,6 +87,10 @@
      deux taches de couleur qui dérivent lentement en boucle, indépendamment
      du rythme respiratoire, pour donner un aspect vivant/liquide plutôt
      qu'un aplat de couleur figé. */
+  /* Calques violet/rose superposés (voir setBreathingGlow) — transform et
+     opacity transitionnent nativement de façon fluide, contrairement à une
+     transition directe de la couleur d'un dégradé. */
+  .breathing-glow-layer { position: absolute; inset: 0; border-radius: 50%; transform-origin: center; transition: transform 0.6s ease-in-out, opacity 0.6s ease-in-out; }
   .breathing-water-blob { position: absolute; border-radius: 50%; mix-blend-mode: overlay; opacity: 0.8; }
   .breathing-water-blob.b1 { width: 160%; height: 160%; top: -50%; left: -45%; background: radial-gradient(circle, #fff 0%, transparent 58%); animation: breathing-water-drift-1 9s ease-in-out infinite; }
   .breathing-water-blob.b2 { width: 140%; height: 140%; top: 30%; left: 15%; background: radial-gradient(circle, #fff 0%, transparent 55%); animation: breathing-water-drift-2 7s ease-in-out infinite; }
@@ -2027,20 +2031,32 @@ function updateBreathingIdleStats() {
   if (breathsEl) breathsEl.textContent = cycle > 0 ? Math.round(breathingConfig.durationSec / cycle) : "–";
   if (bpmEl) bpmEl.textContent = cycle > 0 ? (60 / cycle).toFixed(1) : "–";
 }
-// Construit le dégradé radial du cercle de respiration : plein jusqu'à
-// stopPct%, transparent au-delà — stopPct/opacity/blur bougent ensemble
-// pour donner l'impression que le contour flou "se resserre" (couleur plus
-// franche) à l'inspiration et "s'étale" (plus transparent) à l'expiration.
-function setBreathingGlow(colorVar, stopPct, opacity, blurPx, shadow) {
+// Le violet et le rose sont deux calques superposés (voir breathingCircleHtml)
+// dont on fait varier l'OPACITÉ, jamais la couleur d'un dégradé directement :
+// les navigateurs n'interpolent pas franchement une transition entre deux
+// radial-gradient() de couleurs différentes (ça "saute" en cours de route,
+// d'où la transition trop brutale signalée) alors qu'une transition
+// d'opacité, elle, est toujours progressive. Le "resserrement" du contour à
+// l'inspiration est lui obtenu en grossissant chaque calque via transform:
+// scale() (là aussi une transition native fluide) — plus le calque est
+// grand, plus sa propre zone de dégradé sort du cercle visible (rognée par
+// overflow:hidden), donc plus la couleur paraît pleine jusqu'au bord.
+function setBreathingGlow(state) {
   const glow = document.getElementById("breathing-circle-glow");
-  if (!glow) return;
-  glow.style.background = "radial-gradient(circle, " + colorVar + " 0%, " + colorVar + " " + stopPct + "%, transparent 100%)";
-  glow.style.opacity = opacity;
-  glow.style.filter = "blur(" + blurPx + "px)";
-  glow.style.boxShadow = shadow;
+  const purple = document.getElementById("breathing-glow-purple");
+  const pink = document.getElementById("breathing-glow-pink");
+  if (glow) { glow.style.opacity = state.opacity; glow.style.filter = "blur(" + state.blur + "px)"; glow.style.boxShadow = state.shadow; }
+  if (purple) { purple.style.transform = "scale(" + state.scale + ")"; purple.style.opacity = state.purpleOpacity; }
+  if (pink) { pink.style.transform = "scale(" + state.scale + ")"; pink.style.opacity = state.pinkOpacity; }
 }
-const BREATHING_GLOW_REST = ["var(--purple)", 10, 0.45, 18, "0 0 20px rgba(168,85,247,0.2)"];
-const BREATHING_GLOW_INHALE = ["var(--pink)", 92, 1, 1, "0 0 60px rgba(236,72,153,0.65)"];
+function setBreathingGlowTransitionDuration(seconds) {
+  ["breathing-circle-glow", "breathing-glow-purple", "breathing-glow-pink"].forEach(function(id) {
+    const el = document.getElementById(id);
+    if (el) el.style.transitionDuration = seconds + "s";
+  });
+}
+const BREATHING_GLOW_REST = { scale: 0.45, opacity: 0.45, blur: 18, shadow: "0 0 20px rgba(168,85,247,0.2)", purpleOpacity: 1, pinkOpacity: 0 };
+const BREATHING_GLOW_INHALE = { scale: 1.8, opacity: 1, blur: 1, shadow: "0 0 60px rgba(236,72,153,0.65)", purpleOpacity: 0, pinkOpacity: 1 };
 // Arrête proprement toute séance en cours — appelé au clic sur "Arrêter",
 // en changeant de sous-onglet/d'onglet, ou avant d'en démarrer une nouvelle.
 // Ne touche au DOM que s'il existe encore (peut être appelé après un
@@ -2053,13 +2069,12 @@ function stopBreathing() {
   clearInterval(breathingRun.tickIntervalId);
   breathingRun = null;
   const circle = document.getElementById("breathing-circle");
-  const glow = document.getElementById("breathing-circle-glow");
   const phaseText = document.getElementById("breathing-phase-text");
   const startBtn = document.getElementById("breathing-start-btn");
   const stopBtn = document.getElementById("breathing-stop-btn");
   if (circle) { circle.style.transitionDuration = "0.6s"; circle.style.transform = "scale(1)"; }
-  if (glow) { glow.style.transitionDuration = "0.6s"; }
-  setBreathingGlow.apply(null, BREATHING_GLOW_REST);
+  setBreathingGlowTransitionDuration(0.6);
+  setBreathingGlow(BREATHING_GLOW_REST);
   const ballTrack = document.getElementById("breathing-ball-track");
   if (ballTrack) { ballTrack.style.transition = "none"; ballTrack.style.transform = "rotate(0deg)"; }
   breathingBallRotationDeg = 0;
@@ -2070,19 +2085,18 @@ function stopBreathing() {
 }
 function updateBreathingVisual(phase, seconds) {
   const circle = document.getElementById("breathing-circle");
-  const glow = document.getElementById("breathing-circle-glow");
   const phaseText = document.getElementById("breathing-phase-text");
   if (circle && (phase === "inhale" || phase === "exhale")) {
     circle.style.transitionDuration = seconds + "s";
     circle.style.transform = phase === "inhale" ? "scale(1.55)" : "scale(1)";
-    if (glow) glow.style.transitionDuration = seconds + "s";
+    setBreathingGlowTransitionDuration(seconds);
     // Poumons pleins (fin d'inspiration / début d'expiration) en rose fluo
     // et dégradé resserré (bord net, couleur franche) ; poumons vides (fin
     // d'expiration / début d'inspiration) en violet et dégradé étalé (bord
     // flou, couleur plus transparente) — la taille ET le contour marquent
-    // ensemble les fins de phase.
-    if (phase === "inhale") setBreathingGlow.apply(null, BREATHING_GLOW_INHALE);
-    else setBreathingGlow.apply(null, BREATHING_GLOW_REST);
+    // ensemble les fins de phase, sur la même durée que le grossissement du
+    // cercle pour que couleur et taille avancent bien ensemble.
+    setBreathingGlow(phase === "inhale" ? BREATHING_GLOW_INHALE : BREATHING_GLOW_REST);
   }
   const ballTrack = document.getElementById("breathing-ball-track");
   if (ballTrack) {
@@ -2191,12 +2205,16 @@ function startBreathing() {
 function breathingCircleHtml() {
   let html = '<div style="position:relative;width:172px;height:172px">';
   html += '<div id="breathing-circle" style="position:absolute;top:11px;left:11px;width:150px;height:150px;border-radius:50%;display:flex;align-items:center;justify-content:center;transition:transform 0.6s ease-in-out;transform:scale(1)">';
-  // Contours transparents en dégradé (pas un aplat de couleur) : un cercle
-  // radial qui reste plein jusqu'à un certain rayon puis s'estompe vers le
-  // transparent — le rayon plein, l'opacité et le flou du bord sont ensuite
-  // pilotés par setBreathingGlow() au fil des phases (inspiration = dégradé
-  // qui se resserre + couleur plus franche, expiration = l'inverse).
-  html += '<div id="breathing-circle-glow" style="position:absolute;inset:0;border-radius:50%;overflow:hidden;background:radial-gradient(circle, var(--purple) 0%, var(--purple) ' + BREATHING_GLOW_REST[1] + '%, transparent 100%);opacity:' + BREATHING_GLOW_REST[2] + ';filter:blur(' + BREATHING_GLOW_REST[3] + 'px);transition:filter 0.6s ease-in-out,opacity 0.6s ease-in-out,background 0.6s ease-in-out,box-shadow 0.6s ease-in-out;box-shadow:' + BREATHING_GLOW_REST[4] + '">';
+  // Contours transparents en dégradé (pas un aplat de couleur), et transition
+  // de couleur violet/rose douce et progressive : deux calques superposés à
+  // dégradé fixe (un violet, un rose) dont on croise l'opacité, plutôt qu'un
+  // seul calque dont on changerait la couleur du dégradé en direct — voir la
+  // note dans setBreathingGlow() sur pourquoi ce deuxième réglage donnait une
+  // transition brutale. Le "resserrement" du contour à l'inspiration vient
+  // du grossissement de ces mêmes calques (scale), rogné par overflow:hidden.
+  html += '<div id="breathing-circle-glow" style="position:absolute;inset:0;border-radius:50%;overflow:hidden;opacity:' + BREATHING_GLOW_REST.opacity + ';filter:blur(' + BREATHING_GLOW_REST.blur + 'px);transition:filter 0.6s ease-in-out,opacity 0.6s ease-in-out,box-shadow 0.6s ease-in-out;box-shadow:' + BREATHING_GLOW_REST.shadow + '">';
+  html += '<div id="breathing-glow-purple" class="breathing-glow-layer" style="background:radial-gradient(circle, var(--purple) 0%, var(--purple) 45%, transparent 100%);transform:scale(' + BREATHING_GLOW_REST.scale + ');opacity:' + BREATHING_GLOW_REST.purpleOpacity + '"></div>';
+  html += '<div id="breathing-glow-pink" class="breathing-glow-layer" style="background:radial-gradient(circle, var(--pink) 0%, var(--pink) 45%, transparent 100%);transform:scale(' + BREATHING_GLOW_REST.scale + ');opacity:' + BREATHING_GLOW_REST.pinkOpacity + '"></div>';
   // Effet d'eau : trois taches en dégradé blanc (mix-blend overlay, léger
   // hue-rotate) qui dérivent et pulsent en boucle, en continu, indépendamment
   // du rythme respiratoire — donne un aspect liquide/mouvant plutôt qu'une
