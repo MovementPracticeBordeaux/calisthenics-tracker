@@ -1390,7 +1390,7 @@ async function loadRecuperation() {
       html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></div>';
     }
   } else {
-    const sleepWeekBars = last14.slice(-7).map(function(n) { return { label: formatDateLabel(n.date).slice(0,2), val: n.total ? Math.round(n.total/60*10)/10 : 0 }; });
+    const sleepWeekBars = nights.slice(-7).map(function(n) { return { label: formatDateLabel(n.date).slice(0,2), val: n.total ? Math.round(n.total/60*10)/10 : 0 }; });
     const month = []; for (let i = 29; i >= 0; i--) month.push(daysAgo(i));
     const sleepMonthLine = [];
     for (let w = 0; w < 5; w++) {
@@ -1412,10 +1412,10 @@ async function loadRecuperation() {
     // Le PAI se lit nativement en total glissant sur 7 jours, pas jour par
     // jour — la "semaine" montre la contribution quotidienne au score actuel,
     // le "mois" montre l'évolution de ce total sur les 4 dernières semaines.
-    const paiDailyBars = last14.slice(-7).map(function(n) {
-      const w = wearable.find(function(x){ return x.day === n.date; });
+    const paiDailyBars = last14.slice(-7).map(function(d) {
+      const w = wearable.find(function(x){ return x.day === d; });
       const total = w ? (w.pai_low||0)+(w.pai_moderate||0)+(w.pai_high||0) : 0;
-      return { label: formatDateLabel(n.date).slice(0,2), val: Math.round(total) };
+      return { label: formatDateLabel(d).slice(0,2), val: Math.round(total) };
     });
     const paiWeeks = [[0,7],[7,14],[14,21],[21,28]];
     const paiWeeklyLine = paiWeeks.map(function(w, idx) {
@@ -1590,32 +1590,39 @@ function lineChartHtml(items, opts) {
   const max = Math.max.apply(null, vals.concat([1]));
   const min = Math.min.apply(null, vals.concat([0]));
   const range = (max - min) || 1;
-  const w = 100, padY = 6;
+  const padY = 6;
   const usableH = Math.max(1, height - padY * 2);
   const n = items.length;
-  const stepX = n > 1 ? w / (n - 1) : 0;
+  // Coordonnées en pourcentage (x et y), pas en unités SVG arbitraires — le
+  // viewBox carré 0-100/0-100 avec preserveAspectRatio="none" étire la ligne
+  // de façon non uniforme pour remplir la largeur réelle de la carte (bien
+  // plus large que haute), ce qui déformait aussi les points ronds en
+  // ellipses. Les points sont donc dessinés en HTML par-dessus le SVG
+  // (positionnement en %), pas comme géométrie SVG — seule la ligne, qui ne
+  // souffre pas d'être étirée, reste dans le SVG.
   const points = items.map(function(item, i) {
     const v = item.val || 0;
-    const x = n > 1 ? i * stepX : w / 2;
-    const y = padY + (usableH - ((v - min) / range) * usableH);
-    return { x: x, y: y };
+    const xPct = n > 1 ? (i / (n - 1)) * 100 : 50;
+    const yPct = ((padY + (usableH - ((v - min) / range) * usableH)) / height) * 100;
+    return { xPct: xPct, yPct: yPct };
   });
-  const pathD = points.map(function(p, i) { return (i === 0 ? "M" : "L") + p.x.toFixed(2) + "," + p.y.toFixed(2); }).join(" ");
-  let html = '<div>';
-  html += '<svg viewBox="0 0 ' + w + ' ' + height + '" preserveAspectRatio="none" style="width:100%;height:' + height + 'px;overflow:visible">';
+  const pathD = points.map(function(p, i) { return (i === 0 ? "M" : "L") + p.xPct.toFixed(2) + "," + p.yPct.toFixed(2); }).join(" ");
+  let html = '<div style="position:relative;height:' + height + 'px">';
+  html += '<svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%">';
   if (n > 1) html += '<path d="' + pathD + '" fill="none" stroke="var(--steel)" stroke-width="1.6" vector-effect="non-scaling-stroke"/>';
+  html += "</svg>";
   points.forEach(function(p, i) {
     const isLast = i === points.length - 1;
-    const r = isLast ? 2.6 : 1.4;
+    const size = isLast ? 6 : 4;
     const color = isLast ? "var(--pink)" : "var(--steel)";
-    html += '<circle cx="' + p.x.toFixed(2) + '" cy="' + p.y.toFixed(2) + '" r="' + r + '" fill="' + color + '" vector-effect="non-scaling-stroke"/>';
+    html += '<div style="position:absolute;left:' + p.xPct.toFixed(2) + '%;top:' + p.yPct.toFixed(2) + '%;width:' + size + 'px;height:' + size + 'px;border-radius:50%;background:' + color + ';transform:translate(-50%,-50%)"></div>';
   });
-  html += "</svg>";
+  html += "</div>";
   html += '<div style="display:flex;justify-content:space-between;margin-top:4px">';
   items.forEach(function(item) {
     html += '<span style="font-size:9px;color:var(--muted);flex:1;text-align:center">' + (item.label || "") + "</span>";
   });
-  html += "</div></div>";
+  html += "</div>";
   if (opts.showAvg !== false) {
     const nonZero = vals.filter(function(v) { return v > 0; });
     if (nonZero.length >= 2) {
