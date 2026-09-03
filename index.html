@@ -2130,9 +2130,33 @@ function finishBreathing() {
 // pour l'analyse d'impact sur le stress/sommeil dans le Coach.
 function logBreathingSession(durationMin, breaths) {
   if (durationMin <= 0) return;
+  const statusEl = document.getElementById("breathing-log-status");
+  if (statusEl) statusEl.textContent = "Enregistrement…";
   sb("breathing_sessions", {
     method: "POST", headers: { Prefer: "return=minimal" },
     body: JSON.stringify({ day: todayISO(), duration_min: durationMin, breaths: breaths || null }),
+  }).then(function() {
+    const el = document.getElementById("breathing-log-status");
+    if (el) el.innerHTML = '<span style="color:var(--green)">✓</span> Séance enregistrée (' + durationMin + ' min' + (breaths ? ", " + breaths + " respirations" : "") + ")";
+    loadBreathingWeekSummary();
+  }).catch(function(e) {
+    const el = document.getElementById("breathing-log-status");
+    if (el) el.textContent = "Erreur d'enregistrement : " + e.message;
+  });
+}
+// Résumé discret des séances des 7 derniers jours, pour que l'enregistrement
+// automatique en fin de séance (voir finishBreathing) reste visible dans la
+// durée et pas seulement au moment où il se produit.
+function loadBreathingWeekSummary() {
+  const el = document.getElementById("breathing-week-summary");
+  if (!el) return;
+  sb("breathing_sessions?day=gte." + daysAgo(6) + "&select=duration_min").then(function(rows) {
+    const target = document.getElementById("breathing-week-summary");
+    if (!target) return;
+    rows = rows || [];
+    if (!rows.length) { target.textContent = "Aucune séance enregistrée cette semaine."; return; }
+    const totalMin = rows.reduce(function(s, r) { return s + (r.duration_min || 0); }, 0);
+    target.textContent = rows.length + " séance" + (rows.length > 1 ? "s" : "") + " cette semaine · " + totalMin + " min au total";
   }).catch(function() {});
 }
 function startBreathing() {
@@ -2231,6 +2255,12 @@ function drawBreathingOverlay() {
   html += '<div style="text-align:center"><div class="stat-label">Respirations</div><div class="stat-value" id="breathing-stat-breaths">–</div></div>';
   html += '<div style="text-align:center"><div class="stat-label">Cycles/min</div><div class="stat-value" id="breathing-stat-bpm">–</div></div>';
   html += "</div>";
+  // Confirmation d'enregistrement (mise à jour par logBreathingSession) et
+  // résumé de la semaine (mis à jour par loadBreathingWeekSummary, appelée
+  // au chargement de cet écran) — pour que l'enregistrement automatique en
+  // fin de séance soit visible, pas seulement effectif en silence.
+  html += '<div id="breathing-log-status" class="muted" style="margin-top:14px;font-size:11px;min-height:14px;text-align:center"></div>';
+  html += '<div id="breathing-week-summary" class="muted" style="margin-top:2px;font-size:11px;text-align:center">…</div>';
   html += "</div>";
 
   html += '<div class="card" style="margin-bottom:28px"><div class="section-label" style="margin-bottom:14px">Préréglage</div>';
@@ -2277,6 +2307,7 @@ function drawBreathingOverlay() {
 
   overlay.innerHTML = html;
   updateBreathingIdleStats();
+  loadBreathingWeekSummary();
   wireBreathingOverlayEvents();
 }
 function wireBreathingOverlayEvents() {
@@ -3495,9 +3526,11 @@ function drawCoach() {
       html += '<div class="muted" style="margin-bottom:20px">Que veux-tu loguer aujourd\'hui ?</div>';
       html += '<div style="display:flex;flex-direction:column;gap:12px;margin-bottom:28px" id="coach-log-row">';
       COACH_LOG_BUTTONS.forEach(function(b) {
-        // Coche discrète sur les 3 logs obligatoires déjà faits aujourd'hui —
-        // répond au fait qu'on pouvait reloguer le ressenti sans jamais voir
-        // qu'il l'était déjà.
+        // Coche discrète sur les logs à statut "fait aujourd'hui" (séance,
+        // préhension, ressenti, qualité de nuit) — répond au fait qu'on
+        // pouvait reloguer le ressenti sans jamais voir qu'il l'était déjà.
+        // Sieste et migraine n'ont pas cette coche : ce sont des logs à
+        // occurrences multiples dans la journée, pas un état "fait/pas fait".
         let done = false, label = b.label;
         if (b.id === "lifeload") done = coachTodayStatus.lifeload;
         else if (b.id === "prehension") {
@@ -3505,6 +3538,7 @@ function drawCoach() {
           if (!coachTodayStatus.gripRequired && !done) label += " (optionnel aujourd'hui)";
         }
         else if (b.id === "seance") done = coachTodayStatus.classesPending.length === 0 && coachTodayStatus.sessionsLogged > 0;
+        else if (b.id === "sommeil") done = !!coachTodayStatus.sleepFeelingQuality;
         html += '<button class="coach-question-btn" data-log="' + b.id + '" style="width:100%;text-align:left;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:10px;padding:16px 18px;color:var(--chalk);font-size:14px;font-weight:700;cursor:pointer;display:flex;justify-content:space-between;align-items:center">' + label + (done ? ' <span style="color:var(--green);font-size:16px">✓</span>' : "") + "</button>";
       });
       html += "</div>";
