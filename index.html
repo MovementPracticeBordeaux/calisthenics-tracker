@@ -1191,7 +1191,6 @@ async function loadEntrainement() {
 
     html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Score d\'entraînement</span><span>' + tierDot(energyTier) + '</span></div>';
     html += '<div style="padding:18px 0">' + circleGaugeHtml(energy, 100, { sublabel: energyLabel, size: 200, strokeWidth: 16 }) + "</div>";
-    html += '<div style="text-align:center;padding-top:14px;border-top:1px solid var(--line);font-size:12px">Énergie disponible pour t\'entraîner aujourd\'hui — l\'inverse du sommeil : elle se vide au fil des séances.</div>';
     html += "</div>";
 
     const checklist = [];
@@ -1742,14 +1741,21 @@ function metricTrendSectionHtml(title, weeklyItems, monthlyItems, interpretation
 // mêmes intrants (atlWake/ctl/todayTotalLoad) que le panier fatigue du score
 // Forme (index.html, calcul d'atl/ctl et todayDepletion), pas de nouvelle
 // source de données.
+// Barèmes recalibrés le 2026-09 sur l'historique réel de charge (rétrotest,
+// voir conversation) : les seuils d'origine (÷10 avec plafond 70, ÷55 avec
+// plafond 45) faisaient plafonner les deux dépréciations en même temps dès
+// qu'une journée cumulait deux séances — le score restait bloqué à 0 pendant
+// 9 jours d'affilée sur les vraies données, aussi bien un jour de grosse
+// double séance qu'un jour de récupération. Diviseurs et plafonds réduits
+// pour que le score reste discriminant même sur les journées chargées.
 function computeTrainingEnergy(atlWake, ctl, todayTotalLoad) {
   let wakeDepletion = 0, sessionDepletion = 0;
   if (atlWake != null && ctl) {
     const wakeRatio = atlWake / ctl;
-    wakeDepletion = Math.max(0, Math.min(45, Math.round((wakeRatio - 0.7) * 55)));
+    wakeDepletion = Math.max(0, Math.min(35, Math.round((wakeRatio - 0.7) * 40)));
   }
   if (todayTotalLoad > 0) {
-    sessionDepletion = Math.max(0, Math.min(70, Math.round(todayTotalLoad / 10)));
+    sessionDepletion = Math.max(0, Math.min(55, Math.round(todayTotalLoad / 25)));
   }
   const energy = Math.max(0, Math.min(100, 100 - wakeDepletion - sessionDepletion));
   return { energy: energy, wakeDepletion: wakeDepletion, sessionDepletion: sessionDepletion };
@@ -2331,7 +2337,7 @@ function circularRegularity(hours) {
   const n = hours.length;
   return Math.sqrt(sx * sx + sy * sy) / n;
 }
-function buildCoachData(wearable, sessions, migraines, gripRows, kzWorkouts, lifeloadRows) {
+function buildCoachData(wearable, sessions, migraines, gripRows, kzWorkouts, lifeloadRows, naps) {
   function avgField(arr, field) {
     const v = arr.map(function(x) { return x[field]; }).filter(function(x) { return x != null; });
     return v.length ? avgOf(v) : null;
@@ -2385,6 +2391,8 @@ function buildCoachData(wearable, sessions, migraines, gripRows, kzWorkouts, lif
     migrainesRaw: migraines,
     kzWorkouts: kzWorkouts || [],
     lifeloadRaw: lifeloadRows || [],
+    napsRaw: naps || [],
+    gripRaw: gripRows || [],
   };
 }
 function coachAnswerSleepAvg(d) {
@@ -2587,6 +2595,126 @@ function coachAnswerLifeloadAccuracy(d) {
   if (diff <= -5) return "Écart surprenant : ton stress mesuré est plutôt plus bas (" + avgDifficile.toFixed(0) + ") les jours où tu te sens mal que les jours où tu te sens bien (" + avgBien.toFixed(0) + ") — ton ressenti capte peut-être autre chose que ce que la montre mesure (charge mentale, douleur, sommeil...).";
   return "Ton ressenti et ton stress mesuré ne sont pas nettement corrélés (" + avgDifficile.toFixed(0) + " vs " + avgBien.toFixed(0) + ") — le ressenti capte sans doute des choses que la montre ne voit pas.";
 }
+function coachAnswerNapImpact(d) {
+  const napDays = d.napsRaw.map(function(n) { return n.day; });
+  const withNap = d.wearableRaw.filter(function(w) { return napDays.indexOf(w.day) !== -1 && w.hrv_avg != null; });
+  const withoutNap = d.wearableRaw.filter(function(w) { return napDays.indexOf(w.day) === -1 && w.hrv_avg != null; });
+  if (withNap.length < 3 || withoutNap.length < 5) return "Pas encore assez de siestes loguées avec données montre pour comparer (il en faut au moins 3).";
+  const avgWith = avgOf(withNap.map(function(w) { return w.hrv_avg; }));
+  const avgWithout = avgOf(withoutNap.map(function(w) { return w.hrv_avg; }));
+  const pct = ((avgWith - avgWithout) / avgWithout) * 100;
+  if (pct >= 8) return "Tes jours avec sieste montrent une VFC plus haute (" + avgWith.toFixed(0) + " ms contre " + avgWithout.toFixed(0) + " ms sans sieste, +" + pct.toFixed(0) + "%) — plutôt bon signe pour ta récupération.";
+  if (pct <= -8) return "Tes jours avec sieste montrent une VFC plus basse (" + avgWith.toFixed(0) + " ms contre " + avgWithout.toFixed(0) + " ms) — la sieste arrive sans doute les jours où tu es déjà fatigué, plus qu'elle ne cause la fatigue.";
+  return "Pas d'écart net de VFC entre tes jours avec (" + avgWith.toFixed(0) + " ms) et sans sieste (" + avgWithout.toFixed(0) + " ms).";
+}
+function coachAnswerStressByWeekday(d) {
+  const DAY_NAMES = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
+  const byDay = [[], [], [], [], [], [], []];
+  d.wearableRaw.forEach(function(w) {
+    if (w.stress_avg == null) return;
+    byDay[new Date(w.day + "T00:00:00").getDay()].push(w.stress_avg);
+  });
+  const stats = byDay.map(function(vals, i) { return { day: DAY_NAMES[i], avg: vals.length >= 2 ? avgOf(vals) : null }; }).filter(function(s) { return s.avg != null; });
+  if (stats.length < 4) return "Pas encore assez de données réparties sur la semaine pour dégager un motif (il faut au moins 2 mesures sur 4 jours différents).";
+  const overallAvg = avgOf(stats.map(function(s) { return s.avg; }));
+  const sorted = stats.slice().sort(function(a, b) { return b.avg - a.avg; });
+  const worst = sorted[0], best = sorted[sorted.length - 1];
+  if (worst.avg - overallAvg >= 6) return "Le " + worst.day + " ressort comme ton jour le plus stressant (stress moyen " + worst.avg.toFixed(0) + " contre " + overallAvg.toFixed(0) + " sur la semaine) — le " + best.day + " est ton jour le plus calme (" + best.avg.toFixed(0) + ").";
+  return "Pas de jour de la semaine qui ressort nettement — stress plutôt stable jour après jour (entre " + best.avg.toFixed(0) + " et " + worst.avg.toFixed(0) + ").";
+}
+function coachAnswerGripVsForme(d) {
+  const wearableByDay = {};
+  d.wearableRaw.forEach(function(w) { wearableByDay[w.day] = w; });
+  const rows = d.gripRaw.filter(function(g) { return wearableByDay[g.day] && wearableByDay[g.day].hrv_avg != null; });
+  if (rows.length < 6) return "Pas encore assez de mesures de préhension avec données montre le même jour pour comparer (il en faut au moins 6).";
+  const avgGrip = avgOf(rows.map(function(g) { return g.value_kg; }));
+  const high = rows.filter(function(g) { return g.value_kg >= avgGrip; });
+  const low = rows.filter(function(g) { return g.value_kg < avgGrip; });
+  if (high.length < 2 || low.length < 2) return "Pas assez de contraste dans tes mesures de préhension pour comparer.";
+  const avgHrvHigh = avgOf(high.map(function(g) { return wearableByDay[g.day].hrv_avg; }));
+  const avgHrvLow = avgOf(low.map(function(g) { return wearableByDay[g.day].hrv_avg; }));
+  const pct = ((avgHrvHigh - avgHrvLow) / avgHrvLow) * 100;
+  if (pct >= 10) return "Tes jours de préhension forte (≥" + avgGrip.toFixed(1) + " kg) montrent une VFC nettement plus haute (" + avgHrvHigh.toFixed(0) + " ms contre " + avgHrvLow.toFixed(0) + " ms) — les deux signaux racontent la même histoire de fraîcheur neuromusculaire.";
+  return "Pas de lien net entre ta force de préhension et ta VFC ce même jour (" + avgHrvHigh.toFixed(0) + " vs " + avgHrvLow.toFixed(0) + " ms).";
+}
+function coachAnswerLoadVsForme(d) {
+  const loadByDay = {};
+  d.sessionsRaw.forEach(function(s) { if (s.correctedLoad) loadByDay[s.date] = (loadByDay[s.date] || 0) + s.correctedLoad; });
+  const hrvByDay = {};
+  d.wearableRaw.forEach(function(w) { if (w.hrv_avg != null) hrvByDay[w.day] = w.hrv_avg; });
+  const pairs = [];
+  Object.keys(loadByDay).forEach(function(day) {
+    const next = new Date(day + "T00:00:00");
+    next.setDate(next.getDate() + 1);
+    const nextDay = next.toISOString().slice(0, 10);
+    if (hrvByDay[nextDay] != null) pairs.push({ load: loadByDay[day], hrv: hrvByDay[nextDay] });
+  });
+  if (pairs.length < 6) return "Pas encore assez de séances suivies d'une mesure VFC le lendemain pour comparer (il en faut au moins 6).";
+  const sorted = pairs.slice().sort(function(a, b) { return b.load - a.load; });
+  const half = Math.max(2, Math.floor(sorted.length / 2));
+  const avgHigh = avgOf(sorted.slice(0, half).map(function(p) { return p.hrv; }));
+  const avgLow = avgOf(sorted.slice(-half).map(function(p) { return p.hrv; }));
+  const pct = ((avgHigh - avgLow) / avgLow) * 100;
+  if (pct <= -10) return "Après tes séances les plus chargées, ta VFC le lendemain est en moyenne " + avgHigh.toFixed(0) + " ms, contre " + avgLow.toFixed(0) + " ms après tes séances légères — la charge semble peser sur ta récupération.";
+  if (pct >= 10) return "Pas d'effet négatif visible : ta VFC est même plus haute après tes séances chargées (" + avgHigh.toFixed(0) + " ms) qu'après les légères (" + avgLow.toFixed(0) + " ms).";
+  return "Pas d'écart net de VFC entre le lendemain d'une grosse séance (" + avgHigh.toFixed(0) + " ms) et d'une séance légère (" + avgLow.toFixed(0) + " ms).";
+}
+function coachAnswerDisciplineVsForme(d) {
+  const hrvByDay = {};
+  d.wearableRaw.forEach(function(w) { if (w.hrv_avg != null) hrvByDay[w.day] = w.hrv_avg; });
+  const byDiscipline = {};
+  d.sessionsRaw.forEach(function(s) {
+    if (!s.discipline || s.discipline.indexOf(" + ") !== -1) return;
+    const next = new Date(s.date + "T00:00:00");
+    next.setDate(next.getDate() + 1);
+    const nextDay = next.toISOString().slice(0, 10);
+    if (hrvByDay[nextDay] == null) return;
+    if (!byDiscipline[s.discipline]) byDiscipline[s.discipline] = [];
+    byDiscipline[s.discipline].push(hrvByDay[nextDay]);
+  });
+  const rows = Object.keys(byDiscipline).filter(function(k) { return byDiscipline[k].length >= 3; })
+    .map(function(k) { return { name: k, avg: avgOf(byDiscipline[k]), count: byDiscipline[k].length }; })
+    .sort(function(a, b) { return a.avg - b.avg; });
+  if (rows.length < 2) return "Pas encore assez de séances par discipline suivies d'une mesure VFC pour comparer (il faut au moins 2 disciplines avec 3 séances chacune).";
+  const lowest = rows[0], highest = rows[rows.length - 1];
+  return "VFC moyenne le lendemain par discipline : " + rows.map(function(r) { return r.name + " (" + r.avg.toFixed(0) + " ms, " + r.count + " séance(s))"; }).join(", ") + ". " + lowest.name + " précède la VFC la plus basse, " + highest.name + " la plus haute.";
+}
+function coachAnswerLoadVsMigraine(d) {
+  const loadByDay = {};
+  d.sessionsRaw.forEach(function(s) { if (s.correctedLoad) loadByDay[s.date] = (loadByDay[s.date] || 0) + s.correctedLoad; });
+  const migDays = d.migrainesRaw.map(function(m) { return m.day; });
+  if (migDays.length < 3) return "Pas encore assez de migraines enregistrées pour comparer (il en faut au moins 3).";
+  function loadBefore(day) {
+    const prev = new Date(day + "T00:00:00");
+    prev.setDate(prev.getDate() - 1);
+    return loadByDay[prev.toISOString().slice(0, 10)] || 0;
+  }
+  const beforeMig = migDays.map(loadBefore).filter(function(v) { return v > 0; });
+  const allLoads = Object.keys(loadByDay).map(function(k) { return loadByDay[k]; });
+  if (beforeMig.length < 2 || allLoads.length < 5) return "Pas encore assez de données de charge autour de tes migraines pour comparer.";
+  const avgBefore = avgOf(beforeMig), avgAll = avgOf(allLoads);
+  const pct = ((avgBefore - avgAll) / avgAll) * 100;
+  if (pct >= 25) return "La veille de tes migraines, ta charge d'entraînement est en moyenne " + Math.round(avgBefore) + " contre " + Math.round(avgAll) + " en moyenne générale (+" + pct.toFixed(0) + "%) — un surentraînement récent pourrait jouer un rôle.";
+  return "Pas de lien net entre ta charge d'entraînement de la veille et tes migraines (" + Math.round(avgBefore) + " vs " + Math.round(avgAll) + " en moyenne).";
+}
+function coachAnswerDisciplineVsSleepBefore(d) {
+  const sleepByDay = {};
+  d.wearableRaw.forEach(function(w) { if (w.sleep_total_min != null) sleepByDay[w.day] = w.sleep_total_min; });
+  const byDiscipline = {};
+  d.sessionsRaw.forEach(function(s) {
+    if (!s.discipline || s.discipline.indexOf(" + ") !== -1) return;
+    if (sleepByDay[s.date] == null) return;
+    if (!byDiscipline[s.discipline]) byDiscipline[s.discipline] = [];
+    byDiscipline[s.discipline].push(sleepByDay[s.date]);
+  });
+  const rows = Object.keys(byDiscipline).filter(function(k) { return byDiscipline[k].length >= 3; })
+    .map(function(k) { return { name: k, avg: avgOf(byDiscipline[k]), count: byDiscipline[k].length }; })
+    .sort(function(a, b) { return a.avg - b.avg; });
+  if (rows.length < 2) return "Pas encore assez de séances par discipline avec une nuit trackée la veille pour comparer.";
+  function lbl(min) { return Math.floor(min / 60) + "h" + String(Math.round(min % 60)).padStart(2, "0"); }
+  const lowest = rows[0], highest = rows[rows.length - 1];
+  return "Durée de sommeil la nuit précédant chaque type de cours : " + rows.map(function(r) { return r.name + " (" + lbl(r.avg) + ")"; }).join(", ") + ". Les nuits avant " + lowest.name + " sont les plus courtes, celles avant " + highest.name + " les plus longues.";
+}
 const COACH_QUESTIONS = [
   { id: "sleep_avg", label: "Ma durée moyenne de sommeil ?", fn: coachAnswerSleepAvg, domain: "recuperation" },
   { id: "sleep_reg", label: "La régularité de mon sommeil ?", fn: coachAnswerSleepRegularity, domain: "recuperation" },
@@ -2604,6 +2732,13 @@ const COACH_QUESTIONS = [
   { id: "migraine_correlation", label: "Un vrai lien entre mes migraines et mes autres signaux (FC/VFC/stress) ?", fn: coachAnswerMigraineCorrelation, domain: "hybride" },
   { id: "load_vs_sleep", label: "Mes grosses séances dégradent-elles mon sommeil qui suit ?", fn: coachAnswerLoadVsSleep, domain: "hybride" },
   { id: "lifeload_accuracy", label: "Mon ressenti colle-t-il à mes signaux mesurés ?", fn: coachAnswerLifeloadAccuracy, domain: "hybride" },
+  { id: "nap_impact", label: "Impact des siestes → ma récupération ?", fn: coachAnswerNapImpact, domain: "hybride" },
+  { id: "stress_by_weekday", label: "Récurrence du stress par jour de semaine ?", fn: coachAnswerStressByWeekday, domain: "hybride" },
+  { id: "grip_vs_forme", label: "Force de préhension → ma Forme ?", fn: coachAnswerGripVsForme, domain: "hybride" },
+  { id: "load_vs_forme", label: "Ma dépense d'entraînement → ma Forme ?", fn: coachAnswerLoadVsForme, domain: "hybride" },
+  { id: "discipline_vs_forme", label: "Quelles disciplines → ma Forme ?", fn: coachAnswerDisciplineVsForme, domain: "hybride" },
+  { id: "load_vs_migraine", label: "Ma charge d'entraînement → mes migraines ?", fn: coachAnswerLoadVsMigraine, domain: "hybride" },
+  { id: "discipline_vs_sleep_before", label: "Thèmes de cours → sommeil de la nuit précédente ?", fn: coachAnswerDisciplineVsSleepBefore, domain: "hybride" },
 ];
 const COACH_STATS_FILTERS = [
   { id: "all", label: "Tout" },
@@ -2630,8 +2765,9 @@ async function renderCoach() {
         sb("grip_strength?select=day,value_kg&order=day.desc&limit=30").catch(function() { return []; }),
         sb("workout_sessions?select=day,kz_leger_min,kz_intensif_min,kz_aerobique_min,kz_anaerobie_min,kz_vo2max_min,kz_hrmax_used,kz_hrrest_used&activity_type=eq.seance&kz_leger_min=not.is.null&order=day.desc&limit=60").catch(function() { return []; }),
         sb("lifeload?select=day,state&order=day.desc&limit=90").catch(function() { return []; }),
+        sb("naps?select=day,duration_min,quality&order=day.desc&limit=90").catch(function() { return []; }),
       ]);
-      coachData = buildCoachData(results[0] || [], results[1] || [], results[2] || [], results[3] || [], results[4] || [], results[5] || []);
+      coachData = buildCoachData(results[0] || [], results[1] || [], results[2] || [], results[3] || [], results[4] || [], results[5] || [], results[6] || []);
     } catch (e) {
       overlay.innerHTML = '<div class="wrap"><div class="error-banner"><b>Erreur :</b> ' + esc(e.message) + "</div></div>";
       return;
