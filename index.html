@@ -81,6 +81,23 @@
   .bar.max { background: var(--rust); }
   .bars-axis { display: flex; gap: 4px; }
   .bars-axis span { flex: 1; text-align: center; font-size: 9px; color: var(--muted); }
+  /* Cercle de respiration : contours en dégradé transparent (voir
+     breathing-circle-glow, dont le flou/l'opacité varient avec la phase
+     inspiration/expiration dans updateBreathingVisual) + un effet d'eau —
+     deux taches de couleur qui dérivent lentement en boucle, indépendamment
+     du rythme respiratoire, pour donner un aspect vivant/liquide plutôt
+     qu'un aplat de couleur figé. */
+  .breathing-water-blob { position: absolute; border-radius: 50%; mix-blend-mode: overlay; filter: blur(6px); opacity: 0.55; }
+  .breathing-water-blob.b1 { width: 130%; height: 130%; top: -35%; left: -30%; background: radial-gradient(circle, #fff 0%, transparent 65%); animation: breathing-water-drift-1 11s ease-in-out infinite; }
+  .breathing-water-blob.b2 { width: 110%; height: 110%; top: 20%; left: 10%; background: radial-gradient(circle, #fff 0%, transparent 60%); animation: breathing-water-drift-2 8.5s ease-in-out infinite; }
+  @keyframes breathing-water-drift-1 {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50% { transform: translate(14%, 10%) scale(1.12); }
+  }
+  @keyframes breathing-water-drift-2 {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50% { transform: translate(-12%, -14%) scale(0.92); }
+  }
 </style>
 </head>
 <body>
@@ -2005,6 +2022,17 @@ function updateBreathingIdleStats() {
   if (breathsEl) breathsEl.textContent = cycle > 0 ? Math.round(breathingConfig.durationSec / cycle) : "–";
   if (bpmEl) bpmEl.textContent = cycle > 0 ? (60 / cycle).toFixed(1) : "–";
 }
+// Construit le dégradé radial du cercle de respiration : plein jusqu'à
+// stopPct%, transparent au-delà — stopPct/opacity/blur bougent ensemble
+// pour donner l'impression que le contour flou "se resserre" (couleur plus
+// franche) à l'inspiration et "s'étale" (plus transparent) à l'expiration.
+function setBreathingGlow(colorVar, stopPct, opacity, blurPx) {
+  const glow = document.getElementById("breathing-circle-glow");
+  if (!glow) return;
+  glow.style.background = "radial-gradient(circle, " + colorVar + " 0%, " + colorVar + " " + stopPct + "%, transparent 100%)";
+  glow.style.opacity = opacity;
+  glow.style.filter = "blur(" + blurPx + "px)";
+}
 // Arrête proprement toute séance en cours — appelé au clic sur "Arrêter",
 // en changeant de sous-onglet/d'onglet, ou avant d'en démarrer une nouvelle.
 // Ne touche au DOM que s'il existe encore (peut être appelé après un
@@ -2017,10 +2045,13 @@ function stopBreathing() {
   clearInterval(breathingRun.tickIntervalId);
   breathingRun = null;
   const circle = document.getElementById("breathing-circle");
+  const glow = document.getElementById("breathing-circle-glow");
   const phaseText = document.getElementById("breathing-phase-text");
   const startBtn = document.getElementById("breathing-start-btn");
   const stopBtn = document.getElementById("breathing-stop-btn");
-  if (circle) { circle.style.transitionDuration = "0.6s"; circle.style.transform = "scale(1)"; circle.style.backgroundColor = "var(--purple)"; }
+  if (circle) { circle.style.transitionDuration = "0.6s"; circle.style.transform = "scale(1)"; }
+  if (glow) { glow.style.transitionDuration = "0.6s"; }
+  setBreathingGlow("var(--purple)", 30, 0.65, 8);
   const ballTrack = document.getElementById("breathing-ball-track");
   if (ballTrack) { ballTrack.style.transition = "none"; ballTrack.style.transform = "rotate(0deg)"; }
   breathingBallRotationDeg = 0;
@@ -2031,15 +2062,19 @@ function stopBreathing() {
 }
 function updateBreathingVisual(phase, seconds) {
   const circle = document.getElementById("breathing-circle");
+  const glow = document.getElementById("breathing-circle-glow");
   const phaseText = document.getElementById("breathing-phase-text");
   if (circle && (phase === "inhale" || phase === "exhale")) {
     circle.style.transitionDuration = seconds + "s";
     circle.style.transform = phase === "inhale" ? "scale(1.55)" : "scale(1)";
-    // Poumons pleins (fin d'inspiration / début d'expiration) en rose fluo,
-    // poumons vides (fin d'expiration / début d'inspiration) en violet — le
-    // changement progressif de couleur, en plus de la taille, marque
-    // clairement les fins de phase.
-    circle.style.backgroundColor = phase === "inhale" ? "var(--pink)" : "var(--purple)";
+    if (glow) glow.style.transitionDuration = seconds + "s";
+    // Poumons pleins (fin d'inspiration / début d'expiration) en rose fluo
+    // et dégradé resserré (bord net, couleur franche) ; poumons vides (fin
+    // d'expiration / début d'inspiration) en violet et dégradé étalé (bord
+    // flou, couleur plus transparente) — la taille ET le contour marquent
+    // ensemble les fins de phase.
+    if (phase === "inhale") setBreathingGlow("var(--pink)", 75, 1, 2);
+    else setBreathingGlow("var(--purple)", 30, 0.65, 8);
   }
   const ballTrack = document.getElementById("breathing-ball-track");
   if (ballTrack) {
@@ -2123,8 +2158,19 @@ function startBreathing() {
 // le mode d'affichage actif.
 function breathingCircleHtml() {
   let html = '<div style="position:relative;width:172px;height:172px">';
-  html += '<div id="breathing-circle" style="position:absolute;top:11px;left:11px;width:150px;height:150px;border-radius:50%;background-color:var(--purple);display:flex;align-items:center;justify-content:center;transition:transform 0.6s ease-in-out,background-color 0.6s ease-in-out;transform:scale(1);box-shadow:0 0 30px rgba(168,85,247,0.35)">';
-  html += '<span id="breathing-phase-text" style="font-size:11.5px;font-weight:900;text-transform:uppercase;letter-spacing:.3px;line-height:1.4;color:var(--bg);text-align:center;padding:0 10px;max-width:88px">Prêt</span></div>';
+  html += '<div id="breathing-circle" style="position:absolute;top:11px;left:11px;width:150px;height:150px;border-radius:50%;display:flex;align-items:center;justify-content:center;transition:transform 0.6s ease-in-out;transform:scale(1)">';
+  // Contours transparents en dégradé (pas un aplat de couleur) : un cercle
+  // radial qui reste plein jusqu'à un certain rayon puis s'estompe vers le
+  // transparent — le rayon plein, l'opacité et le flou du bord sont ensuite
+  // pilotés par setBreathingGlow() au fil des phases (inspiration = dégradé
+  // qui se resserre + couleur plus franche, expiration = l'inverse).
+  html += '<div id="breathing-circle-glow" style="position:absolute;inset:0;border-radius:50%;overflow:hidden;background:radial-gradient(circle, var(--purple) 0%, var(--purple) 30%, transparent 100%);opacity:0.65;filter:blur(8px);transition:filter 0.6s ease-in-out,opacity 0.6s ease-in-out,background 0.6s ease-in-out;box-shadow:0 0 30px rgba(168,85,247,0.35)">';
+  // Effet d'eau : deux taches en dégradé blanc (mix-blend overlay) qui
+  // dérivent lentement en boucle, en continu, indépendamment du rythme
+  // respiratoire — donne un aspect liquide plutôt qu'une couleur figée.
+  html += '<div class="breathing-water-blob b1"></div><div class="breathing-water-blob b2"></div>';
+  html += "</div>";
+  html += '<span id="breathing-phase-text" style="position:relative;z-index:1;font-size:11.5px;font-weight:900;text-transform:uppercase;letter-spacing:.3px;line-height:1.4;color:var(--bg);text-align:center;padding:0 10px;max-width:88px">Prêt</span></div>';
   // Bille qui fait un tour complet du cercle (sens antihoraire) sur la durée
   // de chaque phase, y compris les rétentions, avec une traînée blanche
   // (arc SVG en dégradé, opaque près de la bille) rigidement solidaire
