@@ -2182,7 +2182,7 @@ let coachFormOpen = null; // null | "seance" | "prehension" | "lifeload" | "sies
 // cours prévus au planning pas encore logués en séance. Sieste et migraine
 // restent facultatives au jour le jour, donc pas comptées ici.
 let coachPendingCount = 0;
-let coachTodayStatus = { lifeload: false, lifeloadState: null, grip: false, classesRemaining: 0, sessionsLogged: 0 };
+let coachTodayStatus = { lifeload: false, lifeloadState: null, grip: false, classesPending: [], sessionsLogged: 0 };
 async function refreshCoachPendingCount() {
   const today = todayISO();
   try {
@@ -2192,12 +2192,12 @@ async function refreshCoachPendingCount() {
       sb("sessions?session_date=eq." + today + "&select=discipline").catch(function() { return []; }),
     ]);
     const loggedDisciplines = sessionRows.map(function(s) { return s.discipline; });
-    const classesRemaining = getScheduledClasses(today).filter(function(c) { return loggedDisciplines.indexOf(c.discipline) === -1; }).length;
+    const classesPending = getScheduledClasses(today).filter(function(c) { return loggedDisciplines.indexOf(c.discipline) === -1; });
     coachTodayStatus = {
       lifeload: lifeloadRows.length > 0, lifeloadState: lifeloadRows.length ? lifeloadRows[0].state : null,
-      grip: gripRows.length > 0, classesRemaining: classesRemaining, sessionsLogged: sessionRows.length,
+      grip: gripRows.length > 0, classesPending: classesPending, sessionsLogged: sessionRows.length,
     };
-    coachPendingCount = (coachTodayStatus.lifeload ? 0 : 1) + (coachTodayStatus.grip ? 0 : 1) + classesRemaining;
+    coachPendingCount = (coachTodayStatus.lifeload ? 0 : 1) + (coachTodayStatus.grip ? 0 : 1) + classesPending.length;
   } catch (e) {
     coachPendingCount = 0;
   }
@@ -2524,6 +2524,43 @@ function coachSaveSessionInBackground() {
   saveSessionRow(todayISO(), editingSession)
     .then(function(id) { if (id) editingSession.id = id; setStatus("Enregistré"); setTimeout(function() { setStatus(""); }, 1400); })
     .catch(function(e) { setStatus("Erreur : " + e.message); });
+}
+// Cours prévus au planning et pas encore logués (coachTodayStatus.classesPending,
+// recalculé par refreshCoachPendingCount) : proposés en premier avant le
+// formulaire vierge, pour retrouver le "Pré-remplir →" qui existait sur
+// l'ancien onglet Entraînement plutôt que de partir d'un formulaire vide
+// alors que la montre a déjà détecté la séance.
+function coachSeanceChoiceHtml() {
+  let html = '<div class="card"><div class="section-label">Cours prévu au planning, pas encore logué</div>';
+  coachTodayStatus.classesPending.forEach(function(c, i) {
+    html += '<button class="coach-seance-prefill" data-class-index="' + i + '" style="width:100%;display:flex;justify-content:space-between;align-items:center;background:var(--surfaceRaised);border:1px dashed var(--steel);border-radius:8px;padding:12px 14px;margin-bottom:8px;color:var(--chalk);font-size:13px;font-weight:700;cursor:pointer">';
+    html += '<span>' + esc(c.discipline) + ' <span class="muted" style="font-weight:400">(' + c.heure_debut.slice(0,5) + '–' + c.heure_fin.slice(0,5) + ')</span></span>';
+    html += '<span style="color:var(--steel);font-size:11px">Pré-remplir →</span></button>';
+  });
+  html += '<button id="coach-seance-libre" style="width:100%;padding:13px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--chalkDim);font-size:13px;font-weight:700;cursor:pointer;margin-top:4px">+ Séance libre (autre)</button>';
+  html += '<button id="coach-form-cancel" style="width:100%;margin-top:8px;padding:10px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer">Annuler</button>';
+  html += "</div>";
+  return html;
+}
+function wireCoachSeanceChoiceEvents() {
+  document.querySelectorAll('.coach-seance-prefill').forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      const c = coachTodayStatus.classesPending[Number(btn.dataset.classIndex)];
+      disciplineOtherMode = false;
+      editingSession = sessionFromClass(c) || emptySession();
+      coachFormOpen = "seance";
+      drawCoach();
+    });
+  });
+  const libreBtn = document.getElementById("coach-seance-libre");
+  if (libreBtn) libreBtn.addEventListener("click", function() {
+    editingSession = emptySession();
+    disciplineOtherMode = false;
+    coachFormOpen = "seance";
+    drawCoach();
+  });
+  const cancelBtn = document.getElementById("coach-form-cancel");
+  if (cancelBtn) cancelBtn.addEventListener("click", function() { coachFormOpen = null; drawCoach(); });
 }
 function coachSeanceFormHtml() {
   const session = editingSession;
@@ -2937,7 +2974,8 @@ function drawCoach() {
 
   if (coachMode === "aujourdhui") {
     if (coachFormOpen) {
-      if (coachFormOpen === "seance") html += coachSeanceFormHtml();
+      if (coachFormOpen === "seance-choice") html += coachSeanceChoiceHtml();
+      else if (coachFormOpen === "seance") html += coachSeanceFormHtml();
       else if (coachFormOpen === "prehension") html += coachPrehensionFormHtml();
       else if (coachFormOpen === "lifeload") html += coachLifeloadFormHtml();
       else if (coachFormOpen === "sieste") html += coachSiesteFormHtml();
@@ -2952,7 +2990,7 @@ function drawCoach() {
         let done = false;
         if (b.id === "lifeload") done = coachTodayStatus.lifeload;
         else if (b.id === "prehension") done = coachTodayStatus.grip;
-        else if (b.id === "seance") done = coachTodayStatus.classesRemaining === 0 && coachTodayStatus.sessionsLogged > 0;
+        else if (b.id === "seance") done = coachTodayStatus.classesPending.length === 0 && coachTodayStatus.sessionsLogged > 0;
         html += '<button class="coach-question-btn" data-log="' + b.id + '" style="width:100%;text-align:left;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:10px;padding:16px 18px;color:var(--chalk);font-size:14px;font-weight:700;cursor:pointer;display:flex;justify-content:space-between;align-items:center">' + b.label + (done ? ' <span style="color:var(--green);font-size:16px">✓</span>' : "") + "</button>";
       });
       html += "</div>";
@@ -3003,7 +3041,8 @@ function drawCoach() {
   });
 
   if (coachMode === "aujourdhui") {
-    if (coachFormOpen === "seance") wireCoachSeanceFormEvents();
+    if (coachFormOpen === "seance-choice") wireCoachSeanceChoiceEvents();
+    else if (coachFormOpen === "seance") wireCoachSeanceFormEvents();
     else if (coachFormOpen === "prehension") wireCoachPrehensionFormEvents();
     else if (coachFormOpen === "lifeload") wireCoachLifeloadFormEvents();
     else if (coachFormOpen === "sieste") wireCoachSiesteFormEvents();
@@ -3011,8 +3050,15 @@ function drawCoach() {
     else {
       document.querySelectorAll('#coach-log-row .coach-question-btn').forEach(function(btn) {
         btn.addEventListener("click", function() {
-          coachFormOpen = btn.dataset.log;
-          if (coachFormOpen === "seance") { editingSession = emptySession(); disciplineOtherMode = false; }
+          if (btn.dataset.log === "seance") {
+            // S'il reste des cours du planning pas encore logués, on propose
+            // d'abord de pré-remplir depuis l'un d'eux plutôt que de partir
+            // d'un formulaire vide (la montre a souvent déjà détecté la séance).
+            if (coachTodayStatus.classesPending.length > 0) { coachFormOpen = "seance-choice"; }
+            else { editingSession = emptySession(); disciplineOtherMode = false; coachFormOpen = "seance"; }
+          } else {
+            coachFormOpen = btn.dataset.log;
+          }
           drawCoach();
         });
       });
