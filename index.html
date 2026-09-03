@@ -3109,6 +3109,115 @@ function coachAnswerSleepStagesEvolution(d) {
   const text = "Sur les 14 derniers jours, tu dors en moyenne " + lbl(recent.deep) + " en profond, " + lbl(recent.light) + " en léger et " + lbl(recent.rem) + " en paradoxal par nuit" + (parts.length ? " — " + parts.join(", ") + " par rapport aux 4 semaines précédentes" : " — stable par rapport aux 4 semaines précédentes") + ".";
   return { text: text, chartHtml: chartHtml };
 }
+function coachAnswerStressByTimeOfDay(d) {
+  function avgField(f) { const v = d.wearableRaw.map(function(w) { return w[f]; }).filter(function(x) { return x != null; }); return v.length ? avgOf(v) : null; }
+  const periods = [
+    { label: "Matin", phrase: "le matin", val: avgField("stress_morning") },
+    { label: "Après-midi", phrase: "l'après-midi", val: avgField("stress_afternoon") },
+    { label: "Soir", phrase: "le soir", val: avgField("stress_evening") },
+  ].filter(function(p) { return p.val != null; });
+  if (periods.length < 2) return "Pas encore assez de données de stress par moment de la journée pour comparer.";
+  const sorted = periods.slice().sort(function(a, b) { return b.val - a.val; });
+  const worst = sorted[0], best = sorted[sorted.length - 1];
+  const chartHtml = barChartHtml(periods.map(function(p) { return { label: p.label, val: Math.round(p.val) }; }), { unit: "", decimals: 0, showAvg: false });
+  const text = worst.val - best.val >= 6
+    ? "Ton stress est le plus élevé " + worst.phrase + " (" + worst.val.toFixed(0) + " en moyenne), le plus bas " + best.phrase + " (" + best.val.toFixed(0) + ")."
+    : "Pas de moment de la journée qui ressort nettement — stress plutôt stable entre " + periods.map(function(p) { return p.phrase + " (" + p.val.toFixed(0) + ")"; }).join(", ") + ".";
+  return { text: text, chartHtml: chartHtml };
+}
+// Le nombre de pas quotidien (steps_total) n'était croisé avec rien —
+// compare tes jours les plus/moins actifs à ton stress du même jour et à
+// ton sommeil de la nuit suivante, sur le même principe que les autres
+// comparaisons haut/bas de l'appli.
+function coachAnswerStepsImpact(d) {
+  const rows = d.wearableRaw.filter(function(w) { return w.steps_total != null; });
+  if (rows.length < 10) return "Pas encore assez de jours avec nombre de pas mesuré pour comparer (il en faut au moins 10).";
+  const sorted = rows.slice().sort(function(a, b) { return b.steps_total - a.steps_total; });
+  const half = Math.max(3, Math.floor(sorted.length / 2));
+  const high = sorted.slice(0, half), low = sorted.slice(-half);
+  const avgStepsHigh = Math.round(avgOf(high.map(function(w) { return w.steps_total; })));
+  const avgStepsLow = Math.round(avgOf(low.map(function(w) { return w.steps_total; })));
+  const parts = [];
+  const stressHigh = high.map(function(w) { return w.stress_avg; }).filter(function(x) { return x != null; });
+  const stressLow = low.map(function(w) { return w.stress_avg; }).filter(function(x) { return x != null; });
+  if (stressHigh.length >= 3 && stressLow.length >= 3) {
+    const avgSH = avgOf(stressHigh), avgSL = avgOf(stressLow);
+    if (Math.abs(avgSH - avgSL) >= 6) parts.push("les jours où tu marches le plus (" + avgStepsHigh + " pas), ton stress est " + (avgSH < avgSL ? "plus bas" : "plus haut") + " (" + avgSH.toFixed(0) + " contre " + avgSL.toFixed(0) + " les jours où tu marches le moins, " + avgStepsLow + " pas)");
+  }
+  const sleepByDay = {};
+  d.wearableRaw.forEach(function(w) { if (w.sleep_total_min != null) sleepByDay[w.day] = w.sleep_total_min; });
+  function nextDaySleep(day) { const n = new Date(day + "T00:00:00"); n.setDate(n.getDate() + 1); return sleepByDay[n.toISOString().slice(0, 10)]; }
+  const sleepAfterHigh = high.map(function(w) { return nextDaySleep(w.day); }).filter(function(x) { return x != null; });
+  const sleepAfterLow = low.map(function(w) { return nextDaySleep(w.day); }).filter(function(x) { return x != null; });
+  function lbl(min) { return Math.floor(min / 60) + "h" + String(Math.round(min % 60)).padStart(2, "0"); }
+  if (sleepAfterHigh.length >= 3 && sleepAfterLow.length >= 3) {
+    const avgH = avgOf(sleepAfterHigh), avgL = avgOf(sleepAfterLow);
+    if (Math.abs(avgH - avgL) >= 20) parts.push("la nuit qui suit tes jours les plus actifs, tu dors " + (avgH > avgL ? "plus" : "moins") + " (" + lbl(avgH) + " contre " + lbl(avgL) + " après tes jours les moins actifs)");
+  }
+  if (!parts.length) return "Pas de lien net entre ton nombre de pas quotidien et ton stress ou ton sommeil dans tes données actuelles (jours actifs : " + avgStepsHigh + " pas, jours calmes : " + avgStepsLow + " pas).";
+  const chartHtml = barChartHtml([{ label: "Pas ↑", val: avgStepsHigh }, { label: "Pas ↓", val: avgStepsLow }], { unit: "", decimals: 0, showAvg: false });
+  const text = "Comparaison entre tes jours les plus actifs (" + avgStepsHigh + " pas en moyenne) et les moins actifs (" + avgStepsLow + ") : " + parts.join(" ; ") + ".";
+  return { text: text, chartHtml: chartHtml };
+}
+// sleep_awake_count (réveils nocturnes détectés par la montre) n'était
+// croisé avec rien — compare les nuits les plus/moins fragmentées au
+// ressenti (LifeLoad) du jour qui suit.
+function coachAnswerAwakeningsImpact(d) {
+  const rows = d.wearableRaw.filter(function(w) { return w.sleep_awake_count != null; });
+  if (rows.length < 10) return "Pas encore assez de nuits avec nombre de réveils mesuré pour comparer (il en faut au moins 10).";
+  const lifeloadByDay = {};
+  d.lifeloadRaw.forEach(function(l) { lifeloadByDay[l.day] = l.state; });
+  const difficile = ["stresse", "fatigue", "malade", "courbature"];
+  const withState = rows.map(function(w) { return { awake: w.sleep_awake_count, state: lifeloadByDay[w.day] }; }).filter(function(x) { return x.state; });
+  if (withState.length < 6) return "Pas encore assez de nuits avec réveils mesurés et ressenti du même jour renseigné pour comparer (il en faut au moins 6).";
+  const avgAwake = avgOf(withState.map(function(x) { return x.awake; }));
+  const high = withState.filter(function(x) { return x.awake >= avgAwake; });
+  const low = withState.filter(function(x) { return x.awake < avgAwake; });
+  if (high.length < 2 || low.length < 2) return "Pas assez de contraste dans ton nombre de réveils nocturnes pour comparer.";
+  const pctDifficileHigh = Math.round(100 * high.filter(function(x) { return difficile.indexOf(x.state) !== -1; }).length / high.length);
+  const pctDifficileLow = Math.round(100 * low.filter(function(x) { return difficile.indexOf(x.state) !== -1; }).length / low.length);
+  const avgAwakeHigh = avgOf(high.map(function(x) { return x.awake; })).toFixed(1);
+  const avgAwakeLow = avgOf(low.map(function(x) { return x.awake; })).toFixed(1);
+  const chartHtml = barChartHtml([
+    { label: "Réveils ↑ (" + avgAwakeHigh + ")", val: pctDifficileHigh }, { label: "Réveils ↓ (" + avgAwakeLow + ")", val: pctDifficileLow },
+  ], { unit: "%", decimals: 0, showAvg: false });
+  const text = Math.abs(pctDifficileHigh - pctDifficileLow) >= 20
+    ? "Les nuits avec le plus de réveils (" + avgAwakeHigh + " en moyenne) précèdent un ressenti difficile (fatigué/stressé/courbaturé) " + pctDifficileHigh + "% du temps, contre " + pctDifficileLow + "% après les nuits les plus calmes (" + avgAwakeLow + ")."
+    : "Pas de lien net entre ton nombre de réveils nocturnes et ton ressenti du jour (" + pctDifficileHigh + "% vs " + pctDifficileLow + "% de jours difficiles).";
+  return { text: text, chartHtml: chartHtml };
+}
+// L'objectif de séance (achievement : atteint/moyennement/pas atteint)
+// n'était jamais croisé avec le ressenti — compare le lendemain d'une
+// séance réussie à celui d'une séance manquée/moyenne.
+function coachAnswerAchievementVsLifeload(d) {
+  const lifeloadByDay = {};
+  d.lifeloadRaw.forEach(function(l) { lifeloadByDay[l.day] = l.state; });
+  const difficile = ["stresse", "fatigue", "malade", "courbature"];
+  const rows = [];
+  d.sessionsRaw.forEach(function(s) {
+    if (!s.achievement) return;
+    const next = new Date(s.date + "T00:00:00");
+    next.setDate(next.getDate() + 1);
+    const nextDay = next.toISOString().slice(0, 10);
+    const state = lifeloadByDay[nextDay];
+    if (!state) return;
+    rows.push({ achievement: s.achievement, difficile: difficile.indexOf(state) !== -1 });
+  });
+  const atteint = rows.filter(function(r) { return r.achievement === "atteint"; });
+  const pasAtteint = rows.filter(function(r) { return r.achievement === "pas" || r.achievement === "moyen"; });
+  if (atteint.length < 3 || pasAtteint.length < 3) return "Pas encore assez de séances avec objectif renseigné suivies d'un ressenti du lendemain pour comparer (il en faut au moins 3 de chaque).";
+  const pctAtteint = Math.round(100 * atteint.filter(function(r) { return r.difficile; }).length / atteint.length);
+  const pctPasAtteint = Math.round(100 * pasAtteint.filter(function(r) { return r.difficile; }).length / pasAtteint.length);
+  const chartHtml = barChartHtml([
+    { label: "Objectif atteint", val: pctAtteint }, { label: "Objectif non atteint", val: pctPasAtteint },
+  ], { unit: "%", decimals: 0, showAvg: false });
+  const text = Math.abs(pctAtteint - pctPasAtteint) >= 20
+    ? (pctPasAtteint > pctAtteint
+      ? "Le lendemain d'une séance où tu n'as pas atteint ton objectif, tu te sens en difficulté " + pctPasAtteint + "% du temps, contre " + pctAtteint + "% après une séance réussie."
+      : "Le lendemain d'une séance réussie, tu te sens en difficulté " + pctAtteint + "% du temps, contre " + pctPasAtteint + "% après une séance manquée — plutôt inattendu.")
+    : "Pas de lien net entre atteindre ton objectif de séance et ton ressenti du lendemain (" + pctAtteint + "% vs " + pctPasAtteint + "% de jours difficiles).";
+  return { text: text, chartHtml: chartHtml };
+}
 const COACH_QUESTIONS = [
   { id: "sleep_avg", label: "Ma durée moyenne de sommeil ?", fn: coachAnswerSleepAvg, domain: "recuperation" },
   { id: "sleep_reg", label: "La régularité de mon sommeil ?", fn: coachAnswerSleepRegularity, domain: "recuperation" },
@@ -3119,6 +3228,7 @@ const COACH_QUESTIONS = [
   { id: "hrv_trend", label: "Ma tendance VFC récente ?", fn: coachAnswerHrvTrend, domain: "forme" },
   { id: "hr_trend", label: "Ma tendance FC repos ?", fn: coachAnswerHrTrend, domain: "forme" },
   { id: "stress", label: "Mon niveau de stress récent ?", fn: coachAnswerStress, domain: "forme" },
+  { id: "stress_by_time_of_day", label: "À quel moment de la journée suis-je le plus stressé ?", fn: coachAnswerStressByTimeOfDay, domain: "forme" },
   { id: "load", label: "Ma charge d'entraînement ?", fn: coachAnswerTrainingLoad, domain: "entrainement" },
   { id: "grip", label: "Ma tendance de préhension ?", fn: coachAnswerGripTrend, domain: "entrainement" },
   { id: "training_balance", label: "Mes séances sont-elles équilibrées (tirage/poussée, thèmes) ?", fn: coachAnswerTrainingBalance, domain: "entrainement" },
@@ -3141,6 +3251,9 @@ const COACH_QUESTIONS = [
   { id: "rpe_by_discipline", label: "Mon RPE → par thématique de cours ?", fn: coachAnswerRpeByDiscipline, domain: "hybride" },
   { id: "sleep_vs_session_rpe", label: "Sommeil de la veille → mon ressenti à l'entraînement ?", fn: coachAnswerSleepImpactOnSession, domain: "hybride" },
   { id: "breathing_impact", label: "Respiration → mon stress et mon sommeil ?", fn: coachAnswerBreathingImpact, domain: "hybride" },
+  { id: "steps_impact", label: "Mon nombre de pas quotidien → mon stress et mon sommeil ?", fn: coachAnswerStepsImpact, domain: "hybride" },
+  { id: "awakenings_impact", label: "Mes réveils nocturnes → mon ressenti du jour ?", fn: coachAnswerAwakeningsImpact, domain: "hybride" },
+  { id: "achievement_vs_lifeload", label: "Atteindre mon objectif de séance → mon ressenti du lendemain ?", fn: coachAnswerAchievementVsLifeload, domain: "hybride" },
 ];
 const COACH_STATS_FILTERS = [
   { id: "all", label: "Tout" },
