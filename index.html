@@ -240,8 +240,9 @@ function logout() { storeSession(null); location.reload(); }
 
 <div class="wrap">
   <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:10px">
-    <button id="brand-breathing-btn" title="Respiration" style="background:none;border:none;padding:0;cursor:pointer;text-align:center;font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase">
-      <span style="color:var(--chalkDim)">MOVEMENT </span><span style="background:var(--gradient);-webkit-background-clip:text;background-clip:text;color:transparent">PRACTICE ✦ SUIVI</span>
+    <button id="brand-breathing-btn" title="Respiration" style="background:none;border:none;padding:0;cursor:pointer;text-align:center;display:flex;flex-direction:column;align-items:center;gap:4px">
+      <img src="icon-192.png" alt="" width="32" height="32" style="border-radius:8px">
+      <span style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase"><span style="color:var(--chalkDim)">MOVEMENT </span><span style="background:var(--gradient);-webkit-background-clip:text;background-clip:text;color:transparent">PRACTICE ✦ SUIVI</span></span>
     </button>
     <button id="refresh-btn" title="Rafraîchir les données" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--muted);padding:3px 6px;cursor:pointer;font-size:12px;line-height:1;position:absolute;right:16px">⟳</button>
     <button id="logout-btn" title="Se déconnecter" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--muted);padding:3px 6px;cursor:pointer;font-size:12px;line-height:1;position:absolute;right:52px">⏻</button>
@@ -2058,9 +2059,23 @@ function runBreathingPhase(orderIdx) {
   breathingRun.phaseTimeoutId = setTimeout(function() { runBreathingPhase(idx + 1); }, seconds * 1000);
 }
 function finishBreathing() {
+  const breaths = breathingRun ? breathingRun.breaths : 0;
+  const durationMin = Math.round(breathingConfig.durationSec / 60);
   stopBreathing();
   const phaseText = document.getElementById("breathing-phase-text");
   if (phaseText) phaseText.textContent = "Terminé";
+  logBreathingSession(durationMin, breaths);
+}
+// Ne logue qu'une séance vraiment terminée (durée configurée atteinte, voir
+// runBreathingPhase) — un arrêt manuel via stopBreathing() n'appelle pas
+// cette fonction, volontairement : seules les pratiques complètes comptent
+// pour l'analyse d'impact sur le stress/sommeil dans le Coach.
+function logBreathingSession(durationMin, breaths) {
+  if (durationMin <= 0) return;
+  sb("breathing_sessions", {
+    method: "POST", headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ day: todayISO(), duration_min: durationMin, breaths: breaths || null }),
+  }).catch(function() {});
 }
 function startBreathing() {
   stopBreathing();
@@ -2267,20 +2282,22 @@ let coachFormOpen = null; // null | "seance" | "prehension" | "lifeload" | "sies
 // cours prévus au planning pas encore logués en séance. Sieste et migraine
 // restent facultatives au jour le jour, donc pas comptées ici.
 let coachPendingCount = 0;
-let coachTodayStatus = { lifeload: false, lifeloadState: null, grip: false, classesPending: [], sessionsLogged: 0 };
+let coachTodayStatus = { lifeload: false, lifeloadState: null, grip: false, classesPending: [], sessionsLogged: 0, sleepFeelingQuality: null };
 async function refreshCoachPendingCount() {
   const today = todayISO();
   try {
-    const [lifeloadRows, gripRows, sessionRows] = await Promise.all([
+    const [lifeloadRows, gripRows, sessionRows, sleepFeelingRows] = await Promise.all([
       sb("lifeload?day=eq." + today + "&select=state").catch(function() { return []; }),
       sb("grip_strength?day=eq." + today + "&select=day").catch(function() { return []; }),
       sb("sessions?session_date=eq." + today + "&select=discipline").catch(function() { return []; }),
+      sb("sleep_feeling?day=eq." + today + "&select=quality").catch(function() { return []; }),
     ]);
     const loggedDisciplines = sessionRows.map(function(s) { return s.discipline; });
     const classesPending = getScheduledClasses(today).filter(function(c) { return loggedDisciplines.indexOf(c.discipline) === -1; });
     coachTodayStatus = {
       lifeload: lifeloadRows.length > 0, lifeloadState: lifeloadRows.length ? lifeloadRows[0].state : null,
       grip: gripRows.length > 0, classesPending: classesPending, sessionsLogged: sessionRows.length,
+      sleepFeelingQuality: sleepFeelingRows.length ? sleepFeelingRows[0].quality : null,
     };
     coachPendingCount = (coachTodayStatus.lifeload ? 0 : 1) + (coachTodayStatus.grip ? 0 : 1) + classesPending.length;
   } catch (e) {
@@ -2337,7 +2354,7 @@ function circularRegularity(hours) {
   const n = hours.length;
   return Math.sqrt(sx * sx + sy * sy) / n;
 }
-function buildCoachData(wearable, sessions, migraines, gripRows, kzWorkouts, lifeloadRows, naps) {
+function buildCoachData(wearable, sessions, migraines, gripRows, kzWorkouts, lifeloadRows, naps, sleepFeelingRows, breathingRows) {
   function avgField(arr, field) {
     const v = arr.map(function(x) { return x[field]; }).filter(function(x) { return x != null; });
     return v.length ? avgOf(v) : null;
@@ -2393,6 +2410,8 @@ function buildCoachData(wearable, sessions, migraines, gripRows, kzWorkouts, lif
     lifeloadRaw: lifeloadRows || [],
     napsRaw: naps || [],
     gripRaw: gripRows || [],
+    sleepFeelingRaw: sleepFeelingRows || [],
+    breathingRaw: breathingRows || [],
   };
 }
 function coachAnswerSleepAvg(d) {
@@ -2715,6 +2734,113 @@ function coachAnswerDisciplineVsSleepBefore(d) {
   const lowest = rows[0], highest = rows[rows.length - 1];
   return "Durée de sommeil la nuit précédant chaque type de cours : " + rows.map(function(r) { return r.name + " (" + lbl(r.avg) + ")"; }).join(", ") + ". Les nuits avant " + lowest.name + " sont les plus courtes, celles avant " + highest.name + " les plus longues.";
 }
+function coachAnswerThemeVsLifeload(d) {
+  const lifeloadByDay = {};
+  d.lifeloadRaw.forEach(function(l) { lifeloadByDay[l.day] = l.state; });
+  const difficile = ["stresse", "fatigue", "malade", "courbature"];
+  const byDiscipline = {};
+  d.sessionsRaw.forEach(function(s) {
+    if (!s.discipline || s.discipline.indexOf(" + ") !== -1) return;
+    const next = new Date(s.date + "T00:00:00");
+    next.setDate(next.getDate() + 1);
+    const nextDay = next.toISOString().slice(0, 10);
+    const state = lifeloadByDay[nextDay];
+    if (!state) return;
+    if (!byDiscipline[s.discipline]) byDiscipline[s.discipline] = { total: 0, difficile: 0 };
+    byDiscipline[s.discipline].total++;
+    if (difficile.indexOf(state) !== -1) byDiscipline[s.discipline].difficile++;
+  });
+  const rows = Object.keys(byDiscipline).filter(function(k) { return byDiscipline[k].total >= 3; })
+    .map(function(k) { return { name: k, pct: Math.round(100 * byDiscipline[k].difficile / byDiscipline[k].total), total: byDiscipline[k].total }; })
+    .sort(function(a, b) { return b.pct - a.pct; });
+  if (rows.length < 2) return "Pas encore assez de séances par discipline suivies d'un ressenti du lendemain pour comparer (il faut au moins 2 disciplines avec 3 séances chacune).";
+  const worst = rows[0], best = rows[rows.length - 1];
+  if (worst.pct - best.pct >= 25) return "Le lendemain d'une séance de " + worst.name + ", tu te sens en difficulté (fatigué/stressé/courbaturé) " + worst.pct + "% du temps, contre " + best.pct + "% après " + best.name + ".";
+  return "Pas de discipline qui ressort nettement sur ton ressenti du lendemain : " + rows.map(function(r) { return r.name + " (" + r.pct + "% de jours difficiles)"; }).join(", ") + ".";
+}
+function coachAnswerFatigueByWeekday(d) {
+  const DAY_NAMES = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
+  const difficile = ["stresse", "fatigue", "malade", "courbature"];
+  const byDay = [[], [], [], [], [], [], []];
+  d.lifeloadRaw.forEach(function(l) {
+    byDay[new Date(l.day + "T00:00:00").getDay()].push(difficile.indexOf(l.state) !== -1 ? 1 : 0);
+  });
+  const stats = byDay.map(function(vals, i) { return { day: DAY_NAMES[i], pct: vals.length >= 2 ? Math.round(100 * avgOf(vals)) : null }; }).filter(function(s) { return s.pct != null; });
+  if (stats.length < 4) return "Pas encore assez de ressentis répartis sur la semaine pour dégager un motif (il faut au moins 2 jours renseignés sur 4 jours différents de la semaine).";
+  const sorted = stats.slice().sort(function(a, b) { return b.pct - a.pct; });
+  const worst = sorted[0], best = sorted[sorted.length - 1];
+  if (worst.pct - best.pct >= 30) return "Le " + worst.day + " est ton jour le plus fatigant : ressenti difficile (fatigué/stressé/courbaturé) " + worst.pct + "% du temps, contre " + best.pct + "% le " + best.day + ".";
+  return "Pas de jour de la semaine qui ressort nettement pour la fatigue ressentie (entre " + best.pct + "% et " + worst.pct + "% de jours difficiles).";
+}
+function coachAnswerRpeByDiscipline(d) {
+  const byDiscipline = {};
+  d.sessionsRaw.forEach(function(s) {
+    if (!s.discipline || s.discipline.indexOf(" + ") !== -1 || !s.intensity) return;
+    if (!byDiscipline[s.discipline]) byDiscipline[s.discipline] = [];
+    byDiscipline[s.discipline].push(s.intensity);
+  });
+  const rows = Object.keys(byDiscipline).filter(function(k) { return byDiscipline[k].length >= 3; })
+    .map(function(k) { return { name: k, avg: avgOf(byDiscipline[k]), count: byDiscipline[k].length }; })
+    .sort(function(a, b) { return b.avg - a.avg; });
+  if (rows.length < 2) return "Pas encore assez de séances notées (RPE) par discipline pour comparer (il faut au moins 2 disciplines avec 3 séances chacune).";
+  const hardest = rows[0], easiest = rows[rows.length - 1];
+  return "RPE moyen par discipline : " + rows.map(function(r) { return r.name + " (" + r.avg.toFixed(1) + "/10, " + r.count + " séance(s))"; }).join(", ") + ". " + hardest.name + " ressort comme la plus exigeante, " + easiest.name + " la plus légère.";
+}
+function coachAnswerSleepImpactOnSession(d) {
+  const sleepByDay = {};
+  d.wearableRaw.forEach(function(w) { if (w.sleep_total_min != null) sleepByDay[w.day] = w.sleep_total_min; });
+  const pairs = [];
+  d.sessionsRaw.forEach(function(s) {
+    if (!s.intensity) return;
+    if (sleepByDay[s.date] != null) pairs.push({ sleep: sleepByDay[s.date], rpe: s.intensity });
+  });
+  if (pairs.length < 6) return "Pas encore assez de séances notées avec une nuit trackée la veille pour comparer (il en faut au moins 6).";
+  const sorted = pairs.slice().sort(function(a, b) { return b.sleep - a.sleep; });
+  const half = Math.max(2, Math.floor(sorted.length / 2));
+  const goodGroup = sorted.slice(0, half), badGroup = sorted.slice(-half);
+  const avgRpeGood = avgOf(goodGroup.map(function(p) { return p.rpe; }));
+  const avgRpeBad = avgOf(badGroup.map(function(p) { return p.rpe; }));
+  const avgSleepGood = avgOf(goodGroup.map(function(p) { return p.sleep; }));
+  const avgSleepBad = avgOf(badGroup.map(function(p) { return p.sleep; }));
+  function lbl(min) { return Math.floor(min / 60) + "h" + String(Math.round(min % 60)).padStart(2, "0"); }
+  const diff = avgRpeBad - avgRpeGood;
+  if (diff >= 1) return "Après une nuit courte (" + lbl(avgSleepBad) + "), ton RPE moyen en séance est de " + avgRpeBad.toFixed(1) + "/10, contre " + avgRpeGood.toFixed(1) + "/10 après une bonne nuit (" + lbl(avgSleepGood) + ") — le manque de sommeil se ressent dans l'effort perçu.";
+  if (diff <= -1) return "Pas d'effet négatif visible : ton RPE est même plus bas après une nuit courte (" + avgRpeBad.toFixed(1) + "/10) qu'après une bonne nuit (" + avgRpeGood.toFixed(1) + "/10).";
+  return "Pas d'écart net de RPE entre tes séances après une bonne nuit (" + avgRpeGood.toFixed(1) + "/10) et après une nuit courte (" + avgRpeBad.toFixed(1) + "/10).";
+}
+function coachAnswerBreathingImpact(d) {
+  const breathingDays = d.breathingRaw.map(function(b) { return b.day; });
+  if (breathingDays.length < 3) return "Pas encore assez de séances de respiration terminées pour analyser leur impact (il en faut au moins 3).";
+  const withB = d.wearableRaw.filter(function(w) { return breathingDays.indexOf(w.day) !== -1 && w.stress_avg != null; });
+  const withoutB = d.wearableRaw.filter(function(w) { return breathingDays.indexOf(w.day) === -1 && w.stress_avg != null; });
+  const parts = [];
+  if (withB.length >= 3 && withoutB.length >= 5) {
+    const avgWith = avgOf(withB.map(function(w) { return w.stress_avg; }));
+    const avgWithout = avgOf(withoutB.map(function(w) { return w.stress_avg; }));
+    const pct = ((avgWithout - avgWith) / avgWithout) * 100;
+    if (pct >= 10) parts.push("les jours où tu pratiques la respiration, ton stress moyen est plus bas (" + avgWith.toFixed(0) + " contre " + avgWithout.toFixed(0) + " sans, -" + pct.toFixed(0) + "%)");
+    else parts.push("pas d'écart net de stress entre tes jours avec (" + avgWith.toFixed(0) + ") et sans respiration (" + avgWithout.toFixed(0) + ")");
+  }
+  const sleepByDay = {};
+  d.wearableRaw.forEach(function(w) { if (w.sleep_total_min != null) sleepByDay[w.day] = w.sleep_total_min; });
+  const sleepAfterB = [];
+  breathingDays.forEach(function(day) {
+    const next = new Date(day + "T00:00:00");
+    next.setDate(next.getDate() + 1);
+    const nextDay = next.toISOString().slice(0, 10);
+    if (sleepByDay[nextDay] != null) sleepAfterB.push(sleepByDay[nextDay]);
+  });
+  const allSleep = Object.keys(sleepByDay).map(function(k) { return sleepByDay[k]; });
+  function lbl(min) { return Math.floor(min / 60) + "h" + String(Math.round(min % 60)).padStart(2, "0"); }
+  if (sleepAfterB.length >= 3 && allSleep.length >= 5) {
+    const avgAfter = avgOf(sleepAfterB), avgAll = avgOf(allSleep);
+    const diff = avgAfter - avgAll;
+    if (diff >= 15) parts.push("la nuit qui suit une séance de respiration, tu dors en moyenne " + lbl(avgAfter) + " contre " + lbl(avgAll) + " en moyenne générale");
+    else parts.push("pas d'écart net de sommeil la nuit suivant une séance de respiration (" + lbl(avgAfter) + " vs " + lbl(avgAll) + " en moyenne)");
+  }
+  if (!parts.length) return "Pas encore assez de données croisées (stress/sommeil) sur tes jours de respiration pour conclure.";
+  return "Sur tes " + breathingDays.length + " séance(s) de respiration terminée(s) : " + parts.join(" ; ") + ".";
+}
 const COACH_QUESTIONS = [
   { id: "sleep_avg", label: "Ma durée moyenne de sommeil ?", fn: coachAnswerSleepAvg, domain: "recuperation" },
   { id: "sleep_reg", label: "La régularité de mon sommeil ?", fn: coachAnswerSleepRegularity, domain: "recuperation" },
@@ -2739,6 +2865,11 @@ const COACH_QUESTIONS = [
   { id: "discipline_vs_forme", label: "Quelles disciplines → ma Forme ?", fn: coachAnswerDisciplineVsForme, domain: "hybride" },
   { id: "load_vs_migraine", label: "Ma charge d'entraînement → mes migraines ?", fn: coachAnswerLoadVsMigraine, domain: "hybride" },
   { id: "discipline_vs_sleep_before", label: "Thèmes de cours → sommeil de la nuit précédente ?", fn: coachAnswerDisciplineVsSleepBefore, domain: "hybride" },
+  { id: "theme_vs_lifeload", label: "Thématique de séance → mon ressenti du lendemain ?", fn: coachAnswerThemeVsLifeload, domain: "hybride" },
+  { id: "fatigue_by_weekday", label: "Quels jours de la semaine me fatiguent le plus ?", fn: coachAnswerFatigueByWeekday, domain: "hybride" },
+  { id: "rpe_by_discipline", label: "Mon RPE → par thématique de cours ?", fn: coachAnswerRpeByDiscipline, domain: "hybride" },
+  { id: "sleep_vs_session_rpe", label: "Sommeil de la veille → mon ressenti à l'entraînement ?", fn: coachAnswerSleepImpactOnSession, domain: "hybride" },
+  { id: "breathing_impact", label: "Respiration → mon stress et mon sommeil ?", fn: coachAnswerBreathingImpact, domain: "hybride" },
 ];
 const COACH_STATS_FILTERS = [
   { id: "all", label: "Tout" },
@@ -2766,8 +2897,10 @@ async function renderCoach() {
         sb("workout_sessions?select=day,kz_leger_min,kz_intensif_min,kz_aerobique_min,kz_anaerobie_min,kz_vo2max_min,kz_hrmax_used,kz_hrrest_used&activity_type=eq.seance&kz_leger_min=not.is.null&order=day.desc&limit=60").catch(function() { return []; }),
         sb("lifeload?select=day,state&order=day.desc&limit=90").catch(function() { return []; }),
         sb("naps?select=day,duration_min,quality&order=day.desc&limit=90").catch(function() { return []; }),
+        sb("sleep_feeling?select=day,quality&order=day.desc&limit=90").catch(function() { return []; }),
+        sb("breathing_sessions?select=day,duration_min,breaths&order=day.desc&limit=120").catch(function() { return []; }),
       ]);
-      coachData = buildCoachData(results[0] || [], results[1] || [], results[2] || [], results[3] || [], results[4] || [], results[5] || [], results[6] || []);
+      coachData = buildCoachData(results[0] || [], results[1] || [], results[2] || [], results[3] || [], results[4] || [], results[5] || [], results[6] || [], results[7] || [], results[8] || []);
     } catch (e) {
       overlay.innerHTML = '<div class="wrap"><div class="error-banner"><b>Erreur :</b> ' + esc(e.message) + "</div></div>";
       return;
@@ -3084,6 +3217,41 @@ function wireCoachLifeloadFormEvents() {
   if (cancelBtn) cancelBtn.addEventListener("click", function() { coachFormOpen = null; drawCoach(); });
 }
 
+function coachSommeilFormHtml() {
+  const SLEEP_QUALITY_OPTIONS = [["bonne", "Bonne"], ["moyenne", "Moyenne"], ["mauvaise", "Mauvaise"]];
+  let html = '<div class="card"><div class="section-label">Comment était ta nuit ?</div>';
+  if (coachTodayStatus.sleepFeelingQuality) {
+    html += '<div class="muted" style="font-size:11px;margin-bottom:12px">Déjà enregistré aujourd\'hui : <b style="color:var(--chalk)">' + esc((SLEEP_QUALITY_OPTIONS.find(function(o){return o[0]===coachTodayStatus.sleepFeelingQuality;})||[,coachTodayStatus.sleepFeelingQuality])[1]) + '</b> — reclique pour corriger.</div>';
+  }
+  html += '<div class="pill-row compact" style="flex-wrap:wrap;gap:8px" id="coach-sommeil-row">';
+  SLEEP_QUALITY_OPTIONS.forEach(function(o) {
+    const active = coachTodayStatus.sleepFeelingQuality === o[0];
+    html += '<button class="pill' + (active ? " active" : "") + '" data-value="' + o[0] + '" style="flex:none;padding:9px 14px">' + o[1] + "</button>";
+  });
+  html += "</div>";
+  html += '<button id="coach-form-cancel" style="width:100%;margin-top:16px;padding:10px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer">Annuler</button>';
+  html += "</div>";
+  return html;
+}
+function wireCoachSommeilFormEvents() {
+  document.querySelectorAll('#coach-sommeil-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      const label = btn.textContent;
+      sb("sleep_feeling", {
+        method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({ day: todayISO(), quality: btn.dataset.value }),
+      }).then(function() {
+        coachTodayStatus.sleepFeelingQuality = btn.dataset.value;
+        coachFormOpen = null;
+        coachMessages.push({ role: "assistant", text: "Qualité de la nuit enregistrée : " + label + "." });
+        drawCoach();
+      }).catch(function(e) { alert("Erreur : " + e.message); });
+    });
+  });
+  const cancelBtn = document.getElementById("coach-form-cancel");
+  if (cancelBtn) cancelBtn.addEventListener("click", function() { coachFormOpen = null; drawCoach(); });
+}
+
 function coachSiesteFormHtml() {
   let html = '<div class="card"><div class="section-label">Sieste</div>';
   html += '<div class="section-label" style="margin-bottom:6px">Qualité</div>';
@@ -3224,6 +3392,7 @@ const COACH_LOG_BUTTONS = [
   { id: "seance", label: "Séance" },
   { id: "prehension", label: "Préhension" },
   { id: "lifeload", label: "Ressenti (LifeLoad)" },
+  { id: "sommeil", label: "Qualité de la nuit" },
   { id: "sieste", label: "Sieste" },
   { id: "migraine", label: "Migraine" },
 ];
@@ -3245,6 +3414,7 @@ function drawCoach() {
       else if (coachFormOpen === "seance") html += coachSeanceFormHtml();
       else if (coachFormOpen === "prehension") html += coachPrehensionFormHtml();
       else if (coachFormOpen === "lifeload") html += coachLifeloadFormHtml();
+      else if (coachFormOpen === "sommeil") html += coachSommeilFormHtml();
       else if (coachFormOpen === "sieste") html += coachSiesteFormHtml();
       else if (coachFormOpen === "migraine") html += coachMigraineFormHtml();
     } else {
@@ -3321,6 +3491,7 @@ function drawCoach() {
     else if (coachFormOpen === "seance") wireCoachSeanceFormEvents();
     else if (coachFormOpen === "prehension") wireCoachPrehensionFormEvents();
     else if (coachFormOpen === "lifeload") wireCoachLifeloadFormEvents();
+    else if (coachFormOpen === "sommeil") wireCoachSommeilFormEvents();
     else if (coachFormOpen === "sieste") wireCoachSiesteFormEvents();
     else if (coachFormOpen === "migraine") wireCoachMigraineFormEvents();
     else {
