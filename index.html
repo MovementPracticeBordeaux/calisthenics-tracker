@@ -1795,12 +1795,242 @@ async function renderForme() {
   });
 }
 
-// TODO(navigation) : Entraînement et Récupération arrivent dans les
-// prochains commits de cette même refonte — onglets fonctionnels mais
-// encore minimaux en attendant.
+let entrainementSubTab = "jour";
 async function loadEntrainement() {
   const app = document.getElementById("app");
-  app.innerHTML = '<h1>Entraînement</h1><div class="muted">Contenu en cours de refonte — arrive dans le prochain commit.</div>';
+  app.innerHTML = '<div class="muted">Chargement…</div>';
+  const today = todayISO();
+  let errorMsg = "";
+  const [sessions, gripRows, wearable, dismissedRows, trainingCoefs] = await Promise.all([
+    listSessions(90).catch(function(e) { errorMsg = errorMsg || e.message; return []; }),
+    sb("grip_strength?select=day,value_kg&order=day.desc&limit=30").catch(function() { return []; }),
+    listWearable(14).catch(function() { return []; }),
+    sb("dismissed_activity_flags?select=day").catch(function() { return []; }),
+    sb("training_coefficients?select=*&order=category,label").catch(function() { return []; }),
+  ]);
+
+  const todaySessions = sessions.filter(function(s){ return s.date === today; });
+  const todayTotalLoad = todaySessions.reduce(function(s,x){ return s + (x.correctedLoad || 0); }, 0);
+  const loggedDisciplinesToday = todaySessions.map(function(s){ return s.discipline; });
+  const classes = getScheduledClasses(today).filter(function(c){ return loggedDisciplinesToday.indexOf(c.discipline) === -1; });
+
+  // Même modèle Fitness-Fatigue (Banister, EWMA 7j/28j) que le score Forme
+  // (index.html, renderForme) — dupliqué ici volontairement : chaque onglet
+  // reste autonome (sa propre requête, son propre calcul), comme Sommeil/
+  // Santé le faisaient déjà avant cette refonte.
+  const loaded = sessions.filter(function(s){ return s.correctedLoad != null; }).slice().reverse();
+  const dailyLoad = {};
+  loaded.forEach(function(s) { dailyLoad[s.date] = (dailyLoad[s.date] || 0) + s.correctedLoad; });
+  const allDates = Object.keys(dailyLoad).sort();
+  let atl = null, ctl = null, atlWake = null;
+  const decayATL = Math.exp(-1/7), decayCTL = Math.exp(-1/28);
+  if (allDates.length) {
+    let cursor = new Date(allDates[0]);
+    const end = new Date(today);
+    while (cursor <= end) {
+      const d = cursor.toISOString().slice(0, 10);
+      if (d === today) atlWake = atl;
+      const w = dailyLoad[d] || 0;
+      atl = atl == null ? w : atl * decayATL + w * (1 - decayATL);
+      ctl = ctl == null ? w : ctl * decayCTL + w * (1 - decayCTL);
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    if (atlWake == null) atlWake = atl;
+  }
+  const energyResult = computeTrainingEnergy(atlWake, ctl, todayTotalLoad);
+  const energy = energyResult.energy;
+  const energyTier = energy >= 70 ? "green" : energy >= 40 ? "amber" : "red";
+  const energyLabel = energy >= 70 ? "Élevée" : energy >= 40 ? "Modérée" : "Faible";
+
+  const todayGripRow = gripRows.find(function(g){ return g.day === today; });
+  const gripHistory = gripRows.filter(function(g){ return g.day !== today && g.day >= daysAgo(14); });
+  const gripBaseline = gripHistory.length >= 3 ? avgOf(gripHistory.map(function(g){ return g.value_kg; })) : null;
+  let gripPct = null;
+  if (todayGripRow && gripBaseline != null && gripBaseline > 0) gripPct = ((todayGripRow.value_kg - gripBaseline) / gripBaseline) * 100;
+
+  // Activité détectée par la montre sans QCM correspondant — repris tel quel
+  // de l'ancien Dashboard (même logique), simplement rattaché à Entraînement
+  // puisque c'est de ça qu'il s'agit.
+  const dismissedDates = dismissedRows.map(function(r){ return r.day; });
+  const last14 = []; for (let i = 13; i >= 0; i--) last14.push(daysAgo(i));
+  const toComplete = last14.map(function(d) {
+    const w = wearable.find(function(x){ return x.day === d; });
+    const hasSession = sessions.some(function(x){ return x.date === d && (x.discipline || x.intensity > 0 || x.duration); });
+    const signal = w && ((w.intensity_avg && w.intensity_avg > 25) || (w.hr_max_activity && w.hr_max_activity > 140));
+    return { date: d, signal: signal && !hasSession && dismissedDates.indexOf(d) === -1 };
+  }).filter(function(j){ return j.signal; });
+
+  let html = "";
+  if (errorMsg) html += '<div class="error-banner"><b>Erreur :</b> ' + esc(errorMsg) + "</div>";
+  html += '<h1 style="margin-bottom:4px">Entraînement</h1>';
+  html += '<div class="muted" style="margin-bottom:18px">' + formatDateLabel(today) + "</div>";
+
+  html += '<div class="pill-row compact" style="margin-bottom:16px" id="entrainement-subtab-row">';
+  [["jour","Aujourd'hui"],["tendance","Tendance"]].forEach(function(p) {
+    html += '<button class="pill' + (entrainementSubTab === p[0] ? " active" : "") + '" data-subtab="' + p[0] + '">' + p[1] + "</button>";
+  });
+  html += "</div>";
+
+  if (entrainementSubTab === "jour") {
+    if (toComplete.length) {
+      html += '<div class="card amber"><div class="section-label">Séances possibles non renseignées</div>';
+      html += '<div class="muted" style="margin-bottom:10px">Activité détectée par la montre sans QCM correspondant.</div>';
+      toComplete.forEach(function(g) {
+        html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">';
+        html += '<span style="flex:1;display:flex;justify-content:space-between;align-items:center;background:var(--surfaceRaised);border-radius:8px;padding:10px 14px">';
+        html += '<span style="font-weight:700;font-size:12px">' + formatDateLabel(g.date) + "</span></span>";
+        html += '<button class="dismiss-flag" data-date="' + g.date + '" title="Ce n\'était pas une séance" style="background:var(--surfaceRaised);border:none;border-radius:8px;color:var(--muted);font-size:15px;padding:10px 12px;cursor:pointer">✕</button>';
+        html += "</div>";
+      });
+      html += "</div>";
+    }
+
+    html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Score d\'entraînement</span><span>' + tierDot(energyTier) + '</span></div>';
+    html += '<div style="padding:18px 0">' + circleGaugeHtml(energy, 100, { sublabel: energyLabel, size: 200, strokeWidth: 16 }) + "</div>";
+    html += '<div style="text-align:center;padding-top:14px;border-top:1px solid var(--line);font-size:12px">Énergie disponible pour t\'entraîner aujourd\'hui — l\'inverse du sommeil : elle se vide au fil des séances.</div>';
+    html += "</div>";
+
+    const checklist = [];
+    checklist.push({ label: "Score d'entraînement", tier: energyTier, note: energy + "/100 · " + energyLabel });
+    if (energyResult.wakeDepletion > 0) checklist.push({ label: "Fatigue accumulée (réveil)", tier: energyResult.wakeDepletion >= 25 ? "red" : "amber", note: "-" + energyResult.wakeDepletion + " pts" });
+    if (energyResult.sessionDepletion > 0) checklist.push({ label: "Dépense du jour", tier: energyResult.sessionDepletion >= 35 ? "red" : "amber", note: "-" + energyResult.sessionDepletion + " pts (charge " + todayTotalLoad + ")" });
+    checklist.push({ label: "Cours prévu", tier: classes.length ? "steel" : "steel", note: classes.length ? classes.map(function(c){ return c.discipline; }).join(", ") : "Aucun" });
+    checklist.push({ label: "Séance(s) aujourd'hui", tier: todaySessions.length ? "green" : "steel", note: todaySessions.length ? todaySessions.map(function(s){ return s.discipline || "?"; }).join(", ") + " · charge " + todayTotalLoad : "Pas encore loguée — via le Coach" });
+
+    html += '<div class="card"><div class="section-label">Récap du jour</div>';
+    checklist.forEach(function(c) {
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
+      html += '<span style="font-size:13px">' + c.label + (c.note ? ' <span class="muted" style="font-size:11px">· ' + esc(String(c.note)) + '</span>' : '') + "</span>";
+      html += '<span>' + tierDot(c.tier) + "</span></div>";
+    });
+    if (todayGripRow) {
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
+      html += '<span style="font-size:13px">Préhension <span class="muted" style="font-size:11px">· ' + todayGripRow.value_kg + ' kg' + (gripPct != null ? ' (' + (gripPct >= 0 ? "+" : "") + gripPct.toFixed(0) + '%)' : '') + '</span></span>';
+      html += '<button id="grip-quick-delete" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--red);font-size:10px;font-weight:700;cursor:pointer;padding:3px 8px">Suppr.</button></div>';
+    } else {
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);gap:8px">';
+      html += '<span style="font-size:13px">Préhension</span>';
+      html += '<div style="display:flex;gap:6px;align-items:center"><input type="number" min="0" step="0.5" id="grip-quick-input" placeholder="kg" style="width:64px;padding:6px;text-align:center;font-size:13px" /><button id="grip-quick-save" style="background:var(--gradient);border:none;border-radius:6px;color:var(--bg);font-size:11px;font-weight:800;padding:6px 10px;cursor:pointer">OK</button></div></div>';
+    }
+    html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></div>';
+  } else {
+    const last7 = []; for (let i = 6; i >= 0; i--) last7.push(daysAgo(i));
+    const prev7 = []; for (let i = 13; i >= 7; i--) prev7.push(daysAgo(i));
+    const loadWeekBars = last7.map(function(d) {
+      const total = sessions.filter(function(s){ return s.date === d; }).reduce(function(s,x){ return s + (x.correctedLoad || 0); }, 0);
+      return { label: formatDateLabel(d).slice(0,2), val: total };
+    });
+    const month = []; for (let i = 29; i >= 0; i--) month.push(daysAgo(i));
+    const loadMonthLine = [];
+    for (let w = 0; w < 5; w++) {
+      const bd = month.slice(w*6, w*6+6); if (!bd.length) continue;
+      const total = sessions.filter(function(s){ return bd.indexOf(s.date) !== -1; }).reduce(function(s,x){ return s + (x.correctedLoad || 0); }, 0);
+      loadMonthLine.push({ label: bd[0].slice(8,10)+"-"+bd[bd.length-1].slice(8,10), val: total });
+    }
+    const totalLoad7 = sessions.filter(function(s){ return last7.indexOf(s.date) !== -1; }).reduce(function(s,x){ return s + (x.correctedLoad || 0); }, 0);
+    const prevLoad7 = sessions.filter(function(s){ return prev7.indexOf(s.date) !== -1; }).reduce(function(s,x){ return s + (x.correctedLoad || 0); }, 0);
+    let chargePhrase;
+    if (!totalLoad7 && !prevLoad7) chargePhrase = "Pas encore assez de séances loguées pour une tendance.";
+    else if (!prevLoad7) chargePhrase = "Pas de semaine précédente comparable pour l'instant.";
+    else {
+      const pct = Math.round(((totalLoad7 - prevLoad7) / prevLoad7) * 100);
+      chargePhrase = pct >= 30 ? "Charge en hausse de " + pct + "% vs la semaine précédente — progression rapide, surveille ta récupération."
+        : pct <= -30 ? "Charge en net retrait vs la semaine précédente (" + pct + "%)."
+        : "Charge stable par rapport à la semaine précédente (" + (pct>=0?"+":"") + pct + "%).";
+    }
+    html += metricTrendSectionHtml("Charge d'entraînement", loadWeekBars, loadMonthLine, chargePhrase, {});
+
+    const gripWeekBars = last7.map(function(d) { const g = gripRows.find(function(x){ return x.day === d; }); return { label: formatDateLabel(d).slice(0,2), val: g ? g.value_kg : 0 }; });
+    const gripMonthLine = [];
+    for (let w = 0; w < 5; w++) {
+      const bd = month.slice(w*6, w*6+6); if (!bd.length) continue;
+      const vals = gripRows.filter(function(g){ return bd.indexOf(g.day) !== -1; }).map(function(g){ return g.value_kg; });
+      gripMonthLine.push({ label: bd[0].slice(8,10)+"-"+bd[bd.length-1].slice(8,10), val: vals.length ? avgOf(vals) : 0 });
+    }
+    const gripSorted = gripRows.slice().sort(function(a,b){ return a.day < b.day ? -1 : 1; });
+    const gripRecent = gripSorted.slice(-3).map(function(g){ return g.value_kg; });
+    const gripBase = gripSorted.slice(0, -3).map(function(g){ return g.value_kg; });
+    let gripPhrase;
+    if (gripRecent.length < 1 || gripBase.length < 2) gripPhrase = "Pas encore assez de mesures pour une tendance.";
+    else {
+      const recentAvg = avgOf(gripRecent), baseAvg = avgOf(gripBase);
+      const pct = baseAvg ? ((recentAvg - baseAvg) / baseAvg) * 100 : 0;
+      gripPhrase = pct <= -10 ? "En baisse (" + pct.toFixed(0) + "%) — signal de fatigue neuromusculaire à surveiller."
+        : pct >= 8 ? "En hausse (+" + pct.toFixed(0) + "%) — bon signe de fraîcheur."
+        : "Stable, autour de " + recentAvg.toFixed(1) + " kg.";
+    }
+    html += metricTrendSectionHtml("Force de préhension", gripWeekBars, gripMonthLine, gripPhrase, { unit: " kg", decimals: 1 });
+
+    html += '<div class="muted" style="font-size:11px;text-align:center;margin:4px 0 16px">Zones cardiaques, charge par discipline et recommandations tirage/poussée : demande au Coach.</div>';
+
+    html += '<details class="card"><summary class="section-label" style="cursor:pointer;list-style:none">Réglages avancés — coefficients de charge</summary>';
+    html += '<div style="margin-top:10px">';
+    html += '<div class="muted" style="font-size:11px;margin-bottom:12px">Multiplicateurs appliqués à la charge de séance selon la complexité neuromusculaire du thème, le type de contraction, et le type d\'effort visé.</div>';
+    const coefGroups = [
+      ["neural", "Complexité neurale par thème"], ["tendino", "Charge tendino-articulaire par thème"],
+      ["contraction", "Type de contraction"], ["goal", "Type d'effort"], ["niveau", "Niveau de pratique"],
+    ];
+    coefGroups.forEach(function(g) {
+      html += '<div class="section-label" style="margin-top:12px">' + g[1] + '</div>';
+      trainingCoefs.filter(function(c) { return c.category === g[0]; }).forEach(function(c) {
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
+        html += '<span style="font-size:13px">' + esc(c.label) + '</span>';
+        html += '<input type="number" step="0.05" min="0.5" max="3" class="coef-input" data-key="' + c.key + '" value="' + c.value + '" style="width:70px;text-align:center;padding:6px" /></div>';
+      });
+    });
+    html += '<button id="save-coefs" style="width:100%;margin-top:14px;padding:12px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Enregistrer</button>';
+    html += '<div id="coef-status" class="muted" style="text-align:center;font-size:11px;margin-top:8px"></div>';
+    html += "</div></details>";
+  }
+
+  app.innerHTML = html;
+  document.querySelectorAll('#entrainement-subtab-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { entrainementSubTab = btn.dataset.subtab; loadEntrainement(); });
+  });
+  document.querySelectorAll('.dismiss-flag').forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      btn.textContent = "…";
+      sb("dismissed_activity_flags", {
+        method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({ day: btn.dataset.date }),
+      }).then(function() { loadEntrainement(); }).catch(function(e) { alert("Erreur : " + e.message); });
+    });
+  });
+  const gripQuickSave = document.getElementById("grip-quick-save");
+  if (gripQuickSave) gripQuickSave.addEventListener("click", function() {
+    const input = document.getElementById("grip-quick-input");
+    const val = input ? Number(input.value) : 0;
+    if (!val || val <= 0) { alert("Entre une valeur en kg."); return; }
+    gripQuickSave.textContent = "…";
+    sb("grip_strength", {
+      method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify({ day: today, value_kg: val }),
+    }).then(function() { loadEntrainement(); }).catch(function(e) { alert("Erreur : " + e.message); gripQuickSave.textContent = "OK"; });
+  });
+  const gripQuickDelete = document.getElementById("grip-quick-delete");
+  if (gripQuickDelete) gripQuickDelete.addEventListener("click", function() {
+    if (!confirm("Supprimer la mesure de préhension d'aujourd'hui ?")) return;
+    gripQuickDelete.textContent = "…";
+    sb("grip_strength?day=eq." + today, { method: "DELETE", headers: { Prefer: "return=minimal" } })
+      .then(function() { loadEntrainement(); }).catch(function(e) { alert("Erreur : " + e.message); });
+  });
+  const saveCoefsBtn = document.getElementById("save-coefs");
+  if (saveCoefsBtn) saveCoefsBtn.addEventListener("click", function() {
+    const status = document.getElementById("coef-status");
+    const updates = Array.prototype.map.call(document.querySelectorAll(".coef-input"), function(input) {
+      return { key: input.dataset.key, value: Number(input.value) };
+    });
+    status.textContent = "Enregistrement…";
+    Promise.all(updates.map(function(u) {
+      return sb("training_coefficients?key=eq." + u.key, {
+        method: "PATCH", headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ value: u.value, updated_at: new Date().toISOString() }),
+      });
+    })).then(function() {
+      status.textContent = "✓ Enregistré — pris en compte immédiatement";
+      loadCoefficients().then(function() { loadEntrainement(); });
+    }).catch(function(e) { status.textContent = "Erreur : " + e.message; });
+  });
 }
 async function loadRecuperation() {
   const app = document.getElementById("app");
