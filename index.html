@@ -1273,14 +1273,14 @@ async function loadEntrainement() {
     sb("grip_strength", {
       method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
       body: JSON.stringify({ day: today, value_kg: val }),
-    }).then(function() { loadEntrainement(); }).catch(function(e) { alert("Erreur : " + e.message); gripQuickSave.textContent = "OK"; });
+    }).then(function() { refreshCoachPendingCount(); loadEntrainement(); }).catch(function(e) { alert("Erreur : " + e.message); gripQuickSave.textContent = "OK"; });
   });
   const gripQuickDelete = document.getElementById("grip-quick-delete");
   if (gripQuickDelete) gripQuickDelete.addEventListener("click", function() {
     if (!confirm("Supprimer la mesure de préhension d'aujourd'hui ?")) return;
     gripQuickDelete.textContent = "…";
     sb("grip_strength?day=eq." + today, { method: "DELETE", headers: { Prefer: "return=minimal" } })
-      .then(function() { loadEntrainement(); }).catch(function(e) { alert("Erreur : " + e.message); });
+      .then(function() { refreshCoachPendingCount(); loadEntrainement(); }).catch(function(e) { alert("Erreur : " + e.message); });
   });
   const saveCoefsBtn = document.getElementById("save-coefs");
   if (saveCoefsBtn) saveCoefsBtn.addEventListener("click", function() {
@@ -2175,7 +2175,50 @@ function statHtml(label, value, color) {
 let coachMessages = []; // { role: "user"|"assistant", text }
 let coachData = null; // recalculé une fois par visite de l'onglet, pas à chaque question
 let coachMode = "aujourdhui"; // "aujourdhui" (logging) | "stats" (questions)
-let coachFormOpen = null; // null | "seance" | "lifeload" | "sieste" | "migraine"
+let coachFormOpen = null; // null | "seance" | "prehension" | "lifeload" | "sieste" | "migraine"
+
+// Badge du bouton Coach (façon messagerie) — nombre de logs du jour encore à
+// faire parmi les 3 obligatoires : préhension, ressenti (LifeLoad), et les
+// cours prévus au planning pas encore logués en séance. Sieste et migraine
+// restent facultatives au jour le jour, donc pas comptées ici.
+let coachPendingCount = 0;
+let coachTodayStatus = { lifeload: false, lifeloadState: null, grip: false, classesRemaining: 0, sessionsLogged: 0 };
+async function refreshCoachPendingCount() {
+  const today = todayISO();
+  try {
+    const [lifeloadRows, gripRows, sessionRows] = await Promise.all([
+      sb("lifeload?day=eq." + today + "&select=state").catch(function() { return []; }),
+      sb("grip_strength?day=eq." + today + "&select=day").catch(function() { return []; }),
+      sb("sessions?session_date=eq." + today + "&select=discipline").catch(function() { return []; }),
+    ]);
+    const loggedDisciplines = sessionRows.map(function(s) { return s.discipline; });
+    const classesRemaining = getScheduledClasses(today).filter(function(c) { return loggedDisciplines.indexOf(c.discipline) === -1; }).length;
+    coachTodayStatus = {
+      lifeload: lifeloadRows.length > 0, lifeloadState: lifeloadRows.length ? lifeloadRows[0].state : null,
+      grip: gripRows.length > 0, classesRemaining: classesRemaining, sessionsLogged: sessionRows.length,
+    };
+    coachPendingCount = (coachTodayStatus.lifeload ? 0 : 1) + (coachTodayStatus.grip ? 0 : 1) + classesRemaining;
+  } catch (e) {
+    coachPendingCount = 0;
+  }
+  updateCoachFabBadge();
+}
+function updateCoachFabBadge() {
+  const fab = document.getElementById("coach-fab");
+  if (!fab) return;
+  let badge = document.getElementById("coach-fab-badge");
+  if (coachPendingCount > 0) {
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.id = "coach-fab-badge";
+      badge.style.cssText = "position:absolute;top:-4px;right:-4px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--red);color:#fff;font-size:11px;font-weight:900;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 2px var(--bg);pointer-events:none";
+      fab.appendChild(badge);
+    }
+    badge.textContent = coachPendingCount > 9 ? "9+" : String(coachPendingCount);
+  } else if (badge) {
+    badge.remove();
+  }
+}
 
 function hoursToLabel(hDec) {
   let h = Math.floor(((hDec % 24) + 24) % 24);
@@ -2689,6 +2732,7 @@ function wireCoachSeanceFormEvents() {
       coachFormOpen = null;
       coachData = null; // la charge d'entraînement change : force un recalcul pour les questions Statistiques
       coachMessages.push({ role: "assistant", text: "Séance enregistrée." });
+      refreshCoachPendingCount();
       renderCoach();
     }).catch(function(e) {
       validateBtn.textContent = "Erreur : " + e.message;
@@ -2704,9 +2748,13 @@ function coachLifeloadFormHtml() {
     ["fatigue", "Fatigué"], ["courbature", "Courbaturé"], ["malade", "Malade"],
   ];
   let html = '<div class="card"><div class="section-label">Comment tu te sens aujourd\'hui ?</div>';
+  if (coachTodayStatus.lifeloadState) {
+    html += '<div class="muted" style="font-size:11px;margin-bottom:12px">Déjà enregistré aujourd\'hui : <b style="color:var(--chalk)">' + esc((LIFELOAD_OPTIONS.find(function(o){return o[0]===coachTodayStatus.lifeloadState;})||[,coachTodayStatus.lifeloadState])[1]) + '</b> — reclique pour corriger.</div>';
+  }
   html += '<div class="pill-row compact" style="flex-wrap:wrap;gap:8px" id="coach-lifeload-row">';
   LIFELOAD_OPTIONS.forEach(function(o) {
-    html += '<button class="pill" data-value="' + o[0] + '" style="flex:none;padding:9px 14px">' + o[1] + "</button>";
+    const active = coachTodayStatus.lifeloadState === o[0];
+    html += '<button class="pill' + (active ? " active" : "") + '" data-value="' + o[0] + '" style="flex:none;padding:9px 14px">' + o[1] + "</button>";
   });
   html += "</div>";
   html += '<button id="coach-form-cancel" style="width:100%;margin-top:16px;padding:10px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer">Annuler</button>';
@@ -2723,6 +2771,7 @@ function wireCoachLifeloadFormEvents() {
       }).then(function() {
         coachFormOpen = null;
         coachMessages.push({ role: "assistant", text: "Ressenti du jour enregistré : " + label + "." });
+        refreshCoachPendingCount();
         drawCoach();
       }).catch(function(e) { alert("Erreur : " + e.message); });
     });
@@ -2837,8 +2886,39 @@ function wireCoachMigraineFormEvents() {
   const cancelBtn = document.getElementById("coach-form-cancel");
   if (cancelBtn) cancelBtn.addEventListener("click", function() { coachFormOpen = null; drawCoach(); });
 }
+
+function coachPrehensionFormHtml() {
+  let html = '<div class="card"><div class="section-label">Force de préhension (dynamomètre)</div>';
+  html += '<input type="number" min="0" step="0.5" id="coach-grip-input" placeholder="kg" style="width:100%;text-align:center;margin-bottom:12px" />';
+  html += '<button id="coach-grip-save" style="width:100%;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Enregistrer</button>';
+  html += '<div class="muted" style="font-size:10px;margin-top:10px">Mesure le matin, à jeun, avant tout entraînement ou café — toujours la même main, meilleure de 2 essais.</div>';
+  html += '<button id="coach-form-cancel" style="width:100%;margin-top:12px;padding:10px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer">Annuler</button>';
+  html += "</div>";
+  return html;
+}
+function wireCoachPrehensionFormEvents() {
+  const saveBtn = document.getElementById("coach-grip-save");
+  if (saveBtn) saveBtn.addEventListener("click", function() {
+    const input = document.getElementById("coach-grip-input");
+    const val = input ? Number(input.value) : 0;
+    if (!val || val <= 0) { alert("Entre une valeur en kg."); return; }
+    saveBtn.textContent = "Enregistrement…";
+    sb("grip_strength", {
+      method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify({ day: todayISO(), value_kg: val }),
+    }).then(function() {
+      coachFormOpen = null;
+      coachMessages.push({ role: "assistant", text: "Préhension enregistrée : " + val + " kg." });
+      refreshCoachPendingCount();
+      drawCoach();
+    }).catch(function(e) { alert("Erreur : " + e.message); saveBtn.textContent = "Enregistrer"; });
+  });
+  const cancelBtn = document.getElementById("coach-form-cancel");
+  if (cancelBtn) cancelBtn.addEventListener("click", function() { coachFormOpen = null; drawCoach(); });
+}
 const COACH_LOG_BUTTONS = [
   { id: "seance", label: "Séance" },
+  { id: "prehension", label: "Préhension" },
   { id: "lifeload", label: "Ressenti (LifeLoad)" },
   { id: "sieste", label: "Sieste" },
   { id: "migraine", label: "Migraine" },
@@ -2858,6 +2938,7 @@ function drawCoach() {
   if (coachMode === "aujourdhui") {
     if (coachFormOpen) {
       if (coachFormOpen === "seance") html += coachSeanceFormHtml();
+      else if (coachFormOpen === "prehension") html += coachPrehensionFormHtml();
       else if (coachFormOpen === "lifeload") html += coachLifeloadFormHtml();
       else if (coachFormOpen === "sieste") html += coachSiesteFormHtml();
       else if (coachFormOpen === "migraine") html += coachMigraineFormHtml();
@@ -2865,7 +2946,14 @@ function drawCoach() {
       html += '<div class="muted" style="margin-bottom:20px">Que veux-tu loguer aujourd\'hui ?</div>';
       html += '<div style="display:flex;flex-direction:column;gap:12px;margin-bottom:28px" id="coach-log-row">';
       COACH_LOG_BUTTONS.forEach(function(b) {
-        html += '<button class="coach-question-btn" data-log="' + b.id + '" style="width:100%;text-align:left;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:10px;padding:16px 18px;color:var(--chalk);font-size:14px;font-weight:700;cursor:pointer">' + b.label + "</button>";
+        // Coche discrète sur les 3 logs obligatoires déjà faits aujourd'hui —
+        // répond au fait qu'on pouvait reloguer le ressenti sans jamais voir
+        // qu'il l'était déjà.
+        let done = false;
+        if (b.id === "lifeload") done = coachTodayStatus.lifeload;
+        else if (b.id === "prehension") done = coachTodayStatus.grip;
+        else if (b.id === "seance") done = coachTodayStatus.classesRemaining === 0 && coachTodayStatus.sessionsLogged > 0;
+        html += '<button class="coach-question-btn" data-log="' + b.id + '" style="width:100%;text-align:left;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:10px;padding:16px 18px;color:var(--chalk);font-size:14px;font-weight:700;cursor:pointer;display:flex;justify-content:space-between;align-items:center">' + b.label + (done ? ' <span style="color:var(--green);font-size:16px">✓</span>' : "") + "</button>";
       });
       html += "</div>";
       if (coachMessages.length) {
@@ -2916,6 +3004,7 @@ function drawCoach() {
 
   if (coachMode === "aujourdhui") {
     if (coachFormOpen === "seance") wireCoachSeanceFormEvents();
+    else if (coachFormOpen === "prehension") wireCoachPrehensionFormEvents();
     else if (coachFormOpen === "lifeload") wireCoachLifeloadFormEvents();
     else if (coachFormOpen === "sieste") wireCoachSiesteFormEvents();
     else if (coachFormOpen === "migraine") wireCoachMigraineFormEvents();
@@ -2951,6 +3040,7 @@ function setTab(tab) {
   if (tab === "entrainement") loadEntrainement();
   else if (tab === "recuperation") loadRecuperation();
   else renderForme();
+  refreshCoachPendingCount();
 }
 async function loadCoefficients() {
   try {
