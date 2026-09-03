@@ -2400,11 +2400,13 @@ function statHtml(label, value, color) {
 // interprétation aussi rigoureuse que le reste de l'appli plutôt qu'une
 // génération de texte libre.
 let coachMessages = []; // { role: "user"|"assistant", text } — confirmations de log en mode Aujourd'hui
-// Mode Statistiques : une entrée par question déjà posée (identifiée par
-// qid), jamais deux pour la même — reposer une question retire son ancienne
-// entrée et la rajoute à la fin (comme une vraie relance de conversation),
-// au lieu d'empiler indéfiniment le même Q/R à chaque clic.
-let coachStatsHistory = []; // { qid, label, text }
+// Mode Statistiques : une seule question/réponse affichée à la fois — en
+// poser une nouvelle REMPLACE l'ancienne au lieu de l'empiler dans un fil
+// qui grossirait indéfiniment. coachStatsAskedIds garde la trace de toutes
+// les questions déjà posées (même celles qui ne sont plus affichées), pour
+// la coche verte sur les boutons de question.
+let coachStatsCurrent = null; // { qid, label, text } | null
+let coachStatsAskedIds = {}; // { [qid]: true }
 let coachData = null; // recalculé une fois par visite de l'onglet, pas à chaque question
 let coachMode = "aujourdhui"; // "aujourdhui" (logging) | "stats" (questions)
 let coachFormOpen = null; // null | "seance" | "prehension" | "lifeload" | "sieste" | "migraine"
@@ -3586,13 +3588,12 @@ function drawCoach() {
     html += '<div class="muted" style="margin-bottom:24px">Pose une question sur tes données récentes</div>';
 
     html += '<div id="coach-messages" style="display:flex;flex-direction:column;gap:14px;margin-bottom:28px">';
-    if (!coachStatsHistory.length) {
+    if (!coachStatsCurrent) {
       html += '<div class="muted" style="text-align:center;padding:24px 0">Choisis une question ci-dessous pour commencer.</div>';
+    } else {
+      html += '<div style="align-self:flex-end;max-width:80%;background:var(--gradient);color:var(--bg);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:13px;font-weight:700">' + esc(coachStatsCurrent.label) + "</div>";
+      html += '<div style="align-self:flex-start;max-width:88%;background:var(--surface);border:1px solid var(--line);border-radius:14px 14px 14px 4px;padding:12px 14px;font-size:13px;line-height:1.5">' + esc(coachStatsCurrent.text) + "</div>";
     }
-    coachStatsHistory.forEach(function(m) {
-      html += '<div style="align-self:flex-end;max-width:80%;background:var(--gradient);color:var(--bg);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:13px;font-weight:700">' + esc(m.label) + "</div>";
-      html += '<div style="align-self:flex-start;max-width:88%;background:var(--surface);border:1px solid var(--line);border-radius:14px 14px 14px 4px;padding:12px 14px;font-size:13px;line-height:1.5">' + esc(m.text) + "</div>";
-    });
     html += "</div>";
 
     html += '<div class="section-label" style="margin-bottom:10px">Questions suggérées</div>';
@@ -3609,7 +3610,7 @@ function drawCoach() {
     const filteredQuestions = COACH_QUESTIONS.filter(function(q) { return coachStatsFilter === "all" || q.domain === coachStatsFilter; });
     html += '<div style="display:flex;flex-direction:column;gap:12px;margin-bottom:28px" id="coach-question-row">';
     filteredQuestions.forEach(function(q) {
-      const asked = coachStatsHistory.some(function(e) { return e.qid === q.id; });
+      const asked = !!coachStatsAskedIds[q.id];
       html += '<button class="coach-question-btn" data-question="' + q.id + '" style="width:100%;text-align:left;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:10px;padding:16px 18px;color:var(--chalk);font-size:14px;font-weight:700;line-height:1.4;white-space:normal;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px"><span>' + q.label + "</span>" + (asked ? '<span style="color:var(--green);font-size:16px;flex:none">✓</span>' : "") + "</button>";
     });
     if (!filteredQuestions.length) {
@@ -3661,8 +3662,8 @@ function drawCoach() {
     btn.addEventListener("click", function() {
       const q = COACH_QUESTIONS.find(function(x) { return x.id === btn.dataset.question; });
       if (!q) return;
-      coachStatsHistory = coachStatsHistory.filter(function(e) { return e.qid !== q.id; });
-      coachStatsHistory.push({ qid: q.id, label: q.label, text: q.fn(coachData) });
+      coachStatsCurrent = { qid: q.id, label: q.label, text: q.fn(coachData) };
+      coachStatsAskedIds[q.id] = true;
       drawCoach();
       const msgArea = document.getElementById("coach-messages");
       if (msgArea) msgArea.scrollIntoView({ behavior: "smooth", block: "end" });
