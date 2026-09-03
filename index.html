@@ -429,6 +429,17 @@ function getScheduledClasses(dateStr) {
   const week = getWeekLetter(dateStr, SCHEDULE_REFERENCE);
   return CLASS_SCHEDULE.filter(function(c){ return c.actif && c.jour_semaine === jsDay && c.semaine === week; });
 }
+// Le test de préhension n'est demandé comme log obligatoire que les jours
+// avec un cours au planning, plus une exception explicitement demandée par
+// l'utilisateur : le vendredi des semaines B (jour sans cours au planning
+// actuel, mais où il a le temps de le faire), voir conversation du 2026-09.
+// Les autres jours de récupération restent des jours de log volontaire —
+// le bouton Préhension reste disponible, juste plus compté comme en attente.
+function isGripDayRequired(dateStr) {
+  if (getScheduledClasses(dateStr).length > 0) return true;
+  const jsDay = new Date(dateStr + "T00:00:00").getDay();
+  return jsDay === 5 && getWeekLetter(dateStr, SCHEDULE_REFERENCE) === "B";
+}
 function deriveDurationPreset(minutes) {
   if (!minutes) return null;
   const match = DURATIONS.find(function(d){ return d.minutes === Number(minutes); });
@@ -2278,11 +2289,15 @@ let coachMode = "aujourdhui"; // "aujourdhui" (logging) | "stats" (questions)
 let coachFormOpen = null; // null | "seance" | "prehension" | "lifeload" | "sieste" | "migraine"
 
 // Badge du bouton Coach (façon messagerie) — nombre de logs du jour encore à
-// faire parmi les 3 obligatoires : préhension, ressenti (LifeLoad), et les
-// cours prévus au planning pas encore logués en séance. Sieste et migraine
-// restent facultatives au jour le jour, donc pas comptées ici.
+// faire parmi les obligatoires : ressenti (LifeLoad), les cours prévus au
+// planning pas encore logués en séance, et la préhension — mais seulement
+// les jours avec cours au planning (+ le vendredi des semaines B, seule
+// exception demandée). Les autres jours de récupération, la préhension
+// reste possible en log volontaire mais ne compte pas comme en attente.
+// Sieste et migraine restent facultatives au jour le jour, donc pas
+// comptées ici non plus.
 let coachPendingCount = 0;
-let coachTodayStatus = { lifeload: false, lifeloadState: null, grip: false, classesPending: [], sessionsLogged: 0, sleepFeelingQuality: null };
+let coachTodayStatus = { lifeload: false, lifeloadState: null, grip: false, gripRequired: true, classesPending: [], sessionsLogged: 0, sleepFeelingQuality: null };
 async function refreshCoachPendingCount() {
   const today = todayISO();
   try {
@@ -2294,12 +2309,13 @@ async function refreshCoachPendingCount() {
     ]);
     const loggedDisciplines = sessionRows.map(function(s) { return s.discipline; });
     const classesPending = getScheduledClasses(today).filter(function(c) { return loggedDisciplines.indexOf(c.discipline) === -1; });
+    const gripRequired = isGripDayRequired(today);
     coachTodayStatus = {
       lifeload: lifeloadRows.length > 0, lifeloadState: lifeloadRows.length ? lifeloadRows[0].state : null,
-      grip: gripRows.length > 0, classesPending: classesPending, sessionsLogged: sessionRows.length,
+      grip: gripRows.length > 0, gripRequired: gripRequired, classesPending: classesPending, sessionsLogged: sessionRows.length,
       sleepFeelingQuality: sleepFeelingRows.length ? sleepFeelingRows[0].quality : null,
     };
-    coachPendingCount = (coachTodayStatus.lifeload ? 0 : 1) + (coachTodayStatus.grip ? 0 : 1) + classesPending.length;
+    coachPendingCount = (coachTodayStatus.lifeload ? 0 : 1) + (gripRequired && !coachTodayStatus.grip ? 1 : 0) + classesPending.length;
   } catch (e) {
     coachPendingCount = 0;
   }
@@ -3424,11 +3440,14 @@ function drawCoach() {
         // Coche discrète sur les 3 logs obligatoires déjà faits aujourd'hui —
         // répond au fait qu'on pouvait reloguer le ressenti sans jamais voir
         // qu'il l'était déjà.
-        let done = false;
+        let done = false, label = b.label;
         if (b.id === "lifeload") done = coachTodayStatus.lifeload;
-        else if (b.id === "prehension") done = coachTodayStatus.grip;
+        else if (b.id === "prehension") {
+          done = coachTodayStatus.grip;
+          if (!coachTodayStatus.gripRequired && !done) label += " (optionnel aujourd'hui)";
+        }
         else if (b.id === "seance") done = coachTodayStatus.classesPending.length === 0 && coachTodayStatus.sessionsLogged > 0;
-        html += '<button class="coach-question-btn" data-log="' + b.id + '" style="width:100%;text-align:left;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:10px;padding:16px 18px;color:var(--chalk);font-size:14px;font-weight:700;cursor:pointer;display:flex;justify-content:space-between;align-items:center">' + b.label + (done ? ' <span style="color:var(--green);font-size:16px">✓</span>' : "") + "</button>";
+        html += '<button class="coach-question-btn" data-log="' + b.id + '" style="width:100%;text-align:left;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:10px;padding:16px 18px;color:var(--chalk);font-size:14px;font-weight:700;cursor:pointer;display:flex;justify-content:space-between;align-items:center">' + label + (done ? ' <span style="color:var(--green);font-size:16px">✓</span>' : "") + "</button>";
       });
       html += "</div>";
       if (coachMessages.length) {
