@@ -38,6 +38,10 @@
   .card { background: rgba(255,255,255,.02); border: none; border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
   .card.amber { border: 1px solid var(--amber); }
   .card.steel { border: 1px solid var(--steel); }
+  summary.section-label { list-style: none; }
+  summary.section-label::-webkit-details-marker { display: none; }
+  .recap-chevron { display: inline-block; transition: transform .2s ease; }
+  details[open] > summary.section-label .recap-chevron { transform: rotate(180deg); }
   .section-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; }
   .pill-row { display: flex; gap: 8px; }
   .pill-row.compact { gap: 5px; }
@@ -1062,9 +1066,9 @@ async function renderForme() {
     if (todayMigraine != null) checklist.push({ label: "Migraine", icon: "bandage", iconColor: "var(--red)", tier: "red", note: todayMigraine + "/10" });
     checklist.push({ label: "Ressenti", icon: "thought", iconColor: "var(--chalkDim)", tier: lifeload === "bien" ? "green" : lifeload === "malade" ? "red" : ["stresse","fatigue"].indexOf(lifeload) !== -1 ? "amber" : "steel", note: lifeload || "Ø" });
 
-    html += '<div class="card"><div class="section-label">' + sectionIcon("list") + 'Récap du jour</div>';
+    html += collapsibleCardOpenHtml(sectionIcon("list") + 'Récap du jour');
     checklist.forEach(function(c) { html += checklistRowHtml(c); });
-    html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></div>';
+    html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></details>';
   } else {
     // Un bloc par métrique (barres semaine + courbe mois + 1 phrase) — jamais
     // plus, pour ne pas retomber dans le fourre-tout de l'ancien Dashboard.
@@ -1231,7 +1235,7 @@ async function loadEntrainement() {
     checklist.push({ label: "Cours prévu", icon: "watch", iconColor: "var(--steel)", tier: classes.length ? "steel" : "steel", note: classes.length ? classes.map(function(c){ return c.discipline; }).join(", ") : "Aucun" });
     checklist.push({ label: "Séance(s) aujourd'hui", icon: "dumbbell", iconColor: "var(--green)", tier: todaySessions.length ? "green" : "steel", note: todaySessions.length ? todaySessions.map(function(s){ return s.discipline || "?"; }).join(", ") + " · charge " + todayTotalLoad : "Ø" });
 
-    html += '<div class="card"><div class="section-label">' + sectionIcon("list") + 'Récap du jour</div>';
+    html += collapsibleCardOpenHtml(sectionIcon("list") + 'Récap du jour');
     checklist.forEach(function(c) { html += checklistRowHtml(c); });
     if (todayGripRow) {
       html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
@@ -1242,7 +1246,7 @@ async function loadEntrainement() {
       html += '<span style="font-size:13px;display:inline-flex;align-items:center;gap:6px">' + statIconSvg("dumbbell", "var(--pink)", 15) + 'Préhension</span>';
       html += '<div style="display:flex;gap:6px;align-items:center"><input type="number" min="0" step="0.5" id="grip-quick-input" placeholder="kg" style="width:64px;padding:6px;text-align:center;font-size:13px" /><button id="grip-quick-save" style="background:var(--gradient);border:none;border-radius:6px;color:var(--bg);font-size:11px;font-weight:800;padding:6px 10px;cursor:pointer">OK</button></div></div>';
     }
-    html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></div>';
+    html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></details>';
   } else {
     const last7 = []; for (let i = 6; i >= 0; i--) last7.push(daysAgo(i));
     const prev7 = []; for (let i = 13; i >= 7; i--) prev7.push(daysAgo(i));
@@ -1468,9 +1472,9 @@ async function loadRecuperation() {
       checklist.push({ label: "Sieste", icon: "moon", iconColor: "var(--pink)", tier: totalNapMin > 0 ? "green" : "steel", note: totalNapMin > 0 ? totalNapMin + " min" : "Ø" });
       if (todayMigRow) checklist.push({ label: "Migraine", icon: "bandage", iconColor: "var(--red)", tier: "red", note: (todayMigRow.intensity || "–") + "/10" });
 
-      html += '<div class="card"><div class="section-label">' + sectionIcon("list") + 'Récap du jour</div>';
+      html += collapsibleCardOpenHtml(sectionIcon("list") + 'Récap du jour');
       checklist.forEach(function(c) { html += checklistRowHtml(c); });
-      html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></div>';
+      html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></details>';
     }
   } else {
     const migDaySet = migraines.map(function(m){ return m.day; });
@@ -2454,6 +2458,14 @@ function wireBreathingOverlayEvents() {
 function tierDot(tier) {
   if (!tier || tier === "steel") return "";
   return '<span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:var(--' + tier + ');box-shadow:0 0 6px 2px var(--' + tier + '),0 0 2px var(--' + tier + ')"></span>';
+}
+// En-tête de carte repliable (Récap du jour) : <details>/<summary> natifs
+// plutôt qu'un état JS + listener — pas besoin de retenir l'état ouvert/
+// fermé nous-mêmes, le navigateur le fait, et c'est déjà le pattern utilisé
+// pour "Réglages avancés" (Entraînement > Tendance).
+function collapsibleCardOpenHtml(titleHtml) {
+  return '<details class="card" open><summary class="section-label" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center">' +
+    '<span>' + titleHtml + '</span><span class="recap-chevron muted">▾</span></summary>';
 }
 // Une ligne de Récap du jour = toujours une seule ligne, jamais un retour à
 // la ligne : le libellé (fixe, court) ne rétrécit pas, la valeur tronque
