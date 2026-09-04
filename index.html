@@ -1032,7 +1032,7 @@ async function renderForme() {
     // principal des apps Zepp/Garmin) pour le distinguer visuellement comme
     // l'indicateur central, pas juste une carte parmi d'autres.
     html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>' + sectionIcon("pulse") + 'Forme <span style="color:var(--green)">+ Vigilance</span></span><span>' + tierDot(tierColor) + '</span></div>';
-    html += '<div style="padding:18px 0">' + formeVigilanceGaugeHtml(score, tierColor, tier, vigScore) + "</div>";
+    html += '<div style="padding:18px 0">' + formeVigilanceGaugeHtml(score, tierColor, tier, vigScore, todayWearable ? todayWearable.hr_resting : null) + "</div>";
     html += '<div style="text-align:center;padding-top:14px;border-top:1px solid var(--line);font-size:12px">' + statIconSvg("moon", "var(--muted)", 13) + ' Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div>";
     if (vigScore != null) {
       html += '<div style="text-align:center;padding-top:10px;font-size:12px">' + statIconSvg("target", "var(--green)", 13) + ' Vigilance (' + vigWindowLabel + ') : <b style="color:var(--green)">' + (vigPct >= 0 ? "+" : "") + vigPct + '%</b> vs ta moyenne sur ce créneau</div>';
@@ -1637,7 +1637,11 @@ function singleScoreGaugeHtml(value, max, opts) {
   const tintFilter = tier === "amber" ? "grayscale(0.6) sepia(0.8) saturate(4.5) brightness(1.05)"
     : tier === "red" ? "grayscale(0.6) sepia(0.8) hue-rotate(-62deg) saturate(5) brightness(1.05)"
     : "none";
-  let html = '<div style="position:relative;width:100%;max-width:' + size + 'px;margin:0 auto;padding-top:100%">';
+  // aspect-ratio (pas le classique padding-top:100%) : avec max-width posé
+  // sur ce même élément, un padding-top en % se calcule sur la largeur du
+  // parent (non cappée par ce max-width), pas sur celle de l'élément —
+  // l'ovale déformé constaté vient de là.
+  let html = '<div style="position:relative;width:100%;max-width:' + size + 'px;margin:0 auto;aspect-ratio:1">';
   html += '<img src="score-shape.webp" alt="" style="position:absolute;inset:0;width:100%;height:100%;mix-blend-mode:screen;filter:' + tintFilter + '">';
   html += '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center">';
   html += '<span style="font-size:' + Math.round(size*0.26) + 'px;font-weight:900;color:var(--chalk);line-height:1;text-shadow:0 0 14px ' + solidColor + '55">' + Math.round(value) + "</span>";
@@ -1652,7 +1656,9 @@ function singleScoreGaugeHtml(value, max, opts) {
 // leur jonction — cf. maquette utilisateur (2026-09). Vigilance en vert
 // (couleur de catégorie propre à cette jauge, distincte du rose Forme),
 // gérée avec un état neutre/estompé si pas encore de créneau comparable
-// aujourd'hui plutôt que de faire disparaître le cercle.
+// aujourd'hui plutôt que de faire disparaître le cercle. Le lobe gauche
+// affiche la FC repos (et non le score Forme, déjà affiché au centre —
+// le répéter dans le lobe n'apportait rien).
 // Utilise directement l'illustration fournie par l'utilisateur
 // (forme-vigilance-shape.webp, fond noir pur) plutôt qu'une reconstruction en
 // SVG — bien plus fidèle qu'une approximation faite main. Le fond noir se
@@ -1670,8 +1676,9 @@ function singleScoreGaugeHtml(value, max, opts) {
 // le rouge — recolore tout le visuel, piloté par le tier Forme (l'indicateur
 // dominant — Forme et Vigilance ne peuvent pas être recolorées
 // indépendamment sur une image unique).
-function formeVigilanceGaugeHtml(formeScore, formeTierColor, formeTierLabel, vigScore) {
+function formeVigilanceGaugeHtml(formeScore, formeTierColor, formeTierLabel, vigScore, hrResting) {
   const hasVig = vigScore != null;
+  const hasHr = hrResting != null;
   const RATIO = 841 / 1871; // hauteur / largeur réelles de l'image
   const tintFilter = formeTierColor === "amber" ? "grayscale(0.6) sepia(0.8) saturate(4.5) brightness(1.05)"
     : formeTierColor === "red" ? "grayscale(0.6) sepia(0.8) hue-rotate(-62deg) saturate(5) brightness(1.05)"
@@ -1695,7 +1702,7 @@ function formeVigilanceGaugeHtml(formeScore, formeTierColor, formeTierLabel, vig
   html += posHtml(50, 42, '<span style="font-size:34px;font-weight:900;color:var(--chalk)">' + Math.round(formeScore) + "</span>");
   html += posHtml(50, 59, '<span style="font-size:12px;font-weight:800;text-transform:uppercase;color:var(--' + formeTierColor + ')">' + esc(formeTierLabel) + "</span>");
   html += posHtml(50, 72, statIconSvg("pulse", "var(--muted)", 17));
-  html += posHtml(15, 47, sideBlock("person", formeScore, "Forme", "var(--pink)", false));
+  html += posHtml(15, 47, sideBlock("heart", hrResting, "FC repos", "var(--pink)", !hasHr));
   html += posHtml(85, 47, sideBlock("target", vigScore != null ? vigScore : 0, "Vigilance", "var(--green)", !hasVig));
   html += "</div>";
   return html;
