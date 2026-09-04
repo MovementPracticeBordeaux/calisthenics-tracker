@@ -28,7 +28,7 @@
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); font-family: system-ui, -apple-system, sans-serif; color: var(--chalk); }
-  .wrap { max-width: 480px; margin: 0 auto; padding: 12px 16px 40px; position: relative; }
+  .wrap { max-width: 480px; margin: 0 auto; padding: 12px 11px 40px; position: relative; }
   .tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); padding-bottom: 12px; margin-bottom: 16px; }
   .tab { flex: 1; padding: 9px 1px; border-radius: 7px; border: none; background: transparent; color: var(--muted);
     font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .1px; cursor: pointer; white-space: nowrap; }
@@ -1034,7 +1034,7 @@ async function renderForme() {
     // principal des apps Zepp/Garmin) pour le distinguer visuellement comme
     // l'indicateur central, pas juste une carte parmi d'autres.
     html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>' + sectionIcon("pulse") + 'Forme <span style="color:var(--green)">+ Vigilance</span></span><span>' + tierDot(tierColor) + '</span></div>';
-    html += '<div style="padding:18px 0">' + formeVigilanceGaugeHtml(score, tierColor, tier, vigScore, todayWearable ? todayWearable.hr_resting : null) + "</div>";
+    html += '<div style="padding:26px 0">' + formeVigilanceGaugeHtml(score, tierColor, tier, vigScore, todayWearable ? todayWearable.hr_resting : null) + "</div>";
     html += '<div style="text-align:center;padding-top:14px;border-top:1px solid var(--line);font-size:12px">' + statIconSvg("moon", "var(--muted)", 13) + ' Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div>";
     if (vigScore != null) {
       html += '<div style="text-align:center;padding-top:10px;font-size:12px">' + statIconSvg("target", "var(--green)", 13) + ' Vigilance (' + vigWindowLabel + ') : <b style="color:var(--green)">' + (vigPct >= 0 ? "+" : "") + vigPct + '%</b> vs ta moyenne sur ce créneau</div>';
