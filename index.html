@@ -1223,29 +1223,29 @@ async function loadEntrainement() {
     }
 
     html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>' + sectionIcon("dumbbell") + 'Score d\'entraînement</span><span>' + tierDot(energyTier) + '</span></div>';
-    html += '<div style="padding:18px 0">' + singleScoreGaugeHtml(energy, 100, { sublabel: energyLabel, size: 300 }) + "</div>";
+    html += '<div style="padding:18px 0">' + singleScoreGaugeHtml(energy, 100, { sublabel: energyLabel, size: 300, icon: "dumbbell" }) + "</div>";
     html += "</div>";
 
     const checklist = [];
-    checklist.push({ label: "Score d'entraînement", tier: energyTier, note: energy + "/100 · " + energyLabel });
-    if (energyResult.wakeDepletion > 0) checklist.push({ label: "Fatigue accumulée (réveil)", tier: energyResult.wakeDepletion >= 25 ? "red" : "amber", note: "-" + energyResult.wakeDepletion + " pts" });
-    if (energyResult.sessionDepletion > 0) checklist.push({ label: "Dépense du jour", tier: energyResult.sessionDepletion >= 35 ? "red" : "amber", note: "-" + energyResult.sessionDepletion + " pts (charge " + todayTotalLoad + ")" });
-    checklist.push({ label: "Cours prévu", tier: classes.length ? "steel" : "steel", note: classes.length ? classes.map(function(c){ return c.discipline; }).join(", ") : "Aucun" });
-    checklist.push({ label: "Séance(s) aujourd'hui", tier: todaySessions.length ? "green" : "steel", note: todaySessions.length ? todaySessions.map(function(s){ return s.discipline || "?"; }).join(", ") + " · charge " + todayTotalLoad : "Pas encore loguée — via le Coach" });
+    checklist.push({ label: "Score d'entraînement", icon: "dumbbell", iconColor: "var(--chalkDim)", tier: energyTier, note: energy + "/100 · " + energyLabel });
+    if (energyResult.wakeDepletion > 0) checklist.push({ label: "Fatigue accumulée (réveil)", icon: "battery", iconColor: "var(--chalkDim)", tier: energyResult.wakeDepletion >= 25 ? "red" : "amber", note: "-" + energyResult.wakeDepletion + " pts" });
+    if (energyResult.sessionDepletion > 0) checklist.push({ label: "Dépense du jour", icon: "flame", iconColor: "var(--rust)", tier: energyResult.sessionDepletion >= 35 ? "red" : "amber", note: "-" + energyResult.sessionDepletion + " pts (charge " + todayTotalLoad + ")" });
+    checklist.push({ label: "Cours prévu", icon: "watch", iconColor: "var(--chalkDim)", tier: classes.length ? "steel" : "steel", note: classes.length ? classes.map(function(c){ return c.discipline; }).join(", ") : "Aucun" });
+    checklist.push({ label: "Séance(s) aujourd'hui", icon: "dumbbell", iconColor: "var(--chalkDim)", tier: todaySessions.length ? "green" : "steel", note: todaySessions.length ? todaySessions.map(function(s){ return s.discipline || "?"; }).join(", ") + " · charge " + todayTotalLoad : "Pas encore loguée — via le Coach" });
 
     html += '<div class="card"><div class="section-label">' + sectionIcon("list") + 'Récap du jour</div>';
     checklist.forEach(function(c) {
       html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
-      html += '<span style="font-size:13px">' + c.label + (c.note ? ' <span class="muted" style="font-size:11px">· ' + esc(String(c.note)) + '</span>' : '') + "</span>";
+      html += '<span style="font-size:13px;display:inline-flex;align-items:center;gap:6px">' + (c.icon ? statIconSvg(c.icon, c.iconColor, 15) : "") + c.label + (c.note ? ' <span class="muted" style="font-size:11px">· ' + esc(String(c.note)) + '</span>' : '') + "</span>";
       html += '<span>' + tierDot(c.tier) + "</span></div>";
     });
     if (todayGripRow) {
       html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
-      html += '<span style="font-size:13px">Préhension <span class="muted" style="font-size:11px">· ' + todayGripRow.value_kg + ' kg' + (gripPct != null ? ' (' + (gripPct >= 0 ? "+" : "") + gripPct.toFixed(0) + '%)' : '') + '</span></span>';
+      html += '<span style="font-size:13px;display:inline-flex;align-items:center;gap:6px">' + statIconSvg("dumbbell", "var(--chalkDim)", 15) + 'Préhension <span class="muted" style="font-size:11px">· ' + todayGripRow.value_kg + ' kg' + (gripPct != null ? ' (' + (gripPct >= 0 ? "+" : "") + gripPct.toFixed(0) + '%)' : '') + '</span></span>';
       html += '<button id="grip-quick-delete" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--red);font-size:10px;font-weight:700;cursor:pointer;padding:3px 8px">Suppr.</button></div>';
     } else {
       html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);gap:8px">';
-      html += '<span style="font-size:13px">Préhension</span>';
+      html += '<span style="font-size:13px;display:inline-flex;align-items:center;gap:6px">' + statIconSvg("dumbbell", "var(--chalkDim)", 15) + 'Préhension</span>';
       html += '<div style="display:flex;gap:6px;align-items:center"><input type="number" min="0" step="0.5" id="grip-quick-input" placeholder="kg" style="width:64px;padding:6px;text-align:center;font-size:13px" /><button id="grip-quick-save" style="background:var(--gradient);border:none;border-radius:6px;color:var(--bg);font-size:11px;font-weight:800;padding:6px 10px;cursor:pointer">OK</button></div></div>';
     }
     html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></div>';
@@ -1453,7 +1453,7 @@ async function loadRecuperation() {
     } else {
       const h = Math.floor(latest.total / 60), m = latest.total % 60;
       html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>' + sectionIcon("moon") + 'Sommeil</span><span>' + tierDot(sleepTierColor) + '</span></div>';
-      html += '<div style="padding:18px 0">' + singleScoreGaugeHtml(sleepScore, 100, { sublabel: sleepTier, size: 300 }) + "</div>";
+      html += '<div style="padding:18px 0">' + singleScoreGaugeHtml(sleepScore, 100, { sublabel: sleepTier, size: 300, icon: "moon" }) + "</div>";
       html += '<div style="text-align:center;padding-top:14px;border-top:1px solid var(--line);font-size:13px"><b>' + h + 'h' + (m<10?'0':'') + m + '</b>';
       if (avgTotal != null) html += ' <span class="muted">· moyenne 14j : ' + Math.floor(avgTotal/60) + 'h' + Math.round(avgTotal%60).toString().padStart(2,'0') + '</span>';
       html += "</div>";
@@ -1469,16 +1469,16 @@ async function loadRecuperation() {
       const stagesTier = (deepPct < 13 || remPct < 15) ? "amber" : "green";
 
       const checklist = [];
-      checklist.push({ label: "Sommeil", tier: sleepTierColor, note: sleepScore + "/100 · " + sleepTier });
-      checklist.push({ label: "Stades", tier: stagesTier, note: "Léger " + lightPct + "% · Profond " + deepPct + "% · Paradoxal " + remPct + "%" });
-      if (latest.awake != null) checklist.push({ label: "Réveils détectés", tier: "steel", note: latest.awake });
-      checklist.push({ label: "Sieste", tier: totalNapMin > 0 ? "green" : "steel", note: totalNapMin > 0 ? totalNapMin + " min" : "Aucune — via le Coach" });
-      if (todayMigRow) checklist.push({ label: "Migraine", tier: "red", note: (todayMigRow.intensity || "–") + "/10" });
+      checklist.push({ label: "Sommeil", icon: "moon", iconColor: "var(--steel)", tier: sleepTierColor, note: sleepScore + "/100 · " + sleepTier });
+      checklist.push({ label: "Stades", icon: "list", iconColor: "var(--chalkDim)", tier: stagesTier, note: "Léger " + lightPct + "% · Profond " + deepPct + "% · Paradoxal " + remPct + "%" });
+      if (latest.awake != null) checklist.push({ label: "Réveils détectés", icon: "watch", iconColor: "var(--chalkDim)", tier: "steel", note: latest.awake });
+      checklist.push({ label: "Sieste", icon: "moon", iconColor: "var(--steel)", tier: totalNapMin > 0 ? "green" : "steel", note: totalNapMin > 0 ? totalNapMin + " min" : "Aucune — via le Coach" });
+      if (todayMigRow) checklist.push({ label: "Migraine", icon: "bandage", iconColor: "var(--red)", tier: "red", note: (todayMigRow.intensity || "–") + "/10" });
 
       html += '<div class="card"><div class="section-label">' + sectionIcon("list") + 'Récap du jour</div>';
       checklist.forEach(function(c) {
         html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
-        html += '<span style="font-size:13px">' + c.label + (c.note != null ? ' <span class="muted" style="font-size:11px">· ' + esc(String(c.note)) + '</span>' : '') + "</span>";
+        html += '<span style="font-size:13px;display:inline-flex;align-items:center;gap:6px">' + (c.icon ? statIconSvg(c.icon, c.iconColor, 15) : "") + c.label + (c.note != null ? ' <span class="muted" style="font-size:11px">· ' + esc(String(c.note)) + '</span>' : '') + "</span>";
         html += '<span>' + tierDot(c.tier) + "</span></div>";
       });
       html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></div>';
@@ -1644,6 +1644,7 @@ function singleScoreGaugeHtml(value, max, opts) {
   let html = '<div style="position:relative;width:100%;max-width:' + size + 'px;margin:0 auto;aspect-ratio:1">';
   html += '<img src="score-shape.webp" alt="" style="position:absolute;inset:0;width:100%;height:100%;mix-blend-mode:screen;filter:' + tintFilter + '">';
   html += '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center">';
+  if (opts.icon) html += '<span style="display:block;line-height:0;margin-bottom:6px">' + statIconSvg(opts.icon, solidColor, Math.round(size*0.09)) + "</span>";
   html += '<span style="font-size:' + Math.round(size*0.26) + 'px;font-weight:900;color:var(--chalk);line-height:1;text-shadow:0 0 14px ' + solidColor + '55">' + Math.round(value) + "</span>";
   if (opts.sublabel) html += '<span style="font-size:11px;font-weight:800;text-transform:uppercase;color:' + solidColor + ';margin-top:4px">' + opts.sublabel + "</span>";
   html += "</div></div>";
