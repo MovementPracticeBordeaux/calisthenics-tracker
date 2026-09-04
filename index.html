@@ -1223,7 +1223,7 @@ async function loadEntrainement() {
     }
 
     html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>' + sectionIcon("dumbbell") + 'Score d\'entraînement</span><span>' + tierDot(energyTier) + '</span></div>';
-    html += '<div style="padding:18px 0">' + singleScoreGaugeHtml(energy, 100, { sublabel: energyLabel, size: 200 }) + "</div>";
+    html += '<div style="padding:18px 0">' + singleScoreGaugeHtml(energy, 100, { sublabel: energyLabel, size: 300 }) + "</div>";
     html += "</div>";
 
     const checklist = [];
@@ -1453,7 +1453,7 @@ async function loadRecuperation() {
     } else {
       const h = Math.floor(latest.total / 60), m = latest.total % 60;
       html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>' + sectionIcon("moon") + 'Sommeil</span><span>' + tierDot(sleepTierColor) + '</span></div>';
-      html += '<div style="padding:18px 0">' + singleScoreGaugeHtml(sleepScore, 100, { sublabel: sleepTier, size: 200 }) + "</div>";
+      html += '<div style="padding:18px 0">' + singleScoreGaugeHtml(sleepScore, 100, { sublabel: sleepTier, size: 300 }) + "</div>";
       html += '<div style="text-align:center;padding-top:14px;border-top:1px solid var(--line);font-size:13px"><b>' + h + 'h' + (m<10?'0':'') + m + '</b>';
       if (avgTotal != null) html += ' <span class="muted">· moyenne 14j : ' + Math.floor(avgTotal/60) + 'h' + Math.round(avgTotal%60).toString().padStart(2,'0') + '</span>';
       html += "</div>";
@@ -1632,7 +1632,7 @@ function singleScoreGaugeHtml(value, max, opts) {
   opts = opts || {};
   const pct = Math.max(0, Math.min(1, value / max));
   const tier = opts.tier || scoreTierColor(pct, opts.invert);
-  const size = opts.size || 200;
+  const size = opts.size || 280;
   const solidColor = "var(--" + tier + ")";
   const tintFilter = tier === "amber" ? "grayscale(0.6) sepia(0.8) saturate(4.5) brightness(1.05)"
     : tier === "red" ? "grayscale(0.6) sepia(0.8) hue-rotate(-62deg) saturate(5) brightness(1.05)"
@@ -1689,19 +1689,19 @@ function formeVigilanceGaugeHtml(formeScore, formeTierColor, formeTierLabel, vig
   }
   function sideBlock(iconName, value, label, colorVar, dimmed) {
     let s = '<div style="display:flex;flex-direction:column;align-items:center;gap:2px">';
-    s += '<span style="display:block;line-height:0">' + statIconSvg(iconName, dimmed ? "var(--muted)" : colorVar, 19) + "</span>";
-    s += '<span style="font-size:27px;font-weight:900;color:var(--chalk);line-height:1' + (dimmed ? "" : ";text-shadow:0 0 10px " + colorVar + "88") + '">' + (dimmed ? "–" : Math.round(value)) + "</span>";
-    s += '<span style="font-size:10px;font-weight:800;text-transform:uppercase;color:' + colorVar + ';letter-spacing:.4px;white-space:nowrap">' + label + "</span>";
+    s += '<span style="display:block;line-height:0">' + statIconSvg(iconName, dimmed ? "var(--muted)" : colorVar, 23) + "</span>";
+    s += '<span style="font-size:33px;font-weight:900;color:var(--chalk);line-height:1' + (dimmed ? "" : ";text-shadow:0 0 10px " + colorVar + "88") + '">' + (dimmed ? "–" : Math.round(value)) + "</span>";
+    s += '<span style="font-size:11.5px;font-weight:800;text-transform:uppercase;color:' + colorVar + ';letter-spacing:.4px;white-space:nowrap">' + label + "</span>";
     s += "</div>";
     return s;
   }
 
   let html = '<div style="position:relative;width:100%;padding-top:' + (RATIO * 100) + '%">';
   html += '<img src="forme-vigilance-shape.webp" alt="" style="position:absolute;inset:0;width:100%;height:100%;mix-blend-mode:screen;filter:' + tintFilter + '">';
-  html += posHtml(50, 22, '<span style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Ton score</span>');
-  html += posHtml(50, 42, '<span style="font-size:34px;font-weight:900;color:var(--chalk)">' + Math.round(formeScore) + "</span>");
-  html += posHtml(50, 59, '<span style="font-size:12px;font-weight:800;text-transform:uppercase;color:var(--' + formeTierColor + ')">' + esc(formeTierLabel) + "</span>");
-  html += posHtml(50, 72, statIconSvg("pulse", "var(--muted)", 17));
+  html += posHtml(50, 21, '<span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Ton score</span>');
+  html += posHtml(50, 43, '<span style="font-size:42px;font-weight:900;color:var(--chalk)">' + Math.round(formeScore) + "</span>");
+  html += posHtml(50, 61, '<span style="font-size:14px;font-weight:800;text-transform:uppercase;color:var(--' + formeTierColor + ')">' + esc(formeTierLabel) + "</span>");
+  html += posHtml(50, 73, statIconSvg("pulse", "var(--muted)", 19));
   html += posHtml(15, 47, sideBlock("heart", hrResting, "FC repos", "var(--pink)", !hasHr));
   html += posHtml(85, 47, sideBlock("target", vigScore != null ? vigScore : 0, "Vigilance", "var(--green)", !hasVig));
   html += "</div>";
