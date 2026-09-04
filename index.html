@@ -1060,14 +1060,10 @@ async function renderForme() {
     if (todayFitEffort > 0) checklist.push({ label: "Effort mesuré (.fit)", icon: "watch", iconColor: "var(--chalkDim)", tier: todayFitDepletion >= 10 ? "red" : todayFitDepletion >= 5 ? "amber" : "green", note: "-" + todayFitDepletion + " pts · " + todayFitSessions.map(function(w){return w.matched_discipline;}).filter(Boolean).join(", ") });
     if (todayTripEffort > 0) checklist.push({ label: "Trajets à vélo", icon: "bike", iconColor: "var(--green)", tier: "green", note: "-" + todayTripDepletion + " pts · " + todayTripCount + " trajet(s)" });
     if (todayMigraine != null) checklist.push({ label: "Migraine", icon: "bandage", iconColor: "var(--red)", tier: "red", note: todayMigraine + "/10" });
-    checklist.push({ label: "Ressenti", icon: "thought", iconColor: "var(--chalkDim)", tier: lifeload === "bien" ? "green" : lifeload === "malade" ? "red" : ["stresse","fatigue"].indexOf(lifeload) !== -1 ? "amber" : "steel", note: lifeload || "à renseigner dans le Coach" });
+    checklist.push({ label: "Ressenti", icon: "thought", iconColor: "var(--chalkDim)", tier: lifeload === "bien" ? "green" : lifeload === "malade" ? "red" : ["stresse","fatigue"].indexOf(lifeload) !== -1 ? "amber" : "steel", note: lifeload || "Ø" });
 
     html += '<div class="card"><div class="section-label">' + sectionIcon("list") + 'Récap du jour</div>';
-    checklist.forEach(function(c) {
-      html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
-      html += '<span style="font-size:13px;display:inline-flex;align-items:center;gap:6px">' + (c.icon ? statIconSvg(c.icon, c.iconColor, 15) : "") + c.label + (c.note ? ' <span class="muted" style="font-size:11px">· ' + esc(String(c.note)) + '</span>' : '') + "</span>";
-      html += '<span>' + tierDot(c.tier) + "</span></div>";
-    });
+    checklist.forEach(function(c) { html += checklistRowHtml(c); });
     html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></div>';
   } else {
     // Un bloc par métrique (barres semaine + courbe mois + 1 phrase) — jamais
@@ -1233,17 +1229,13 @@ async function loadEntrainement() {
     if (energyResult.wakeDepletion > 0) checklist.push({ label: "Fatigue accumulée (réveil)", icon: "battery", iconColor: "var(--amber)", tier: energyResult.wakeDepletion >= 25 ? "red" : "amber", note: "-" + energyResult.wakeDepletion + " pts" });
     if (energyResult.sessionDepletion > 0) checklist.push({ label: "Dépense du jour", icon: "flame", iconColor: "var(--rust)", tier: energyResult.sessionDepletion >= 35 ? "red" : "amber", note: "-" + energyResult.sessionDepletion + " pts (charge " + todayTotalLoad + ")" });
     checklist.push({ label: "Cours prévu", icon: "watch", iconColor: "var(--steel)", tier: classes.length ? "steel" : "steel", note: classes.length ? classes.map(function(c){ return c.discipline; }).join(", ") : "Aucun" });
-    checklist.push({ label: "Séance(s) aujourd'hui", icon: "dumbbell", iconColor: "var(--green)", tier: todaySessions.length ? "green" : "steel", note: todaySessions.length ? todaySessions.map(function(s){ return s.discipline || "?"; }).join(", ") + " · charge " + todayTotalLoad : "Pas encore loguée — via le Coach" });
+    checklist.push({ label: "Séance(s) aujourd'hui", icon: "dumbbell", iconColor: "var(--green)", tier: todaySessions.length ? "green" : "steel", note: todaySessions.length ? todaySessions.map(function(s){ return s.discipline || "?"; }).join(", ") + " · charge " + todayTotalLoad : "Ø" });
 
     html += '<div class="card"><div class="section-label">' + sectionIcon("list") + 'Récap du jour</div>';
-    checklist.forEach(function(c) {
-      html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
-      html += '<span style="font-size:13px;display:inline-flex;align-items:center;gap:6px">' + (c.icon ? statIconSvg(c.icon, c.iconColor, 15) : "") + c.label + (c.note ? ' <span class="muted" style="font-size:11px">· ' + esc(String(c.note)) + '</span>' : '') + "</span>";
-      html += '<span>' + tierDot(c.tier) + "</span></div>";
-    });
+    checklist.forEach(function(c) { html += checklistRowHtml(c); });
     if (todayGripRow) {
       html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
-      html += '<span style="font-size:13px;display:inline-flex;align-items:center;gap:6px">' + statIconSvg("dumbbell", "var(--pink)", 15) + 'Préhension <span class="muted" style="font-size:11px">· ' + todayGripRow.value_kg + ' kg' + (gripPct != null ? ' (' + (gripPct >= 0 ? "+" : "") + gripPct.toFixed(0) + '%)' : '') + '</span></span>';
+      html += '<span style="font-size:13px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + statIconSvg("dumbbell", "var(--pink)", 15) + 'Préhension <span class="muted" style="font-size:11px">· ' + todayGripRow.value_kg + ' kg' + (gripPct != null ? ' (' + (gripPct >= 0 ? "+" : "") + gripPct.toFixed(0) + '%)' : '') + '</span></span>';
       html += '<button id="grip-quick-delete" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--red);font-size:10px;font-weight:700;cursor:pointer;padding:3px 8px">Suppr.</button></div>';
     } else {
       html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);gap:8px">';
@@ -1472,16 +1464,12 @@ async function loadRecuperation() {
 
       const checklist = [];
       checklist.push({ label: "Sommeil", icon: "moon", iconColor: "var(--steel)", tier: sleepTierColor, note: sleepScore + "/100 · " + sleepTier });
-      checklist.push({ label: "Stades", icon: "list", iconColor: "var(--purple)", tier: stagesTier, note: "Léger " + lightPct + "% · Profond " + deepPct + "% · Paradoxal " + remPct + "%" });
-      checklist.push({ label: "Sieste", icon: "moon", iconColor: "var(--pink)", tier: totalNapMin > 0 ? "green" : "steel", note: totalNapMin > 0 ? totalNapMin + " min" : "Aucune — via le Coach" });
+      checklist.push({ label: "Stades", icon: "list", iconColor: "var(--purple)", tier: stagesTier, note: "Léger " + lightPct + "% · Profond " + deepPct + "% · REM " + remPct + "%" });
+      checklist.push({ label: "Sieste", icon: "moon", iconColor: "var(--pink)", tier: totalNapMin > 0 ? "green" : "steel", note: totalNapMin > 0 ? totalNapMin + " min" : "Ø" });
       if (todayMigRow) checklist.push({ label: "Migraine", icon: "bandage", iconColor: "var(--red)", tier: "red", note: (todayMigRow.intensity || "–") + "/10" });
 
       html += '<div class="card"><div class="section-label">' + sectionIcon("list") + 'Récap du jour</div>';
-      checklist.forEach(function(c) {
-        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
-        html += '<span style="font-size:13px;display:inline-flex;align-items:center;gap:6px">' + (c.icon ? statIconSvg(c.icon, c.iconColor, 15) : "") + c.label + (c.note != null ? ' <span class="muted" style="font-size:11px">· ' + esc(String(c.note)) + '</span>' : '') + "</span>";
-        html += '<span>' + tierDot(c.tier) + "</span></div>";
-      });
+      checklist.forEach(function(c) { html += checklistRowHtml(c); });
       html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></div>';
     }
   } else {
@@ -2466,6 +2454,19 @@ function wireBreathingOverlayEvents() {
 function tierDot(tier) {
   if (!tier || tier === "steel") return "";
   return '<span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:var(--' + tier + ');box-shadow:0 0 6px 2px var(--' + tier + '),0 0 2px var(--' + tier + ')"></span>';
+}
+// Une ligne de Récap du jour = toujours une seule ligne, jamais un retour à
+// la ligne : le libellé (fixe, court) ne rétrécit pas, la valeur tronque
+// avec des points de suspension si elle est trop longue pour l'écran
+// (min-width:0 + flex:1, sinon text-overflow ne fonctionne pas dans un
+// conteneur flex). "Ø" signale une absence de donnée du jour, pas un zéro.
+function checklistRowHtml(c) {
+  let html = '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line)">';
+  html += '<span style="font-size:13px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;flex:none">' + (c.icon ? statIconSvg(c.icon, c.iconColor, 15) : "") + c.label + "</span>";
+  html += '<span style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;justify-content:flex-end">';
+  if (c.note != null) html += '<span class="muted" style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(String(c.note)) + "</span>";
+  html += tierDot(c.tier) + "</span></div>";
+  return html;
 }
 function statHtml(label, value, color) {
   return '<div class="stat"><div class="stat-label">' + label + '</div><div class="stat-value"' + (color ? ' style="color:var(--'+color+')"' : '') + '>' + value + "</div></div>";
