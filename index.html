@@ -1689,7 +1689,7 @@ function formeVigilanceGaugeHtml(formeScore, formeTierColor, formeTierLabel, vig
   }
   function sideBlock(iconName, value, label, colorVar, dimmed) {
     let s = '<div style="display:flex;flex-direction:column;align-items:center;gap:2px">';
-    s += '<span style="display:block;line-height:0">' + statIconSvg(iconName, dimmed ? "var(--muted)" : colorVar, 19) + "</span>";
+    s += '<span style="display:block;line-height:0">' + statIconSvg(iconName, dimmed ? "var(--muted)" : colorVar, 14) + "</span>";
     s += '<span style="font-size:27px;font-weight:900;color:var(--chalk);line-height:1' + (dimmed ? "" : ";text-shadow:0 0 10px " + colorVar + "88") + '">' + (dimmed ? "–" : Math.round(value)) + "</span>";
     s += '<span style="font-size:10px;font-weight:800;text-transform:uppercase;color:' + colorVar + ';letter-spacing:.4px;white-space:nowrap">' + label + "</span>";
     s += "</div>";
