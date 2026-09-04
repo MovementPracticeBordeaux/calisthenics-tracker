@@ -3218,6 +3218,228 @@ function coachAnswerAchievementVsLifeload(d) {
     : "Pas de lien net entre atteindre ton objectif de séance et ton ressenti du lendemain (" + pctAtteint + "% vs " + pctPasAtteint + "% de jours difficiles).";
   return { text: text, chartHtml: chartHtml };
 }
+
+// ---- Reconstruction historique du score Forme et de la Vigilance ----
+// Les questions ci-dessus restent chacune sur un seul signal brut (VFC, FC,
+// stress...) — pour croiser le vrai score composite Forme (celui affiché
+// dans l'onglet, pas juste un de ses ingrédients) avec autre chose, il faut
+// pouvoir le recalculer pour N'IMPORTE QUEL jour passé, pas seulement
+// "aujourd'hui" comme le fait renderForme(). Reproduit ici les mêmes seuils
+// que renderForme() (index.html) pour les signaux qui pèsent le plus et
+// sont réellement couverts par les données actuelles (FC/VFC/stress vs
+// baseline 7j, charge ATL/CTL, sommeil durée+stades, LifeLoad) — délibérément
+// SANS les signaux annexes à donnée trop rare pour ce jeu de données
+// (préhension, effet .fit/trajet, signature de migraine) : les inclure
+// ajouterait de la complexité sans changer le score la quasi-totalité du
+// temps, vu leur faible couverture actuelle.
+function dateOffset(dateStr, n) { const dt = new Date(dateStr + "T00:00:00"); dt.setDate(dt.getDate() - n); return dt.toISOString().slice(0, 10); }
+function computeFormeProxyForDay(targetDate, wearableRaw, sessionsRaw, lifeloadRaw) {
+  const dayW = wearableRaw.find(function(w) { return w.day === targetDate; });
+  const window7 = wearableRaw.filter(function(w) { return w.day >= dateOffset(targetDate, 7) && w.day <= targetDate; });
+  function baseline(field) { const v = window7.filter(function(w) { return w.day !== targetDate && w[field] != null; }).map(function(w) { return w[field]; }); return v.length ? avgOf(v) : null; }
+
+  let score = 100, signals = 0;
+  if (dayW && dayW.hr_resting != null) {
+    const base = baseline("hr_resting");
+    if (base != null) {
+      const diff = dayW.hr_resting - base;
+      signals++;
+      if (diff >= 10) score -= 30; else if (diff >= 5) score -= 15; else if (diff >= 3) score -= 3; else if (diff <= -3) score += 5;
+    }
+  }
+  if (dayW && dayW.hrv_avg != null) {
+    const base = baseline("hrv_avg");
+    if (base != null && base > 0) {
+      const pct = ((dayW.hrv_avg - base) / base) * 100;
+      signals++;
+      if (pct <= -30) score -= 25; else if (pct <= -20) score -= 15; else if (pct <= -10) score -= 5; else if (pct >= 15) score += 10;
+    }
+  }
+  if (dayW && dayW.stress_avg != null) {
+    const base = baseline("stress_avg");
+    if (base != null) {
+      const diff = dayW.stress_avg - base;
+      signals++;
+      if (diff >= 10) score -= 25; else if (diff >= 5) score -= 10;
+    }
+  }
+
+  const dailyLoad = {};
+  sessionsRaw.forEach(function(s) { if (s.correctedLoad) dailyLoad[s.date] = (dailyLoad[s.date] || 0) + s.correctedLoad; });
+  const allDates = Object.keys(dailyLoad).filter(function(dt) { return dt <= targetDate; }).sort();
+  let atl = null, ctl = null, atlWake = null;
+  const decayATL = Math.exp(-1 / 7), decayCTL = Math.exp(-1 / 28);
+  if (allDates.length) {
+    let cursor = new Date(allDates[0] + "T00:00:00");
+    const end = new Date(targetDate + "T00:00:00");
+    while (cursor <= end) {
+      const dstr = cursor.toISOString().slice(0, 10);
+      if (dstr === targetDate) atlWake = atl;
+      const w = dailyLoad[dstr] || 0;
+      atl = atl == null ? w : atl * decayATL + w * (1 - decayATL);
+      ctl = ctl == null ? w : ctl * decayCTL + w * (1 - decayCTL);
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    if (atlWake == null) atlWake = atl;
+  }
+  let loadFatigueBucket = 0;
+  const todayTotalLoad = dailyLoad[targetDate] || 0;
+  if (todayTotalLoad > 0) { signals++; loadFatigueBucket -= Math.min(35, Math.round(todayTotalLoad / 60)); }
+  if (atlWake != null && atlWake > 0) { signals++; loadFatigueBucket -= Math.min(30, Math.round(atlWake / 70)); }
+  if (atlWake != null && ctl) {
+    const wakeRatio = atlWake / ctl;
+    if (wakeRatio < 0.8) score += Math.min(10, Math.round((0.8 - wakeRatio) * 25));
+  }
+
+  const sleepMin = dayW ? dayW.sleep_total_min : null;
+  if (sleepMin != null) {
+    signals++;
+    let sleepDeduction = 0;
+    if (sleepMin < 300) sleepDeduction += 20; else if (sleepMin < 360) sleepDeduction += 12; else if (sleepMin < 420) sleepDeduction += 4; else if (sleepMin > 600) sleepDeduction += 4;
+    if (dayW.sleep_deep_min != null && sleepMin > 0) {
+      if ((dayW.sleep_deep_min / sleepMin) * 100 < 10) sleepDeduction += 6;
+      if (dayW.sleep_rem_min != null && (dayW.sleep_rem_min / sleepMin) * 100 < 15) sleepDeduction += 6;
+    }
+    score -= Math.min(25, sleepDeduction);
+  }
+
+  const LIFELOAD_IMPACT = { bien: 8, stresse: -12, fatigue: -18, malade: -40, courbature: -10, neutre: 0 };
+  const lifeloadRow = lifeloadRaw.find(function(l) { return l.day === targetDate; });
+  if (lifeloadRow) {
+    signals++;
+    const impact = LIFELOAD_IMPACT[lifeloadRow.state] || 0;
+    if (impact < 0) loadFatigueBucket += impact; else score += impact;
+  }
+
+  score += Math.max(-40, loadFatigueBucket);
+  score = Math.max(0, Math.min(100, score));
+  return signals > 0 ? Math.round(score) : null;
+}
+const VIG_WINDOWS_COACH = [
+  { hrvKey: "hrv_morning", }, { hrvKey: "hrv_afternoon" }, { hrvKey: "hrv_evening" },
+];
+function computeVigilanceScoreForDay(targetDate, wearableRaw) {
+  const dayW = wearableRaw.find(function(w) { return w.day === targetDate; });
+  if (!dayW) return null;
+  let vigPct = null;
+  VIG_WINDOWS_COACH.slice().reverse().forEach(function(w) {
+    if (vigPct != null) return;
+    const val = dayW[w.hrvKey];
+    if (val == null) return;
+    const baseVals = wearableRaw.filter(function(x) { return x.day !== targetDate && x[w.hrvKey] != null; }).map(function(x) { return x[w.hrvKey]; });
+    if (baseVals.length < 3) return;
+    const base = avgOf(baseVals);
+    if (!base || base <= 0) return;
+    vigPct = ((val - base) / base) * 100;
+  });
+  if (vigPct == null) return null;
+  return Math.max(0, Math.min(100, Math.round(85 + vigPct * 1.5)));
+}
+function coachAnswerFormeVsStress(d) {
+  const days = d.wearableRaw.map(function(w) { return w.day; });
+  const rows = days.map(function(day) {
+    const w = d.wearableRaw.find(function(x) { return x.day === day; });
+    return { day: day, forme: computeFormeProxyForDay(day, d.wearableRaw, d.sessionsRaw, d.lifeloadRaw), stress: w ? w.stress_avg : null };
+  }).filter(function(r) { return r.forme != null && r.stress != null; });
+  if (rows.length < 10) return "Pas encore assez de jours avec Forme calculable et stress mesuré pour comparer (il en faut au moins 10).";
+  const sorted = rows.slice().sort(function(a, b) { return b.forme - a.forme; });
+  const half = Math.max(3, Math.floor(sorted.length / 2));
+  const high = sorted.slice(0, half), low = sorted.slice(-half);
+  const avgFormeHigh = Math.round(avgOf(high.map(function(r) { return r.forme; })));
+  const avgFormeLow = Math.round(avgOf(low.map(function(r) { return r.forme; })));
+  const avgStressHigh = avgOf(high.map(function(r) { return r.stress; }));
+  const avgStressLow = avgOf(low.map(function(r) { return r.stress; }));
+  const chartHtml = barChartHtml([
+    { label: "Forme ↑ (" + avgFormeHigh + ")", val: Math.round(avgStressHigh) }, { label: "Forme ↓ (" + avgFormeLow + ")", val: Math.round(avgStressLow) },
+  ], { unit: "", decimals: 0, showAvg: false });
+  const text = Math.abs(avgStressHigh - avgStressLow) >= 6
+    ? "Tes jours de meilleure Forme (score moyen " + avgFormeHigh + "/100) montrent un stress moyen de " + avgStressHigh.toFixed(0) + ", contre " + avgStressLow.toFixed(0) + " tes jours de moins bonne Forme (" + avgFormeLow + "/100) — Forme et stress semblent bien liés chez toi."
+    : "Pas de lien net entre ta Forme et ton stress mesuré (" + avgStressHigh.toFixed(0) + " vs " + avgStressLow.toFixed(0) + ").";
+  return { text: text, chartHtml: chartHtml };
+}
+function coachAnswerVigilanceVsForme(d) {
+  const days = d.wearableRaw.map(function(w) { return w.day; });
+  const rows = days.map(function(day) {
+    return { day: day, forme: computeFormeProxyForDay(day, d.wearableRaw, d.sessionsRaw, d.lifeloadRaw), vig: computeVigilanceScoreForDay(day, d.wearableRaw) };
+  }).filter(function(r) { return r.forme != null && r.vig != null; });
+  if (rows.length < 10) return "Pas encore assez de jours avec Forme et Vigilance calculables pour comparer (il en faut au moins 10).";
+  const sorted = rows.slice().sort(function(a, b) { return b.forme - a.forme; });
+  const half = Math.max(3, Math.floor(sorted.length / 2));
+  const high = sorted.slice(0, half), low = sorted.slice(-half);
+  const avgFormeHigh = Math.round(avgOf(high.map(function(r) { return r.forme; })));
+  const avgFormeLow = Math.round(avgOf(low.map(function(r) { return r.forme; })));
+  const avgVigHigh = Math.round(avgOf(high.map(function(r) { return r.vig; })));
+  const avgVigLow = Math.round(avgOf(low.map(function(r) { return r.vig; })));
+  const chartHtml = barChartHtml([
+    { label: "Forme ↑ (" + avgFormeHigh + ")", val: avgVigHigh }, { label: "Forme ↓ (" + avgFormeLow + ")", val: avgVigLow },
+  ], { unit: "/100", decimals: 0, showAvg: false });
+  const text = Math.abs(avgVigHigh - avgVigLow) >= 8
+    ? "Ta Vigilance est en moyenne de " + avgVigHigh + "/100 tes jours de meilleure Forme (" + avgFormeHigh + "/100), contre " + avgVigLow + "/100 tes jours de moins bonne Forme (" + avgFormeLow + "/100) — les deux sont bien liés chez toi."
+    : "Pas d'écart net de Vigilance entre tes jours de bonne (" + avgVigHigh + "/100) et de moins bonne Forme (" + avgVigLow + "/100).";
+  return { text: text, chartHtml: chartHtml };
+}
+function coachAnswerFormeBeforeMigraine(d) {
+  if (d.migrainesRaw.length < 3) return "Pas encore assez de migraines enregistrées pour comparer (il en faut au moins 3).";
+  const allDays = d.wearableRaw.map(function(w) { return w.day; });
+  const allFormes = allDays.map(function(day) { return computeFormeProxyForDay(day, d.wearableRaw, d.sessionsRaw, d.lifeloadRaw); }).filter(function(f) { return f != null; });
+  if (allFormes.length < 10) return "Pas encore assez de jours avec Forme calculable pour comparer (il en faut au moins 10).";
+  const beforeMigDays = d.migrainesRaw.map(function(m) { return dateOffset(m.day, 1); });
+  const beforeFormes = beforeMigDays.map(function(day) { return computeFormeProxyForDay(day, d.wearableRaw, d.sessionsRaw, d.lifeloadRaw); }).filter(function(f) { return f != null; });
+  if (beforeFormes.length < 2) return "Pas encore assez de veilles de migraine avec Forme calculable pour comparer (il en faut au moins 2).";
+  const avgBefore = Math.round(avgOf(beforeFormes)), avgAll = Math.round(avgOf(allFormes));
+  const chartHtml = barChartHtml([
+    { label: "Veille de migraine", val: avgBefore }, { label: "Moyenne générale", val: avgAll },
+  ], { unit: "/100", decimals: 0, showAvg: false });
+  const text = avgAll - avgBefore >= 10
+    ? "Ta Forme la veille d'une migraine est en moyenne de " + avgBefore + "/100, contre " + avgAll + "/100 en moyenne générale — une Forme dégradée pourrait annoncer une migraine à venir chez toi."
+    : "Pas d'écart net entre ta Forme la veille d'une migraine (" + avgBefore + "/100) et ta moyenne générale (" + avgAll + "/100).";
+  return { text: text, chartHtml: chartHtml };
+}
+function coachAnswerFormeVsNextDayLoad(d) {
+  const loadByDay = {};
+  d.sessionsRaw.forEach(function(s) { if (s.correctedLoad) loadByDay[s.date] = (loadByDay[s.date] || 0) + s.correctedLoad; });
+  const days = d.wearableRaw.map(function(w) { return w.day; });
+  const rows = days.map(function(day) {
+    const forme = computeFormeProxyForDay(day, d.wearableRaw, d.sessionsRaw, d.lifeloadRaw);
+    const nextDay = dateOffset(day, -1);
+    return { forme: forme, nextLoad: loadByDay[nextDay] || 0 };
+  }).filter(function(r) { return r.forme != null; });
+  if (rows.length < 10) return "Pas encore assez de jours avec Forme calculable pour comparer (il en faut au moins 10).";
+  const sorted = rows.slice().sort(function(a, b) { return b.forme - a.forme; });
+  const half = Math.max(3, Math.floor(sorted.length / 2));
+  const high = sorted.slice(0, half), low = sorted.slice(-half);
+  const avgFormeHigh = Math.round(avgOf(high.map(function(r) { return r.forme; })));
+  const avgFormeLow = Math.round(avgOf(low.map(function(r) { return r.forme; })));
+  const avgLoadHigh = Math.round(avgOf(high.map(function(r) { return r.nextLoad; })));
+  const avgLoadLow = Math.round(avgOf(low.map(function(r) { return r.nextLoad; })));
+  const chartHtml = barChartHtml([
+    { label: "Forme ↑ (" + avgFormeHigh + ")", val: avgLoadHigh }, { label: "Forme ↓ (" + avgFormeLow + ")", val: avgLoadLow },
+  ], { unit: "", decimals: 0, showAvg: false });
+  const text = avgLoadLow < avgLoadHigh * 0.7
+    ? "Le lendemain d'un jour de moins bonne Forme (" + avgFormeLow + "/100), ta charge d'entraînement est plus faible (" + avgLoadLow + " contre " + avgLoadHigh + " après un jour de bonne Forme, " + avgFormeHigh + "/100) — tu sembles bien lever le pied quand ta Forme est basse."
+    : "Ta charge d'entraînement du lendemain ne varie pas nettement selon ta Forme de la veille (" + avgLoadHigh + " vs " + avgLoadLow + ") — tu ne sembles pas ajuster ton entraînement à ta Forme.";
+  return { text: text, chartHtml: chartHtml };
+}
+function coachAnswerFormeVsSessionRpe(d) {
+  const rows = d.sessionsRaw.filter(function(s) { return s.intensity > 0; }).map(function(s) {
+    return { forme: computeFormeProxyForDay(s.date, d.wearableRaw, d.sessionsRaw, d.lifeloadRaw), rpe: s.intensity };
+  }).filter(function(r) { return r.forme != null; });
+  if (rows.length < 8) return "Pas encore assez de séances notées (RPE) avec Forme calculable ce jour-là pour comparer (il en faut au moins 8).";
+  const sorted = rows.slice().sort(function(a, b) { return b.forme - a.forme; });
+  const half = Math.max(3, Math.floor(sorted.length / 2));
+  const high = sorted.slice(0, half), low = sorted.slice(-half);
+  const avgFormeHigh = Math.round(avgOf(high.map(function(r) { return r.forme; })));
+  const avgFormeLow = Math.round(avgOf(low.map(function(r) { return r.forme; })));
+  const avgRpeHigh = avgOf(high.map(function(r) { return r.rpe; }));
+  const avgRpeLow = avgOf(low.map(function(r) { return r.rpe; }));
+  const chartHtml = barChartHtml([
+    { label: "Forme ↑ (" + avgFormeHigh + ")", val: Number(avgRpeHigh.toFixed(1)) }, { label: "Forme ↓ (" + avgFormeLow + ")", val: Number(avgRpeLow.toFixed(1)) },
+  ], { unit: "/10", decimals: 1, showAvg: false });
+  const text = avgRpeLow - avgRpeHigh >= 1
+    ? "Tes séances des jours de moins bonne Forme (" + avgFormeLow + "/100) te paraissent plus dures (RPE moyen " + avgRpeLow.toFixed(1) + "/10) que celles des jours de bonne Forme (" + avgFormeHigh + "/100, RPE " + avgRpeHigh.toFixed(1) + "/10) — cohérent, le même effort paraît plus dur quand tu es moins frais."
+    : "Ton RPE en séance ne varie pas nettement selon ta Forme du jour (" + avgRpeHigh.toFixed(1) + " vs " + avgRpeLow.toFixed(1) + "/10).";
+  return { text: text, chartHtml: chartHtml };
+}
 const COACH_QUESTIONS = [
   { id: "sleep_avg", label: "Ma durée moyenne de sommeil ?", fn: coachAnswerSleepAvg, domain: "recuperation" },
   { id: "sleep_reg", label: "La régularité de mon sommeil ?", fn: coachAnswerSleepRegularity, domain: "recuperation" },
@@ -3254,6 +3476,11 @@ const COACH_QUESTIONS = [
   { id: "steps_impact", label: "Mon nombre de pas quotidien → mon stress et mon sommeil ?", fn: coachAnswerStepsImpact, domain: "hybride" },
   { id: "awakenings_impact", label: "Mes réveils nocturnes → mon ressenti du jour ?", fn: coachAnswerAwakeningsImpact, domain: "hybride" },
   { id: "achievement_vs_lifeload", label: "Atteindre mon objectif de séance → mon ressenti du lendemain ?", fn: coachAnswerAchievementVsLifeload, domain: "hybride" },
+  { id: "forme_vs_stress", label: "Ma Forme et mon stress sont-ils liés ?", fn: coachAnswerFormeVsStress, domain: "hybride" },
+  { id: "vigilance_vs_forme", label: "Ma vigilance est-elle moins bonne quand je suis moins en forme ?", fn: coachAnswerVigilanceVsForme, domain: "hybride" },
+  { id: "forme_before_migraine", label: "Ma Forme est-elle dégradée la veille de mes migraines ?", fn: coachAnswerFormeBeforeMigraine, domain: "hybride" },
+  { id: "forme_vs_next_day_load", label: "Est-ce que je lève le pied à l'entraînement après un jour de moins bonne Forme ?", fn: coachAnswerFormeVsNextDayLoad, domain: "hybride" },
+  { id: "forme_vs_session_rpe", label: "Mes séances paraissent-elles plus dures les jours de moins bonne Forme ?", fn: coachAnswerFormeVsSessionRpe, domain: "hybride" },
 ];
 const COACH_STATS_FILTERS = [
   { id: "all", label: "Tout" },
