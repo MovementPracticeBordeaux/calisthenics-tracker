@@ -35,7 +35,7 @@
   .tab.active { background: var(--gradient); color: var(--bg); font-weight: 900; }
   h1 { font-size: 26px; font-weight: 900; margin: 0; font-family: 'Arial Black', system-ui, sans-serif; text-transform: uppercase; letter-spacing: .5px; }
   .muted { color: var(--muted); font-size: 12px; }
-  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
+  .card { background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.05); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
   .card.amber { border-color: var(--amber); }
   .card.steel { border-color: var(--steel); }
   .section-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; }
@@ -52,7 +52,7 @@
     width: 100%; background: var(--surfaceRaised); border: 1px solid var(--line); border-radius: 7px;
     color: var(--chalk); font-size: 16px; padding: 10px 12px; box-sizing: border-box;
   }
-  .theme-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; }
+  .theme-card { background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.05); border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; }
   .theme-card.on { border-color: var(--rustDim); }
   .theme-head { width: 100%; background: none; border: none; display: flex; justify-content: space-between; align-items: center; cursor: pointer; padding: 0; text-align: left; }
   .theme-label { font-weight: 800; font-size: 15px; letter-spacing: .3px; text-transform: uppercase; color: var(--chalkDim); }
@@ -968,7 +968,6 @@ async function renderForme() {
 
   let html = "";
   if (errorMsg) html += '<div class="error-banner"><b>Erreur :</b> ' + esc(errorMsg) + "</div>";
-  html += '<h1 style="margin-bottom:4px">Forme</h1>';
   html += '<div class="muted" style="margin-bottom:18px">' + formatDateLabel(today) + "</div>";
 
   html += '<div class="pill-row compact" style="margin-bottom:16px" id="forme-subtab-row">';
@@ -1032,7 +1031,7 @@ async function renderForme() {
     // cadre ".card" des autres indicateurs (fond noir uni, comme l'anneau
     // principal des apps Zepp/Garmin) pour le distinguer visuellement comme
     // l'indicateur central, pas juste une carte parmi d'autres.
-    html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Forme <span style="color:var(--green)">+ Vigilance</span></span><span>' + tierDot(tierColor) + '</span></div>';
+    html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>' + sectionIcon("pulse") + 'Forme <span style="color:var(--green)">+ Vigilance</span></span><span>' + tierDot(tierColor) + '</span></div>';
     html += '<div style="padding:18px 0">' + formeVigilanceGaugeHtml(score, tierColor, tier, vigScore) + "</div>";
     html += '<div style="text-align:center;padding-top:14px;border-top:1px solid var(--line);font-size:12px">' + statIconSvg("moon", "var(--muted)", 13) + ' Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div>";
     if (vigScore != null) {
@@ -1061,7 +1060,7 @@ async function renderForme() {
     if (todayMigraine != null) checklist.push({ label: "Migraine", icon: "bandage", iconColor: "var(--red)", tier: "red", note: todayMigraine + "/10" });
     checklist.push({ label: "Ressenti", icon: "thought", iconColor: "var(--chalkDim)", tier: lifeload === "bien" ? "green" : lifeload === "malade" ? "red" : ["stresse","fatigue"].indexOf(lifeload) !== -1 ? "amber" : "steel", note: lifeload || "à renseigner dans le Coach" });
 
-    html += '<div class="card"><div class="section-label">Récap du jour</div>';
+    html += '<div class="card"><div class="section-label">' + sectionIcon("list") + 'Récap du jour</div>';
     checklist.forEach(function(c) {
       html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
       html += '<span style="font-size:13px;display:inline-flex;align-items:center;gap:6px">' + (c.icon ? statIconSvg(c.icon, c.iconColor, 15) : "") + c.label + (c.note ? ' <span class="muted" style="font-size:11px">· ' + esc(String(c.note)) + '</span>' : '') + "</span>";
@@ -1118,7 +1117,7 @@ async function renderForme() {
     const monthLL = monthLifeload.filter(function(l){ return l.day >= daysAgo(29); });
     if (monthLL.length >= 5) {
       const badCount = monthLL.filter(function(l){ return ["stresse","fatigue","malade","courbature"].indexOf(l.state) !== -1; }).length;
-      html += '<div class="card"><div class="section-label">Ressenti</div><div style="font-size:12px;color:var(--chalkDim)">' + badCount + " jour(s) difficile(s) sur " + monthLL.length + " renseigné(s) ce mois-ci.</div></div>";
+      html += '<div class="card"><div class="section-label">' + sectionIcon("thought") + 'Ressenti</div><div style="font-size:12px;color:var(--chalkDim)">' + badCount + " jour(s) difficile(s) sur " + monthLL.length + " renseigné(s) ce mois-ci.</div></div>";
     }
   }
 
@@ -1198,7 +1197,6 @@ async function loadEntrainement() {
 
   let html = "";
   if (errorMsg) html += '<div class="error-banner"><b>Erreur :</b> ' + esc(errorMsg) + "</div>";
-  html += '<h1 style="margin-bottom:4px">Entraînement</h1>';
   html += '<div class="muted" style="margin-bottom:18px">' + formatDateLabel(today) + "</div>";
 
   html += '<div class="pill-row compact" style="margin-bottom:16px" id="entrainement-subtab-row">';
@@ -1212,7 +1210,7 @@ async function loadEntrainement() {
       html += '<div class="error-banner"><b>Planning non synchronisé :</b> le site de réservation n\'a pas répondu — le cours prévu ci-dessous peut être obsolète. Réessaie de rafraîchir (⟳ en haut).</div>';
     }
     if (toComplete.length) {
-      html += '<div class="card amber"><div class="section-label">Séances possibles non renseignées</div>';
+      html += '<div class="card amber"><div class="section-label">' + sectionIcon("watch") + 'Séances possibles non renseignées</div>';
       html += '<div class="muted" style="margin-bottom:10px">Activité détectée par la montre sans QCM correspondant.</div>';
       toComplete.forEach(function(g) {
         html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">';
@@ -1224,7 +1222,7 @@ async function loadEntrainement() {
       html += "</div>";
     }
 
-    html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Score d\'entraînement</span><span>' + tierDot(energyTier) + '</span></div>';
+    html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>' + sectionIcon("dumbbell") + 'Score d\'entraînement</span><span>' + tierDot(energyTier) + '</span></div>';
     html += '<div style="padding:18px 0">' + circleGaugeHtml(energy, 100, { sublabel: energyLabel, size: 200, strokeWidth: 16 }) + "</div>";
     html += "</div>";
 
@@ -1235,7 +1233,7 @@ async function loadEntrainement() {
     checklist.push({ label: "Cours prévu", tier: classes.length ? "steel" : "steel", note: classes.length ? classes.map(function(c){ return c.discipline; }).join(", ") : "Aucun" });
     checklist.push({ label: "Séance(s) aujourd'hui", tier: todaySessions.length ? "green" : "steel", note: todaySessions.length ? todaySessions.map(function(s){ return s.discipline || "?"; }).join(", ") + " · charge " + todayTotalLoad : "Pas encore loguée — via le Coach" });
 
-    html += '<div class="card"><div class="section-label">Récap du jour</div>';
+    html += '<div class="card"><div class="section-label">' + sectionIcon("list") + 'Récap du jour</div>';
     checklist.forEach(function(c) {
       html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
       html += '<span style="font-size:13px">' + c.label + (c.note ? ' <span class="muted" style="font-size:11px">· ' + esc(String(c.note)) + '</span>' : '') + "</span>";
@@ -1316,7 +1314,7 @@ async function loadEntrainement() {
           ["Léger", kzTot.l, "steel"], ["Intensif", kzTot.i, "green"],
           ["Aérobique", kzTot.a, "amber"], ["Anaérobie", kzTot.an, "rust"], ["VO2 max", kzTot.v, "red"],
         ];
-        html += '<div class="card"><div class="section-label">Zones cardiaques — 30 derniers jours</div>';
+        html += '<div class="card"><div class="section-label">' + sectionIcon("heart") + 'Zones cardiaques — 30 derniers jours</div>';
         kzRows.forEach(function(r) {
           const pct = Math.round((r[1] / kzGrand) * 100);
           html += '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>' + r[0] + '</span><span class="muted">' + Math.round(r[1]) + " min · " + pct + "%</span></div>";
@@ -1441,7 +1439,6 @@ async function loadRecuperation() {
 
   let html = "";
   if (errorMsg) html += '<div class="error-banner"><b>Erreur :</b> ' + esc(errorMsg) + "</div>";
-  html += '<h1 style="margin-bottom:4px">Récupération</h1>';
   html += '<div class="muted" style="margin-bottom:18px">' + formatDateLabel(today) + "</div>";
 
   html += '<div class="pill-row compact" style="margin-bottom:16px" id="recuperation-subtab-row">';
@@ -1455,7 +1452,7 @@ async function loadRecuperation() {
       html += '<div class="card"><div class="muted" style="text-align:center;padding:16px 0">Pas encore de nuit trackée récente.</div></div>';
     } else {
       const h = Math.floor(latest.total / 60), m = latest.total % 60;
-      html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Sommeil</span><span>' + tierDot(sleepTierColor) + '</span></div>';
+      html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>' + sectionIcon("moon") + 'Sommeil</span><span>' + tierDot(sleepTierColor) + '</span></div>';
       html += '<div style="padding:18px 0">' + circleGaugeHtml(sleepScore, 100, { sublabel: sleepTier, size: 200, strokeWidth: 16 }) + "</div>";
       html += '<div style="text-align:center;padding-top:14px;border-top:1px solid var(--line);font-size:13px"><b>' + h + 'h' + (m<10?'0':'') + m + '</b>';
       if (avgTotal != null) html += ' <span class="muted">· moyenne 14j : ' + Math.floor(avgTotal/60) + 'h' + Math.round(avgTotal%60).toString().padStart(2,'0') + '</span>';
@@ -1478,7 +1475,7 @@ async function loadRecuperation() {
       checklist.push({ label: "Sieste", tier: totalNapMin > 0 ? "green" : "steel", note: totalNapMin > 0 ? totalNapMin + " min" : "Aucune — via le Coach" });
       if (todayMigRow) checklist.push({ label: "Migraine", tier: "red", note: (todayMigRow.intensity || "–") + "/10" });
 
-      html += '<div class="card"><div class="section-label">Récap du jour</div>';
+      html += '<div class="card"><div class="section-label">' + sectionIcon("list") + 'Récap du jour</div>';
       checklist.forEach(function(c) {
         html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
         html += '<span style="font-size:13px">' + c.label + (c.note != null ? ' <span class="muted" style="font-size:11px">· ' + esc(String(c.note)) + '</span>' : '') + "</span>";
@@ -1538,7 +1535,7 @@ async function loadRecuperation() {
 
     const migWeek = migraines.filter(function(m){ return m.day >= daysAgo(6); });
     const migMonth = migraines.filter(function(m){ return m.day >= daysAgo(29); });
-    html += '<div class="card"><div class="section-label">Fréquence des migraines</div><div class="stat-row">';
+    html += '<div class="card"><div class="section-label">' + sectionIcon("bandage") + 'Fréquence des migraines</div><div class="stat-row">';
     html += statHtml("Cette semaine", migWeek.length, migWeek.length >= 2 ? "amber" : null);
     html += statHtml("Ce mois-ci", migMonth.length, migMonth.length >= 3 ? "amber" : null);
     html += "</div></div>";
@@ -1612,9 +1609,15 @@ function statIconSvg(name, color, size) {
     bike: '<circle cx="6" cy="17" r="3.3"/><circle cx="18" cy="17" r="3.3"/><path d="M6 17l4-8h4l4 8M10 9l3-3h3" stroke-linecap="round" stroke-linejoin="round"/>',
     bandage: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8" stroke-linecap="round"/>',
     thought: '<path d="M4 6h16v9.5H10.5l-4 3.7v-3.7H4Z" stroke-linejoin="round"/>',
+    list: '<circle cx="4" cy="6" r="1.2" fill="' + (color || "currentColor") + '" stroke="none"/><circle cx="4" cy="12" r="1.2" fill="' + (color || "currentColor") + '" stroke="none"/><circle cx="4" cy="18" r="1.2" fill="' + (color || "currentColor") + '" stroke="none"/><path d="M9 6h11M9 12h11M9 18h11" stroke-linecap="round"/>',
   };
   const inner = paths[name] || "";
   return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="' + (color || "currentColor") + '" stroke-width="1.8" style="vertical-align:-3px;flex:none">' + inner + "</svg>";
+}
+// Icône discrète devant un titre de section (.section-label) — toujours la
+// même taille/couleur pour rester cohérent avec le texte uppercase 11px.
+function sectionIcon(name) {
+  return statIconSvg(name, "var(--muted)", 13) + " ";
 }
 function circleGaugeHtml(value, max, opts) {
   opts = opts || {};
@@ -1680,8 +1683,8 @@ function formeVigilanceGaugeHtml(formeScore, formeTierColor, formeTierLabel, vig
     return '<div style="position:absolute;left:' + xPct + '%;top:' + yPct + '%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;' + (extraStyle || "") + '">' + contentHtml + "</div>";
   }
   function sideBlock(iconName, value, label, colorVar, dimmed) {
-    let s = '<div style="display:flex;flex-direction:column;align-items:center">';
-    s += '<span style="margin-bottom:3px">' + statIconSvg(iconName, dimmed ? "var(--muted)" : colorVar, 19) + "</span>";
+    let s = '<div style="display:flex;flex-direction:column;align-items:center;gap:2px">';
+    s += '<span style="display:block;line-height:0">' + statIconSvg(iconName, dimmed ? "var(--muted)" : colorVar, 19) + "</span>";
     s += '<span style="font-size:27px;font-weight:900;color:var(--chalk);line-height:1' + (dimmed ? "" : ";text-shadow:0 0 10px " + colorVar + "88") + '">' + (dimmed ? "–" : Math.round(value)) + "</span>";
     s += '<span style="font-size:10px;font-weight:800;text-transform:uppercase;color:' + colorVar + ';letter-spacing:.4px;white-space:nowrap">' + label + "</span>";
     s += "</div>";
@@ -1829,9 +1832,20 @@ function lineChartHtml(items, opts) {
 // deux fois pour la même métrique (une section = une métrique), et jamais
 // plus qu'une phrase de commentaire — c'est la règle anti-fourre-tout des
 // onglets Tendance, imposée une fois ici plutôt que rappelée à chaque appel.
+const METRIC_TREND_ICONS = {
+  "VFC": "pulse",
+  "FC repos": "heart",
+  "Stress": "lightning",
+  "Charge d'entraînement": "dumbbell",
+  "Force de préhension": "dumbbell",
+  "Durée de sommeil": "moon",
+  "PAI": "heart",
+  "Récupération cardiaque (HRR, 1min)": "heart",
+};
 function metricTrendSectionHtml(title, weeklyItems, monthlyItems, interpretation, opts) {
   opts = opts || {};
-  let html = '<div class="card"><div class="section-label">' + esc(title) + '</div>';
+  const icon = METRIC_TREND_ICONS[title];
+  let html = '<div class="card"><div class="section-label">' + (icon ? sectionIcon(icon) : "") + esc(title) + '</div>';
   html += '<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Semaine</div>';
   html += barChartHtml(weeklyItems, opts);
   html += '<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin:14px 0 4px">Mois</div>';
@@ -4126,7 +4140,7 @@ function drawCoach() {
     }
     html += "</div>";
 
-    html += '<div class="section-label" style="margin-bottom:10px">Questions suggérées</div>';
+    html += '<div class="section-label" style="margin-bottom:10px">' + sectionIcon("thought") + 'Questions suggérées</div>';
     html += '<div class="pill-row compact" style="flex-wrap:wrap;gap:6px;margin-bottom:16px" id="coach-stats-filter-row">';
     COACH_STATS_FILTERS.forEach(function(f) {
       html += '<button class="pill' + (coachStatsFilter === f.id ? " active" : "") + '" data-filter="' + f.id + '" style="flex:none;padding:8px 12px">' + f.label + "</button>";
