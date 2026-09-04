@@ -1652,60 +1652,51 @@ function circleGaugeHtml(value, max, opts) {
 // (couleur de catégorie propre à cette jauge, distincte du rose Forme),
 // gérée avec un état neutre/estompé si pas encore de créneau comparable
 // aujourd'hui plutôt que de faire disparaître le cercle.
+// Utilise directement l'illustration fournie par l'utilisateur
+// (forme-vigilance-shape.webp, fond noir pur) plutôt qu'une reconstruction en
+// SVG — bien plus fidèle qu'une approximation faite main. Le fond noir se
+// fond dans le fond de l'appli via mix-blend-mode:screen (screen avec du
+// noir = no-op), donc pas besoin d'une version détourée/transparente. Les
+// nombres/libellés sont surimposés en position absolue, en pourcentages
+// calés sur l'image de référence (mesurés avec une grille de repères).
+// Couleur selon le score (demandé explicitement) : l'image est nativement
+// rose/vert (un bon score). Pour Suffisante/Insuffisante, un filter CSS
+// appliqué à l'image elle-même (jamais un calque séparé — un rectangle par
+// dessus recolore aussi le fond noir autour de la forme, qui n'est jamais
+// un noir parfaitement pur pixel à pixel, d'où un vilain bandeau teinté
+// autour du visuel constaté en test). grayscale+sepia ramène rose ET vert
+// sur un seul axe de teinte chaude avant de tourner cet axe vers l'ambre ou
+// le rouge — recolore tout le visuel, piloté par le tier Forme (l'indicateur
+// dominant — Forme et Vigilance ne peuvent pas être recolorées
+// indépendamment sur une image unique).
 function formeVigilanceGaugeHtml(formeScore, formeTierColor, formeTierLabel, vigScore) {
-  const W = 320, H = 208, R = 78, stroke = 9;
-  const leftCx = 102, rightCx = 218, cy = 92;
-  const textLeftCx = leftCx - 16, textRightCx = rightCx + 16;
-  const centerCx = (leftCx + rightCx) / 2, centerCy = cy, centerR = 44;
   const hasVig = vigScore != null;
-  const vigDisplay = hasVig ? vigScore : 0;
-  const dotPattern = "radial-gradient(circle, rgba(255,255,255,0.55) 1px, transparent 1.6px)";
+  const RATIO = 841 / 1871; // hauteur / largeur réelles de l'image
+  const tintFilter = formeTierColor === "amber" ? "grayscale(0.6) sepia(0.8) saturate(4.5) brightness(1.05)"
+    : formeTierColor === "red" ? "grayscale(0.6) sepia(0.8) hue-rotate(-62deg) saturate(5) brightness(1.05)"
+    : "none";
 
-  function haloHtml(cx, colorVar) {
-    const s = 2 * R + 30;
-    return '<div style="position:absolute;left:' + (cx - s / 2) + 'px;top:' + (cy - s / 2) + 'px;width:' + s + 'px;height:' + s + 'px;border-radius:50%;background:radial-gradient(circle, ' + colorVar + ' 0%, transparent 68%);opacity:0.55;filter:blur(18px);mix-blend-mode:screen"></div>';
+  function posHtml(xPct, yPct, contentHtml, extraStyle) {
+    return '<div style="position:absolute;left:' + xPct + '%;top:' + yPct + '%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;' + (extraStyle || "") + '">' + contentHtml + "</div>";
   }
-  function textureHtml(cx) {
-    return '<div style="position:absolute;left:' + (cx - R) + 'px;top:' + (cy - R) + 'px;width:' + (2 * R) + 'px;height:' + (2 * R) + 'px;border-radius:50%;overflow:hidden;opacity:0.1;background-image:' + dotPattern + ';background-size:9px 9px"></div>';
-  }
-  // mix-blend-mode:screen sur les deux anneaux : là où les traits rose et
-  // vert se croisent, la lumière s'additionne au lieu que l'un recouvre
-  // simplement l'autre — c'est ce qui donne la jonction lumineuse et douce
-  // de la maquette au lieu d'un croisement à l'arrache.
-  function ringHtml(cx, pct, gradFrom, gradTo, glowColor, dimmed) {
-    const c = 2 * Math.PI * R;
-    const offset = c * (1 - Math.max(0, Math.min(1, pct)));
-    const gid = "fvg-grad-" + (gaugeIdCounter++);
-    let s = '<defs><linearGradient id="' + gid + '" x1="0%" y1="0%" x2="100%" y2="100%">';
-    s += '<stop offset="0%" stop-color="' + gradFrom + '"/><stop offset="100%" stop-color="' + gradTo + '"/></linearGradient></defs>';
-    s += '<circle cx="' + cx + '" cy="' + cy + '" r="' + R + '" fill="none" stroke="var(--surfaceRaised)" stroke-width="' + stroke + '" opacity="' + (dimmed ? 0.25 : 0.4) + '"/>';
-    if (!dimmed) s += '<circle cx="' + cx + '" cy="' + cy + '" r="' + R + '" fill="none" stroke="url(#' + gid + ')" stroke-width="' + stroke + '" stroke-dasharray="' + c + '" stroke-dashoffset="' + offset + '" stroke-linecap="round" transform="rotate(-90 ' + cx + ' ' + cy + ')" style="filter:drop-shadow(0 0 7px ' + glowColor + ');mix-blend-mode:screen"/>';
-    return s;
-  }
-  function labelHtml(cx, iconName, value, label, colorVar, dimmed) {
-    let s = '<div style="position:absolute;left:' + (cx - R) + 'px;top:' + (cy - R) + 'px;width:' + (2 * R) + 'px;height:' + (2 * R) + 'px;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;opacity:' + (dimmed ? 0.45 : 1) + '">';
-    s += '<span style="margin-bottom:3px">' + statIconSvg(iconName, dimmed ? "var(--muted)" : colorVar, 20) + "</span>";
-    s += '<span style="font-size:28px;font-weight:900;color:var(--chalk);line-height:1' + (dimmed ? "" : ";text-shadow:0 0 10px " + colorVar + "88") + '">' + (dimmed ? "–" : Math.round(value)) + "</span>";
-    s += '<span style="font-size:10px;font-weight:800;text-transform:uppercase;color:' + colorVar + ';letter-spacing:.4px">' + label + "</span>";
+  function sideBlock(iconName, value, label, colorVar, dimmed) {
+    let s = '<div style="display:flex;flex-direction:column;align-items:center">';
+    s += '<span style="margin-bottom:3px">' + statIconSvg(iconName, dimmed ? "var(--muted)" : colorVar, 19) + "</span>";
+    s += '<span style="font-size:27px;font-weight:900;color:var(--chalk);line-height:1' + (dimmed ? "" : ";text-shadow:0 0 10px " + colorVar + "88") + '">' + (dimmed ? "–" : Math.round(value)) + "</span>";
+    s += '<span style="font-size:10px;font-weight:800;text-transform:uppercase;color:' + colorVar + ';letter-spacing:.4px;white-space:nowrap">' + label + "</span>";
     s += "</div>";
     return s;
   }
 
-  let html = '<div style="position:relative;width:' + W + 'px;height:' + H + 'px;margin:0 auto">';
-  html += haloHtml(leftCx, "var(--pink)") + haloHtml(rightCx, "var(--green)");
-  html += textureHtml(leftCx) + textureHtml(rightCx);
-  html += '<svg width="' + W + '" height="' + H + '" style="position:absolute;inset:0;overflow:visible">';
-  html += ringHtml(leftCx, formeScore / 100, "var(--rust)", "var(--pink)", "var(--pink)", false);
-  html += ringHtml(rightCx, vigDisplay / 100, "var(--greenDark)", "var(--green)", "var(--green)", !hasVig);
-  html += "</svg>";
-  html += labelHtml(textLeftCx, "person", formeScore, "Forme", "var(--pink)", false);
-  html += labelHtml(textRightCx, "target", vigDisplay, "Vigilance", "var(--green)", !hasVig);
-  html += '<div style="position:absolute;left:' + (centerCx - centerR) + 'px;top:' + (centerCy - centerR) + 'px;width:' + (2 * centerR) + 'px;height:' + (2 * centerR) + 'px;border-radius:50%;background:var(--bg);box-shadow:0 0 0 4px var(--bg),0 0 24px 4px rgba(236,72,153,0.4),0 0 24px 4px rgba(57,255,138,0.3);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:2">';
-  html += '<span style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Ton score</span>';
-  html += '<span style="font-size:32px;font-weight:900;color:var(--chalk);line-height:1.15">' + Math.round(formeScore) + "</span>";
-  html += '<span style="font-size:10px;font-weight:800;text-transform:uppercase;color:var(--' + formeTierColor + ')">' + esc(formeTierLabel) + "</span>";
-  html += '<span style="margin-top:3px">' + statIconSvg("pulse", "var(--muted)", 15) + "</span>";
-  html += "</div></div>";
+  let html = '<div style="position:relative;width:100%;padding-top:' + (RATIO * 100) + '%">';
+  html += '<img src="forme-vigilance-shape.webp" alt="" style="position:absolute;inset:0;width:100%;height:100%;mix-blend-mode:screen;filter:' + tintFilter + '">';
+  html += posHtml(50, 22, '<span style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Ton score</span>');
+  html += posHtml(50, 42, '<span style="font-size:34px;font-weight:900;color:var(--chalk)">' + Math.round(formeScore) + "</span>");
+  html += posHtml(50, 59, '<span style="font-size:12px;font-weight:800;text-transform:uppercase;color:var(--' + formeTierColor + ')">' + esc(formeTierLabel) + "</span>");
+  html += posHtml(50, 72, statIconSvg("pulse", "var(--muted)", 17));
+  html += posHtml(15, 47, sideBlock("person", formeScore, "Forme", "var(--pink)", false));
+  html += posHtml(85, 47, sideBlock("target", vigScore != null ? vigScore : 0, "Vigilance", "var(--green)", !hasVig));
+  html += "</div>";
   return html;
 }
 
