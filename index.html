@@ -1066,7 +1066,7 @@ async function renderForme() {
     if (todayMigraine != null) checklist.push({ label: "Migraine", icon: "bandage", iconColor: "var(--red)", tier: "red", note: todayMigraine + "/10" });
     checklist.push({ label: "Ressenti", icon: "thought", iconColor: "var(--chalkDim)", tier: lifeload === "bien" ? "green" : lifeload === "malade" ? "red" : ["stresse","fatigue"].indexOf(lifeload) !== -1 ? "amber" : "steel", note: lifeload || "Ø" });
 
-    html += collapsibleCardOpenHtml(sectionIcon("list") + 'Récap du jour');
+    html += collapsibleCardHtml(sectionIcon("list") + 'Récap du jour');
     checklist.forEach(function(c) { html += checklistRowHtml(c); });
     html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></details>';
   } else {
@@ -1235,7 +1235,7 @@ async function loadEntrainement() {
     checklist.push({ label: "Cours prévu", icon: "watch", iconColor: "var(--steel)", tier: classes.length ? "steel" : "steel", note: classes.length ? classes.map(function(c){ return c.discipline; }).join(", ") : "Aucun" });
     checklist.push({ label: "Séance(s) aujourd'hui", icon: "dumbbell", iconColor: "var(--green)", tier: todaySessions.length ? "green" : "steel", note: todaySessions.length ? todaySessions.map(function(s){ return s.discipline || "?"; }).join(", ") + " · charge " + todayTotalLoad : "Ø" });
 
-    html += collapsibleCardOpenHtml(sectionIcon("list") + 'Récap du jour');
+    html += collapsibleCardHtml(sectionIcon("list") + 'Récap du jour');
     checklist.forEach(function(c) { html += checklistRowHtml(c); });
     if (todayGripRow) {
       html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
@@ -1454,13 +1454,7 @@ async function loadRecuperation() {
       html += '<div style="padding:18px 0">' + singleScoreGaugeHtml(sleepScore, 100, { sublabel: sleepTier, size: 300, icon: "moon" }) + "</div>";
       html += '<div style="text-align:center;padding-top:14px;border-top:1px solid var(--line);font-size:13px"><b>' + h + 'h' + (m<10?'0':'') + m + '</b>';
       if (avgTotal != null) html += ' <span class="muted">· moyenne 14j : ' + Math.floor(avgTotal/60) + 'h' + Math.round(avgTotal%60).toString().padStart(2,'0') + '</span>';
-      html += "</div>";
-      // PAI en style jauge de stress (tourniquet horizontal) plutôt qu'en
-      // anneau — décision actée avec l'utilisateur, rattaché sous l'anneau
-      // Sommeil comme la Vigilance l'est sous l'anneau Forme.
-      html += '<div style="text-align:center;padding-top:10px;font-size:12px">PAI cette semaine</div>';
-      html += stressGaugeHtml(Math.min(weeklyPai, 100), weeklyPai >= 100 ? "Objectif atteint" : "/ 100", false);
-      html += "</div>";
+      html += "</div></div>";
 
       const stageTotal = latest.total || 1;
       const deepPct = Math.round((latest.deep/stageTotal)*100), remPct = Math.round((latest.rem/stageTotal)*100), lightPct = Math.round((latest.light/stageTotal)*100);
@@ -1470,9 +1464,10 @@ async function loadRecuperation() {
       checklist.push({ label: "Sommeil", icon: "moon", iconColor: "var(--steel)", tier: sleepTierColor, note: sleepScore + "/100 · " + sleepTier });
       checklist.push({ label: "Stades", icon: "list", iconColor: "var(--purple)", tier: stagesTier, note: "Léger " + lightPct + "% · Profond " + deepPct + "% · REM " + remPct + "%" });
       checklist.push({ label: "Sieste", icon: "moon", iconColor: "var(--pink)", tier: totalNapMin > 0 ? "green" : "steel", note: totalNapMin > 0 ? totalNapMin + " min" : "Ø" });
+      checklist.push({ label: "PAI (semaine)", icon: "heart", iconColor: "var(--red)", tier: weeklyPai >= 100 ? "green" : "amber", note: weeklyPai >= 100 ? "Objectif atteint" : Math.round(weeklyPai) + "/100" });
       if (todayMigRow) checklist.push({ label: "Migraine", icon: "bandage", iconColor: "var(--red)", tier: "red", note: (todayMigRow.intensity || "–") + "/10" });
 
-      html += collapsibleCardOpenHtml(sectionIcon("list") + 'Récap du jour');
+      html += collapsibleCardHtml(sectionIcon("list") + 'Récap du jour');
       checklist.forEach(function(c) { html += checklistRowHtml(c); });
       html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></details>';
     }
@@ -1552,31 +1547,6 @@ function scoreTierColor(pct, invert) {
   if (pct >= 0.4) return "amber";
   return "red";
 }
-// Jauge horizontale façon Zepp : repère triangulaire sur une échelle de
-// graduations, plutôt qu'un anneau — pour le stress notamment.
-function stressGaugeHtml(value, sublabel, invert) {
-  const pct = Math.max(0, Math.min(1, value / 100));
-  const tier = scoreTierColor(pct, invert !== false);
-  const color = "var(--" + tier + ")";
-  const tickCount = 24;
-  const pointerLeft = pct * 100;
-  let html = '<div style="padding:16px 2px 4px">';
-  html += '<div style="position:relative;height:10px"><div style="position:absolute;left:calc(' + pointerLeft + '% - 6px);top:0;width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:9px solid ' + color + ';filter:drop-shadow(0 0 5px ' + color + ')"></div></div>';
-  html += '<div style="display:flex;justify-content:space-between;align-items:flex-end;height:26px;gap:2px;margin-top:2px">';
-  for (let i = 0; i < tickCount; i++) {
-    const tickPct = i / (tickCount - 1);
-    const active = Math.abs(tickPct - pct) < (1 / tickCount);
-    html += '<div style="flex:1;height:' + (active ? "100%" : "50%") + ';background:' + (active ? color : "var(--line)") + ';border-radius:2px"></div>';
-  }
-  html += "</div>";
-  html += '<div style="display:flex;justify-content:space-between;margin-top:6px"><span class="muted" style="font-size:10px;text-transform:uppercase">Faible</span><span class="muted" style="font-size:10px;text-transform:uppercase">Élevé</span></div>';
-  html += "</div>";
-  html += '<div style="text-align:center;margin-top:4px"><span style="font-size:34px;font-weight:900;color:' + color + ';text-shadow:0 0 14px ' + color + '55">' + Math.round(value) + "</span>";
-  if (sublabel) html += ' <span style="font-size:12px;font-weight:800;text-transform:uppercase;color:' + color + '">' + sublabel + "</span>";
-  html += "</div>";
-  return html;
-}
-
 // Icônes "stylisées" en trait fin (pas des emoji de plateforme, jugés trop
 // cartoon/hétérogènes) — même gabarit (viewBox 24, trait 1.8, coins ronds)
 // pour un jeu d'icônes cohérent partout où un signal a besoin d'un repère
@@ -2463,8 +2433,8 @@ function tierDot(tier) {
 // plutôt qu'un état JS + listener — pas besoin de retenir l'état ouvert/
 // fermé nous-mêmes, le navigateur le fait, et c'est déjà le pattern utilisé
 // pour "Réglages avancés" (Entraînement > Tendance).
-function collapsibleCardOpenHtml(titleHtml) {
-  return '<details class="card" open><summary class="section-label" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center">' +
+function collapsibleCardHtml(titleHtml) {
+  return '<details class="card"><summary class="section-label" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center">' +
     '<span>' + titleHtml + '</span><span class="recap-chevron muted">▾</span></summary>';
 }
 // Une ligne de Récap du jour = toujours une seule ligne, jamais un retour à
