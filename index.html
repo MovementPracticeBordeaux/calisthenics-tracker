@@ -1032,38 +1032,39 @@ async function renderForme() {
     // cadre ".card" des autres indicateurs (fond noir uni, comme l'anneau
     // principal des apps Zepp/Garmin) pour le distinguer visuellement comme
     // l'indicateur central, pas juste une carte parmi d'autres.
-    html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>🧍 Forme <span style="color:var(--green)">🎯 + Vigilance</span></span><span>' + tierDot(tierColor) + '</span></div>';
+    html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Forme <span style="color:var(--green)">+ Vigilance</span></span><span>' + tierDot(tierColor) + '</span></div>';
     html += '<div style="padding:18px 0">' + formeVigilanceGaugeHtml(score, tierColor, tier, vigScore) + "</div>";
-    html += '<div style="text-align:center;padding-top:14px;border-top:1px solid var(--line);font-size:12px">😴 Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div>";
+    html += '<div style="text-align:center;padding-top:14px;border-top:1px solid var(--line);font-size:12px">' + statIconSvg("moon", "var(--muted)", 13) + ' Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div>";
     if (vigScore != null) {
-      html += '<div style="text-align:center;padding-top:10px;font-size:12px">🎯 Vigilance (' + vigWindowLabel + ') : <b style="color:var(--green)">' + (vigPct >= 0 ? "+" : "") + vigPct + '%</b> vs ta moyenne sur ce créneau</div>';
+      html += '<div style="text-align:center;padding-top:10px;font-size:12px">' + statIconSvg("target", "var(--green)", 13) + ' Vigilance (' + vigWindowLabel + ') : <b style="color:var(--green)">' + (vigPct >= 0 ? "+" : "") + vigPct + '%</b> vs ta moyenne sur ce créneau</div>';
     } else {
-      html += '<div class="muted" style="text-align:center;font-size:11px;padding-top:10px">🎯 Vigilance : pas encore de créneau comparable aujourd\'hui</div>';
+      html += '<div class="muted" style="text-align:center;font-size:11px;padding-top:10px">' + statIconSvg("target", "var(--muted)", 12) + " Vigilance : pas encore de créneau comparable aujourd'hui</div>";
     }
     html += "</div>";
 
-    // Check-list récapitulative — le reste des signaux, condensé. Un emoji
-    // par ligne (détail demandé explicitement) aide à repérer chaque signal
-    // au premier coup d'œil dans une liste qui peut vite s'allonger.
+    // Check-list récapitulative — le reste des signaux, condensé. Une icône
+    // stylisée par ligne (trait fin, cf. statIconSvg — pas un emoji de
+    // plateforme) aide à repérer chaque signal au premier coup d'œil dans
+    // une liste qui peut vite s'allonger.
     const checklist = [];
-    checklist.push({ label: "Forme", emoji: "🧍", tier: tierColor, note: score + "/100 · " + tier });
-    if (vigTierNow) checklist.push({ label: "Vigilance", emoji: "🎯", tier: vigTierNow, note: (vigPct >= 0 ? "+" : "") + vigPct + "%" });
-    if (stressTierNow) checklist.push({ label: "Stress", emoji: "⚡", tier: stressTierNow, note: Math.round(todayWearable.stress_avg) });
-    if (hrTierNow) checklist.push({ label: "FC repos", emoji: "❤️", tier: hrTierNow, note: (todayWearable && todayWearable.hr_resting != null ? todayWearable.hr_resting : Math.round(avgOf(hrSeries.map(function(s){return s.val;}).filter(function(v){return v>0;})))) + " bpm" });
-    if (hrvTierNow) checklist.push({ label: "VFC", emoji: "💓", tier: hrvTierNow, note: (todayWearable && todayWearable.hrv_avg != null ? Math.round(todayWearable.hrv_avg) : Math.round(avgOf(hrvSeries.map(function(s){return s.val;}).filter(function(v){return v>0;})))) + " ms" });
-    if (gripPct != null) checklist.push({ label: "Préhension", emoji: "💪", tier: gripPct <= -10 ? "red" : gripPct <= -5 ? "amber" : "green", note: todayGripRow.value_kg + " kg · " + (gripPct >= 0 ? "+" : "") + gripPct.toFixed(0) + "%" });
-    if (sleepMin != null) checklist.push({ label: "Sommeil", emoji: "🌙", tier: sleepMin < 360 ? "red" : sleepMin < 420 ? "amber" : "green", note: Math.floor(sleepMin/60) + "h" + Math.round(sleepMin%60).toString().padStart(2,'0') });
-    if (loadRatio != null) checklist.push({ label: "Fatigue accumulée (réveil)", emoji: "🔋", tier: wakeFatigueDeduction >= 20 ? "red" : wakeFatigueDeduction >= 10 ? "amber" : "green", note: (freshnessBonus > 0 ? "+" + freshnessBonus : "-" + wakeFatigueDeduction) + " pts · ACWR " + loadRatio.toFixed(2) });
-    if (todayTotalLoad > 0) checklist.push({ label: "Dépense du jour", emoji: "🔥", tier: todayDepletion >= 25 ? "red" : todayDepletion >= 12 ? "amber" : "green", note: "-" + todayDepletion + " pts (charge " + todayTotalLoad + ")" });
-    if (todayFitEffort > 0) checklist.push({ label: "Effort mesuré (.fit)", emoji: "⌚", tier: todayFitDepletion >= 10 ? "red" : todayFitDepletion >= 5 ? "amber" : "green", note: "-" + todayFitDepletion + " pts · " + todayFitSessions.map(function(w){return w.matched_discipline;}).filter(Boolean).join(", ") });
-    if (todayTripEffort > 0) checklist.push({ label: "Trajets à vélo", emoji: "🚴", tier: "green", note: "-" + todayTripDepletion + " pts · " + todayTripCount + " trajet(s)" });
-    if (todayMigraine != null) checklist.push({ label: "Migraine", emoji: "🤕", tier: "red", note: todayMigraine + "/10" });
-    checklist.push({ label: "Ressenti", emoji: "💭", tier: lifeload === "bien" ? "green" : lifeload === "malade" ? "red" : ["stresse","fatigue"].indexOf(lifeload) !== -1 ? "amber" : "steel", note: lifeload || "à renseigner dans le Coach" });
+    checklist.push({ label: "Forme", icon: "person", iconColor: "var(--pink)", tier: tierColor, note: score + "/100 · " + tier });
+    if (vigTierNow) checklist.push({ label: "Vigilance", icon: "target", iconColor: "var(--green)", tier: vigTierNow, note: (vigPct >= 0 ? "+" : "") + vigPct + "%" });
+    if (stressTierNow) checklist.push({ label: "Stress", icon: "lightning", iconColor: "var(--amber)", tier: stressTierNow, note: Math.round(todayWearable.stress_avg) });
+    if (hrTierNow) checklist.push({ label: "FC repos", icon: "heart", iconColor: "var(--red)", tier: hrTierNow, note: (todayWearable && todayWearable.hr_resting != null ? todayWearable.hr_resting : Math.round(avgOf(hrSeries.map(function(s){return s.val;}).filter(function(v){return v>0;})))) + " bpm" });
+    if (hrvTierNow) checklist.push({ label: "VFC", icon: "pulse", iconColor: "var(--pink)", tier: hrvTierNow, note: (todayWearable && todayWearable.hrv_avg != null ? Math.round(todayWearable.hrv_avg) : Math.round(avgOf(hrvSeries.map(function(s){return s.val;}).filter(function(v){return v>0;})))) + " ms" });
+    if (gripPct != null) checklist.push({ label: "Préhension", icon: "dumbbell", iconColor: "var(--chalkDim)", tier: gripPct <= -10 ? "red" : gripPct <= -5 ? "amber" : "green", note: todayGripRow.value_kg + " kg · " + (gripPct >= 0 ? "+" : "") + gripPct.toFixed(0) + "%" });
+    if (sleepMin != null) checklist.push({ label: "Sommeil", icon: "moon", iconColor: "var(--steel)", tier: sleepMin < 360 ? "red" : sleepMin < 420 ? "amber" : "green", note: Math.floor(sleepMin/60) + "h" + Math.round(sleepMin%60).toString().padStart(2,'0') });
+    if (loadRatio != null) checklist.push({ label: "Fatigue accumulée (réveil)", icon: "battery", iconColor: "var(--chalkDim)", tier: wakeFatigueDeduction >= 20 ? "red" : wakeFatigueDeduction >= 10 ? "amber" : "green", note: (freshnessBonus > 0 ? "+" + freshnessBonus : "-" + wakeFatigueDeduction) + " pts · ACWR " + loadRatio.toFixed(2) });
+    if (todayTotalLoad > 0) checklist.push({ label: "Dépense du jour", icon: "flame", iconColor: "var(--rust)", tier: todayDepletion >= 25 ? "red" : todayDepletion >= 12 ? "amber" : "green", note: "-" + todayDepletion + " pts (charge " + todayTotalLoad + ")" });
+    if (todayFitEffort > 0) checklist.push({ label: "Effort mesuré (.fit)", icon: "watch", iconColor: "var(--chalkDim)", tier: todayFitDepletion >= 10 ? "red" : todayFitDepletion >= 5 ? "amber" : "green", note: "-" + todayFitDepletion + " pts · " + todayFitSessions.map(function(w){return w.matched_discipline;}).filter(Boolean).join(", ") });
+    if (todayTripEffort > 0) checklist.push({ label: "Trajets à vélo", icon: "bike", iconColor: "var(--green)", tier: "green", note: "-" + todayTripDepletion + " pts · " + todayTripCount + " trajet(s)" });
+    if (todayMigraine != null) checklist.push({ label: "Migraine", icon: "bandage", iconColor: "var(--red)", tier: "red", note: todayMigraine + "/10" });
+    checklist.push({ label: "Ressenti", icon: "thought", iconColor: "var(--chalkDim)", tier: lifeload === "bien" ? "green" : lifeload === "malade" ? "red" : ["stresse","fatigue"].indexOf(lifeload) !== -1 ? "amber" : "steel", note: lifeload || "à renseigner dans le Coach" });
 
     html += '<div class="card"><div class="section-label">Récap du jour</div>';
     checklist.forEach(function(c) {
       html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
-      html += '<span style="font-size:13px">' + (c.emoji ? c.emoji + " " : "") + c.label + (c.note ? ' <span class="muted" style="font-size:11px">· ' + esc(String(c.note)) + '</span>' : '') + "</span>";
+      html += '<span style="font-size:13px;display:inline-flex;align-items:center;gap:6px">' + (c.icon ? statIconSvg(c.icon, c.iconColor, 15) : "") + c.label + (c.note ? ' <span class="muted" style="font-size:11px">· ' + esc(String(c.note)) + '</span>' : '') + "</span>";
       html += '<span>' + tierDot(c.tier) + "</span></div>";
     });
     html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></div>';
@@ -1591,6 +1592,30 @@ function stressGaugeHtml(value, sublabel, invert) {
   return html;
 }
 
+// Icônes "stylisées" en trait fin (pas des emoji de plateforme, jugés trop
+// cartoon/hétérogènes) — même gabarit (viewBox 24, trait 1.8, coins ronds)
+// pour un jeu d'icônes cohérent partout où un signal a besoin d'un repère
+// visuel rapide (jauge Forme+Vigilance, Récap du jour).
+function statIconSvg(name, color, size) {
+  size = size || 16;
+  const paths = {
+    person: '<circle cx="12" cy="7.5" r="3.3"/><path d="M5 21c0-4 3.2-6.3 7-6.3s7 2.3 7 6.3" stroke-linecap="round" stroke-linejoin="round"/>',
+    target: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1" fill="' + (color || "currentColor") + '" stroke="none"/>',
+    pulse: '<polyline points="1,13 7,13 9.5,6 13.5,20 16,13 23,13" stroke-linecap="round" stroke-linejoin="round"/>',
+    moon: '<path d="M18.5 13.8A7.6 7.6 0 1 1 10.2 5.5a6.1 6.1 0 0 0 8.3 8.3Z" stroke-linejoin="round"/>',
+    lightning: '<polygon points="13,2 4,14 11,14 9.5,22 20,9 13,9" stroke-linejoin="round"/>',
+    heart: '<path d="M12 20.2s-7.3-4.4-9.7-9A5.4 5.4 0 0 1 12 5.8a5.4 5.4 0 0 1 9.7 5.4c-2.4 4.6-9.7 9-9.7 9Z" stroke-linejoin="round"/>',
+    dumbbell: '<path d="M4 9.5v5M20 9.5v5M2 10.5v3M22 10.5v3M7 12h10" stroke-linecap="round"/>',
+    battery: '<rect x="2" y="8.5" width="17" height="7" rx="2"/><path d="M20.5 11v2" stroke-linecap="round"/><rect x="4.5" y="10.3" width="9" height="3.4" fill="' + (color || "currentColor") + '" stroke="none"/>',
+    flame: '<path d="M12 22c4 0 6.5-2.6 6.5-6.2 0-3-2-5-3-7-.2 2-1.3 3-2.3 3 .3-3-1-5.8-3.7-7.3.6 2.6-1 4.4-2.6 6.2C5 12.2 4 14 4 16.3 4 19.6 7.5 22 12 22Z" stroke-linejoin="round"/>',
+    watch: '<circle cx="12" cy="13" r="7"/><path d="M12 9.5v3.5l2.6 1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.3 2h5.4M9.8 2l.7 2.6M14.2 2l-.7 2.6" stroke-linecap="round"/>',
+    bike: '<circle cx="6" cy="17" r="3.3"/><circle cx="18" cy="17" r="3.3"/><path d="M6 17l4-8h4l4 8M10 9l3-3h3" stroke-linecap="round" stroke-linejoin="round"/>',
+    bandage: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8" stroke-linecap="round"/>',
+    thought: '<path d="M4 6h16v9.5H10.5l-4 3.7v-3.7H4Z" stroke-linejoin="round"/>',
+  };
+  const inner = paths[name] || "";
+  return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="' + (color || "currentColor") + '" stroke-width="1.8" style="vertical-align:-3px;flex:none">' + inner + "</svg>";
+}
 function circleGaugeHtml(value, max, opts) {
   opts = opts || {};
   const size = opts.size || 140, stroke = opts.strokeWidth || 12;
@@ -1638,24 +1663,28 @@ function formeVigilanceGaugeHtml(formeScore, formeTierColor, formeTierLabel, vig
 
   function haloHtml(cx, colorVar) {
     const s = 2 * R + 30;
-    return '<div style="position:absolute;left:' + (cx - s / 2) + 'px;top:' + (cy - s / 2) + 'px;width:' + s + 'px;height:' + s + 'px;border-radius:50%;background:radial-gradient(circle, ' + colorVar + ' 0%, transparent 68%);opacity:0.4;filter:blur(18px)"></div>';
+    return '<div style="position:absolute;left:' + (cx - s / 2) + 'px;top:' + (cy - s / 2) + 'px;width:' + s + 'px;height:' + s + 'px;border-radius:50%;background:radial-gradient(circle, ' + colorVar + ' 0%, transparent 68%);opacity:0.55;filter:blur(18px);mix-blend-mode:screen"></div>';
   }
   function textureHtml(cx) {
     return '<div style="position:absolute;left:' + (cx - R) + 'px;top:' + (cy - R) + 'px;width:' + (2 * R) + 'px;height:' + (2 * R) + 'px;border-radius:50%;overflow:hidden;opacity:0.1;background-image:' + dotPattern + ';background-size:9px 9px"></div>';
   }
+  // mix-blend-mode:screen sur les deux anneaux : là où les traits rose et
+  // vert se croisent, la lumière s'additionne au lieu que l'un recouvre
+  // simplement l'autre — c'est ce qui donne la jonction lumineuse et douce
+  // de la maquette au lieu d'un croisement à l'arrache.
   function ringHtml(cx, pct, gradFrom, gradTo, glowColor, dimmed) {
     const c = 2 * Math.PI * R;
     const offset = c * (1 - Math.max(0, Math.min(1, pct)));
     const gid = "fvg-grad-" + (gaugeIdCounter++);
     let s = '<defs><linearGradient id="' + gid + '" x1="0%" y1="0%" x2="100%" y2="100%">';
     s += '<stop offset="0%" stop-color="' + gradFrom + '"/><stop offset="100%" stop-color="' + gradTo + '"/></linearGradient></defs>';
-    s += '<circle cx="' + cx + '" cy="' + cy + '" r="' + R + '" fill="none" stroke="var(--surfaceRaised)" stroke-width="' + stroke + '" opacity="' + (dimmed ? 0.3 : 0.55) + '"/>';
-    if (!dimmed) s += '<circle cx="' + cx + '" cy="' + cy + '" r="' + R + '" fill="none" stroke="url(#' + gid + ')" stroke-width="' + stroke + '" stroke-dasharray="' + c + '" stroke-dashoffset="' + offset + '" stroke-linecap="round" transform="rotate(-90 ' + cx + ' ' + cy + ')" style="filter:drop-shadow(0 0 7px ' + glowColor + ')"/>';
+    s += '<circle cx="' + cx + '" cy="' + cy + '" r="' + R + '" fill="none" stroke="var(--surfaceRaised)" stroke-width="' + stroke + '" opacity="' + (dimmed ? 0.25 : 0.4) + '"/>';
+    if (!dimmed) s += '<circle cx="' + cx + '" cy="' + cy + '" r="' + R + '" fill="none" stroke="url(#' + gid + ')" stroke-width="' + stroke + '" stroke-dasharray="' + c + '" stroke-dashoffset="' + offset + '" stroke-linecap="round" transform="rotate(-90 ' + cx + ' ' + cy + ')" style="filter:drop-shadow(0 0 7px ' + glowColor + ');mix-blend-mode:screen"/>';
     return s;
   }
-  function labelHtml(cx, emoji, value, label, colorVar, dimmed) {
+  function labelHtml(cx, iconName, value, label, colorVar, dimmed) {
     let s = '<div style="position:absolute;left:' + (cx - R) + 'px;top:' + (cy - R) + 'px;width:' + (2 * R) + 'px;height:' + (2 * R) + 'px;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;opacity:' + (dimmed ? 0.45 : 1) + '">';
-    s += '<span style="font-size:13px;margin-bottom:2px">' + emoji + "</span>";
+    s += '<span style="margin-bottom:3px">' + statIconSvg(iconName, dimmed ? "var(--muted)" : colorVar, 20) + "</span>";
     s += '<span style="font-size:28px;font-weight:900;color:var(--chalk);line-height:1' + (dimmed ? "" : ";text-shadow:0 0 10px " + colorVar + "88") + '">' + (dimmed ? "–" : Math.round(value)) + "</span>";
     s += '<span style="font-size:10px;font-weight:800;text-transform:uppercase;color:' + colorVar + ';letter-spacing:.4px">' + label + "</span>";
     s += "</div>";
@@ -1669,12 +1698,13 @@ function formeVigilanceGaugeHtml(formeScore, formeTierColor, formeTierLabel, vig
   html += ringHtml(leftCx, formeScore / 100, "var(--rust)", "var(--pink)", "var(--pink)", false);
   html += ringHtml(rightCx, vigDisplay / 100, "var(--greenDark)", "var(--green)", "var(--green)", !hasVig);
   html += "</svg>";
-  html += labelHtml(textLeftCx, "🧍", formeScore, "Forme", "var(--pink)", false);
-  html += labelHtml(textRightCx, "🎯", vigDisplay, "Vigilance", "var(--green)", !hasVig);
+  html += labelHtml(textLeftCx, "person", formeScore, "Forme", "var(--pink)", false);
+  html += labelHtml(textRightCx, "target", vigDisplay, "Vigilance", "var(--green)", !hasVig);
   html += '<div style="position:absolute;left:' + (centerCx - centerR) + 'px;top:' + (centerCy - centerR) + 'px;width:' + (2 * centerR) + 'px;height:' + (2 * centerR) + 'px;border-radius:50%;background:var(--bg);box-shadow:0 0 0 4px var(--bg),0 0 24px 4px rgba(236,72,153,0.4),0 0 24px 4px rgba(57,255,138,0.3);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:2">';
   html += '<span style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Ton score</span>';
   html += '<span style="font-size:32px;font-weight:900;color:var(--chalk);line-height:1.15">' + Math.round(formeScore) + "</span>";
   html += '<span style="font-size:10px;font-weight:800;text-transform:uppercase;color:var(--' + formeTierColor + ')">' + esc(formeTierLabel) + "</span>";
+  html += '<span style="margin-top:3px">' + statIconSvg("pulse", "var(--muted)", 15) + "</span>";
   html += "</div></div>";
   return html;
 }
