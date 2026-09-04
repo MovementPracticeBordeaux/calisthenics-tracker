@@ -25,7 +25,6 @@
     --green: #39FF8A; --greenDark: #0FA85A;
     --amber: #FFB020; --amberDark: #E0791A;
     --red: #FF3366; --redDark: #C41E52;
-    --vigilance: #FF3EC8; --vigilanceDark: #A6157F;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); font-family: system-ui, -apple-system, sans-serif; color: var(--chalk); }
@@ -1033,41 +1032,38 @@ async function renderForme() {
     // cadre ".card" des autres indicateurs (fond noir uni, comme l'anneau
     // principal des apps Zepp/Garmin) pour le distinguer visuellement comme
     // l'indicateur central, pas juste une carte parmi d'autres.
-    html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>Forme <span style="color:var(--vigilance)">+ Vigilance</span></span><span>' + tierDot(tierColor) + '</span></div>';
-    html += '<div style="padding:18px 0">' + circleGaugeHtml(score, 100, {
-      sublabel: tier,
-      size: 200,
-      strokeWidth: 16,
-      inner: vigScore != null ? { value: vigScore, max: 100 } : null,
-    }) + "</div>";
-    html += '<div style="text-align:center;padding-top:14px;border-top:1px solid var(--line);font-size:12px">Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div>";
+    html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>🧍 Forme <span style="color:var(--green)">🎯 + Vigilance</span></span><span>' + tierDot(tierColor) + '</span></div>';
+    html += '<div style="padding:18px 0">' + formeVigilanceGaugeHtml(score, tierColor, tier, vigScore) + "</div>";
+    html += '<div style="text-align:center;padding-top:14px;border-top:1px solid var(--line);font-size:12px">😴 Besoin de repos : <b style="color:var(--' + tierColor + ')">' + needRest + "</b></div>";
     if (vigScore != null) {
-      html += '<div style="text-align:center;padding-top:10px;font-size:12px">Vigilance (' + vigWindowLabel + ') : <b style="color:var(--vigilance)">' + (vigPct >= 0 ? "+" : "") + vigPct + '%</b> vs ta moyenne sur ce créneau</div>';
+      html += '<div style="text-align:center;padding-top:10px;font-size:12px">🎯 Vigilance (' + vigWindowLabel + ') : <b style="color:var(--green)">' + (vigPct >= 0 ? "+" : "") + vigPct + '%</b> vs ta moyenne sur ce créneau</div>';
     } else {
-      html += '<div class="muted" style="text-align:center;font-size:11px;padding-top:10px">Vigilance : pas encore de créneau comparable aujourd\'hui</div>';
+      html += '<div class="muted" style="text-align:center;font-size:11px;padding-top:10px">🎯 Vigilance : pas encore de créneau comparable aujourd\'hui</div>';
     }
     html += "</div>";
 
-    // Check-list récapitulative — le reste des signaux, condensé.
+    // Check-list récapitulative — le reste des signaux, condensé. Un emoji
+    // par ligne (détail demandé explicitement) aide à repérer chaque signal
+    // au premier coup d'œil dans une liste qui peut vite s'allonger.
     const checklist = [];
-    checklist.push({ label: "Forme", tier: tierColor, note: score + "/100 · " + tier });
-    if (vigTierNow) checklist.push({ label: "Vigilance", tier: vigTierNow, note: (vigPct >= 0 ? "+" : "") + vigPct + "%" });
-    if (stressTierNow) checklist.push({ label: "Stress", tier: stressTierNow, note: Math.round(todayWearable.stress_avg) });
-    if (hrTierNow) checklist.push({ label: "FC repos", tier: hrTierNow, note: (todayWearable && todayWearable.hr_resting != null ? todayWearable.hr_resting : Math.round(avgOf(hrSeries.map(function(s){return s.val;}).filter(function(v){return v>0;})))) + " bpm" });
-    if (hrvTierNow) checklist.push({ label: "VFC", tier: hrvTierNow, note: (todayWearable && todayWearable.hrv_avg != null ? Math.round(todayWearable.hrv_avg) : Math.round(avgOf(hrvSeries.map(function(s){return s.val;}).filter(function(v){return v>0;})))) + " ms" });
-    if (gripPct != null) checklist.push({ label: "Préhension", tier: gripPct <= -10 ? "red" : gripPct <= -5 ? "amber" : "green", note: todayGripRow.value_kg + " kg · " + (gripPct >= 0 ? "+" : "") + gripPct.toFixed(0) + "%" });
-    if (sleepMin != null) checklist.push({ label: "Sommeil", tier: sleepMin < 360 ? "red" : sleepMin < 420 ? "amber" : "green", note: Math.floor(sleepMin/60) + "h" + Math.round(sleepMin%60).toString().padStart(2,'0') });
-    if (loadRatio != null) checklist.push({ label: "Fatigue accumulée (réveil)", tier: wakeFatigueDeduction >= 20 ? "red" : wakeFatigueDeduction >= 10 ? "amber" : "green", note: (freshnessBonus > 0 ? "+" + freshnessBonus : "-" + wakeFatigueDeduction) + " pts · ACWR " + loadRatio.toFixed(2) });
-    if (todayTotalLoad > 0) checklist.push({ label: "Dépense du jour", tier: todayDepletion >= 25 ? "red" : todayDepletion >= 12 ? "amber" : "green", note: "-" + todayDepletion + " pts (charge " + todayTotalLoad + ")" });
-    if (todayFitEffort > 0) checklist.push({ label: "Effort mesuré (.fit)", tier: todayFitDepletion >= 10 ? "red" : todayFitDepletion >= 5 ? "amber" : "green", note: "-" + todayFitDepletion + " pts · " + todayFitSessions.map(function(w){return w.matched_discipline;}).filter(Boolean).join(", ") });
-    if (todayTripEffort > 0) checklist.push({ label: "Trajets à vélo", tier: "green", note: "-" + todayTripDepletion + " pts · " + todayTripCount + " trajet(s)" });
-    if (todayMigraine != null) checklist.push({ label: "Migraine", tier: "red", note: todayMigraine + "/10" });
-    checklist.push({ label: "Ressenti", tier: lifeload === "bien" ? "green" : lifeload === "malade" ? "red" : ["stresse","fatigue"].indexOf(lifeload) !== -1 ? "amber" : "steel", note: lifeload || "à renseigner dans le Coach" });
+    checklist.push({ label: "Forme", emoji: "🧍", tier: tierColor, note: score + "/100 · " + tier });
+    if (vigTierNow) checklist.push({ label: "Vigilance", emoji: "🎯", tier: vigTierNow, note: (vigPct >= 0 ? "+" : "") + vigPct + "%" });
+    if (stressTierNow) checklist.push({ label: "Stress", emoji: "⚡", tier: stressTierNow, note: Math.round(todayWearable.stress_avg) });
+    if (hrTierNow) checklist.push({ label: "FC repos", emoji: "❤️", tier: hrTierNow, note: (todayWearable && todayWearable.hr_resting != null ? todayWearable.hr_resting : Math.round(avgOf(hrSeries.map(function(s){return s.val;}).filter(function(v){return v>0;})))) + " bpm" });
+    if (hrvTierNow) checklist.push({ label: "VFC", emoji: "💓", tier: hrvTierNow, note: (todayWearable && todayWearable.hrv_avg != null ? Math.round(todayWearable.hrv_avg) : Math.round(avgOf(hrvSeries.map(function(s){return s.val;}).filter(function(v){return v>0;})))) + " ms" });
+    if (gripPct != null) checklist.push({ label: "Préhension", emoji: "💪", tier: gripPct <= -10 ? "red" : gripPct <= -5 ? "amber" : "green", note: todayGripRow.value_kg + " kg · " + (gripPct >= 0 ? "+" : "") + gripPct.toFixed(0) + "%" });
+    if (sleepMin != null) checklist.push({ label: "Sommeil", emoji: "🌙", tier: sleepMin < 360 ? "red" : sleepMin < 420 ? "amber" : "green", note: Math.floor(sleepMin/60) + "h" + Math.round(sleepMin%60).toString().padStart(2,'0') });
+    if (loadRatio != null) checklist.push({ label: "Fatigue accumulée (réveil)", emoji: "🔋", tier: wakeFatigueDeduction >= 20 ? "red" : wakeFatigueDeduction >= 10 ? "amber" : "green", note: (freshnessBonus > 0 ? "+" + freshnessBonus : "-" + wakeFatigueDeduction) + " pts · ACWR " + loadRatio.toFixed(2) });
+    if (todayTotalLoad > 0) checklist.push({ label: "Dépense du jour", emoji: "🔥", tier: todayDepletion >= 25 ? "red" : todayDepletion >= 12 ? "amber" : "green", note: "-" + todayDepletion + " pts (charge " + todayTotalLoad + ")" });
+    if (todayFitEffort > 0) checklist.push({ label: "Effort mesuré (.fit)", emoji: "⌚", tier: todayFitDepletion >= 10 ? "red" : todayFitDepletion >= 5 ? "amber" : "green", note: "-" + todayFitDepletion + " pts · " + todayFitSessions.map(function(w){return w.matched_discipline;}).filter(Boolean).join(", ") });
+    if (todayTripEffort > 0) checklist.push({ label: "Trajets à vélo", emoji: "🚴", tier: "green", note: "-" + todayTripDepletion + " pts · " + todayTripCount + " trajet(s)" });
+    if (todayMigraine != null) checklist.push({ label: "Migraine", emoji: "🤕", tier: "red", note: todayMigraine + "/10" });
+    checklist.push({ label: "Ressenti", emoji: "💭", tier: lifeload === "bien" ? "green" : lifeload === "malade" ? "red" : ["stresse","fatigue"].indexOf(lifeload) !== -1 ? "amber" : "steel", note: lifeload || "à renseigner dans le Coach" });
 
     html += '<div class="card"><div class="section-label">Récap du jour</div>';
     checklist.forEach(function(c) {
       html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">';
-      html += '<span style="font-size:13px">' + c.label + (c.note ? ' <span class="muted" style="font-size:11px">· ' + esc(String(c.note)) + '</span>' : '') + "</span>";
+      html += '<span style="font-size:13px">' + (c.emoji ? c.emoji + " " : "") + c.label + (c.note ? ' <span class="muted" style="font-size:11px">· ' + esc(String(c.note)) + '</span>' : '') + "</span>";
       html += '<span>' + tierDot(c.tier) + "</span></div>";
     });
     html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></div>';
@@ -1614,30 +1610,71 @@ function circleGaugeHtml(value, max, opts) {
   html += '<circle cx="' + size/2 + '" cy="' + size/2 + '" r="' + r + '" fill="none" stroke="var(--surfaceRaised)" stroke-width="' + stroke + '"/>';
   html += '<circle cx="' + size/2 + '" cy="' + size/2 + '" r="' + r + '" fill="none" stroke="url(#' + gid + ')" stroke-width="' + stroke + '" stroke-dasharray="' + c + '" stroke-dashoffset="' + offset + '" stroke-linecap="round" style="transition:stroke-dashoffset 0.4s;filter:drop-shadow(0 0 6px ' + solidColor + ')"/>';
 
-  // Anneau intérieur optionnel (ex : Vigilance imbriquée dans Forme) — rose
-  // fluo dédié pour bien le distinguer visuellement du rouge/orange/vert
-  // utilisé pour les scores de récupération.
-  if (opts.inner) {
-    const gap = opts.inner.gap != null ? opts.inner.gap : 8;
-    const stroke2 = opts.inner.strokeWidth || Math.round(stroke * 0.75);
-    const r2 = r - stroke / 2 - gap - stroke2 / 2;
-    const c2 = 2 * Math.PI * r2;
-    const innerPct = Math.max(0, Math.min(1, opts.inner.value / opts.inner.max));
-    const offset2 = c2 * (1 - innerPct);
-    const gid2 = "gauge-grad-" + (gaugeIdCounter++);
-    html += '<defs><linearGradient id="' + gid2 + '" x1="0%" y1="0%" x2="100%" y2="100%">';
-    html += '<stop offset="0%" stop-color="var(--vigilanceDark)"/><stop offset="100%" stop-color="var(--vigilance)"/>';
-    html += '</linearGradient></defs>';
-    html += '<circle cx="' + size/2 + '" cy="' + size/2 + '" r="' + r2 + '" fill="none" stroke="var(--surfaceRaised)" stroke-width="' + stroke2 + '"/>';
-    html += '<circle cx="' + size/2 + '" cy="' + size/2 + '" r="' + r2 + '" fill="none" stroke="url(#' + gid2 + ')" stroke-width="' + stroke2 + '" stroke-dasharray="' + c2 + '" stroke-dashoffset="' + offset2 + '" stroke-linecap="round" style="transition:stroke-dashoffset 0.4s;filter:drop-shadow(0 0 5px var(--vigilance))"/>';
-  }
-
   html += '</svg>';
   html += '<div style="position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center">';
   html += '<span style="font-size:' + Math.round(size*0.26) + 'px;font-weight:900;color:var(--chalk);line-height:1;text-shadow:0 0 14px ' + solidColor + '55">' + Math.round(value) + "</span>";
   if (opts.sublabel) html += '<span style="font-size:11px;font-weight:800;text-transform:uppercase;color:' + solidColor + ';margin-top:2px">' + opts.sublabel + "</span>";
   // (le sous-libellé de l'anneau intérieur n'est plus affiché au centre —
   // trop chargé visuellement, déplacé sous "Besoin de repos" par l'appelant)
+  html += "</div></div>";
+  return html;
+}
+
+// Jauge Forme + Vigilance : deux orbes qui se chevauchent (au lieu de deux
+// anneaux concentriques) avec halo néon flouté + texture pointillée en
+// arrière-plan de chaque cercle, et un badge de score composite flottant à
+// leur jonction — cf. maquette utilisateur (2026-09). Vigilance en vert
+// (couleur de catégorie propre à cette jauge, distincte du rose Forme),
+// gérée avec un état neutre/estompé si pas encore de créneau comparable
+// aujourd'hui plutôt que de faire disparaître le cercle.
+function formeVigilanceGaugeHtml(formeScore, formeTierColor, formeTierLabel, vigScore) {
+  const W = 320, H = 208, R = 78, stroke = 9;
+  const leftCx = 102, rightCx = 218, cy = 92;
+  const textLeftCx = leftCx - 16, textRightCx = rightCx + 16;
+  const centerCx = (leftCx + rightCx) / 2, centerCy = cy, centerR = 44;
+  const hasVig = vigScore != null;
+  const vigDisplay = hasVig ? vigScore : 0;
+  const dotPattern = "radial-gradient(circle, rgba(255,255,255,0.55) 1px, transparent 1.6px)";
+
+  function haloHtml(cx, colorVar) {
+    const s = 2 * R + 30;
+    return '<div style="position:absolute;left:' + (cx - s / 2) + 'px;top:' + (cy - s / 2) + 'px;width:' + s + 'px;height:' + s + 'px;border-radius:50%;background:radial-gradient(circle, ' + colorVar + ' 0%, transparent 68%);opacity:0.4;filter:blur(18px)"></div>';
+  }
+  function textureHtml(cx) {
+    return '<div style="position:absolute;left:' + (cx - R) + 'px;top:' + (cy - R) + 'px;width:' + (2 * R) + 'px;height:' + (2 * R) + 'px;border-radius:50%;overflow:hidden;opacity:0.1;background-image:' + dotPattern + ';background-size:9px 9px"></div>';
+  }
+  function ringHtml(cx, pct, gradFrom, gradTo, glowColor, dimmed) {
+    const c = 2 * Math.PI * R;
+    const offset = c * (1 - Math.max(0, Math.min(1, pct)));
+    const gid = "fvg-grad-" + (gaugeIdCounter++);
+    let s = '<defs><linearGradient id="' + gid + '" x1="0%" y1="0%" x2="100%" y2="100%">';
+    s += '<stop offset="0%" stop-color="' + gradFrom + '"/><stop offset="100%" stop-color="' + gradTo + '"/></linearGradient></defs>';
+    s += '<circle cx="' + cx + '" cy="' + cy + '" r="' + R + '" fill="none" stroke="var(--surfaceRaised)" stroke-width="' + stroke + '" opacity="' + (dimmed ? 0.3 : 0.55) + '"/>';
+    if (!dimmed) s += '<circle cx="' + cx + '" cy="' + cy + '" r="' + R + '" fill="none" stroke="url(#' + gid + ')" stroke-width="' + stroke + '" stroke-dasharray="' + c + '" stroke-dashoffset="' + offset + '" stroke-linecap="round" transform="rotate(-90 ' + cx + ' ' + cy + ')" style="filter:drop-shadow(0 0 7px ' + glowColor + ')"/>';
+    return s;
+  }
+  function labelHtml(cx, emoji, value, label, colorVar, dimmed) {
+    let s = '<div style="position:absolute;left:' + (cx - R) + 'px;top:' + (cy - R) + 'px;width:' + (2 * R) + 'px;height:' + (2 * R) + 'px;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;opacity:' + (dimmed ? 0.45 : 1) + '">';
+    s += '<span style="font-size:13px;margin-bottom:2px">' + emoji + "</span>";
+    s += '<span style="font-size:28px;font-weight:900;color:var(--chalk);line-height:1' + (dimmed ? "" : ";text-shadow:0 0 10px " + colorVar + "88") + '">' + (dimmed ? "–" : Math.round(value)) + "</span>";
+    s += '<span style="font-size:10px;font-weight:800;text-transform:uppercase;color:' + colorVar + ';letter-spacing:.4px">' + label + "</span>";
+    s += "</div>";
+    return s;
+  }
+
+  let html = '<div style="position:relative;width:' + W + 'px;height:' + H + 'px;margin:0 auto">';
+  html += haloHtml(leftCx, "var(--pink)") + haloHtml(rightCx, "var(--green)");
+  html += textureHtml(leftCx) + textureHtml(rightCx);
+  html += '<svg width="' + W + '" height="' + H + '" style="position:absolute;inset:0;overflow:visible">';
+  html += ringHtml(leftCx, formeScore / 100, "var(--rust)", "var(--pink)", "var(--pink)", false);
+  html += ringHtml(rightCx, vigDisplay / 100, "var(--greenDark)", "var(--green)", "var(--green)", !hasVig);
+  html += "</svg>";
+  html += labelHtml(textLeftCx, "🧍", formeScore, "Forme", "var(--pink)", false);
+  html += labelHtml(textRightCx, "🎯", vigDisplay, "Vigilance", "var(--green)", !hasVig);
+  html += '<div style="position:absolute;left:' + (centerCx - centerR) + 'px;top:' + (centerCy - centerR) + 'px;width:' + (2 * centerR) + 'px;height:' + (2 * centerR) + 'px;border-radius:50%;background:var(--bg);box-shadow:0 0 0 4px var(--bg),0 0 24px 4px rgba(236,72,153,0.4),0 0 24px 4px rgba(57,255,138,0.3);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:2">';
+  html += '<span style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Ton score</span>';
+  html += '<span style="font-size:32px;font-weight:900;color:var(--chalk);line-height:1.15">' + Math.round(formeScore) + "</span>";
+  html += '<span style="font-size:10px;font-weight:800;text-transform:uppercase;color:var(--' + formeTierColor + ')">' + esc(formeTierLabel) + "</span>";
   html += "</div></div>";
   return html;
 }
