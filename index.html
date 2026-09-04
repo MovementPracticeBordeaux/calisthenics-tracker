@@ -1223,7 +1223,7 @@ async function loadEntrainement() {
     }
 
     html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>' + sectionIcon("dumbbell") + 'Score d\'entraînement</span><span>' + tierDot(energyTier) + '</span></div>';
-    html += '<div style="padding:18px 0">' + circleGaugeHtml(energy, 100, { sublabel: energyLabel, size: 200, strokeWidth: 16 }) + "</div>";
+    html += '<div style="padding:18px 0">' + singleScoreGaugeHtml(energy, 100, { sublabel: energyLabel, size: 200 }) + "</div>";
     html += "</div>";
 
     const checklist = [];
@@ -1453,7 +1453,7 @@ async function loadRecuperation() {
     } else {
       const h = Math.floor(latest.total / 60), m = latest.total % 60;
       html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>' + sectionIcon("moon") + 'Sommeil</span><span>' + tierDot(sleepTierColor) + '</span></div>';
-      html += '<div style="padding:18px 0">' + circleGaugeHtml(sleepScore, 100, { sublabel: sleepTier, size: 200, strokeWidth: 16 }) + "</div>";
+      html += '<div style="padding:18px 0">' + singleScoreGaugeHtml(sleepScore, 100, { sublabel: sleepTier, size: 200 }) + "</div>";
       html += '<div style="text-align:center;padding-top:14px;border-top:1px solid var(--line);font-size:13px"><b>' + h + 'h' + (m<10?'0':'') + m + '</b>';
       if (avgTotal != null) html += ' <span class="muted">· moyenne 14j : ' + Math.floor(avgTotal/60) + 'h' + Math.round(avgTotal%60).toString().padStart(2,'0') + '</span>';
       html += "</div>";
@@ -1559,11 +1559,6 @@ function scoreTierColor(pct, invert) {
   if (pct >= 0.4) return "amber";
   return "red";
 }
-function scoreTierGradient(tier) {
-  const stops = { green: ["var(--greenDark)", "var(--green)"], amber: ["var(--amberDark)", "var(--amber)"], red: ["var(--redDark)", "var(--red)"] };
-  return stops[tier] || stops.green;
-}
-let gaugeIdCounter = 0;
 // Jauge horizontale façon Zepp : repère triangulaire sur une échelle de
 // graduations, plutôt qu'un anneau — pour le stress notamment.
 function stressGaugeHtml(value, sublabel, invert) {
@@ -1614,36 +1609,39 @@ function statIconSvg(name, color, size) {
   const inner = paths[name] || "";
   return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="' + (color || "currentColor") + '" stroke-width="1.8" style="vertical-align:-3px;flex:none">' + inner + "</svg>";
 }
-// Icône discrète devant un titre de section (.section-label) — toujours la
-// même taille/couleur pour rester cohérent avec le texte uppercase 11px.
+// Icône devant un titre de section (.section-label) — même couleur que
+// cette icône dans les lignes de Récap du jour (checklist.push plus haut),
+// pas un gris neutre, pour rester cohérent avec le reste de l'appli.
+const SECTION_ICON_COLORS = {
+  person: "var(--pink)", target: "var(--green)", lightning: "var(--amber)",
+  heart: "var(--red)", pulse: "var(--pink)", moon: "var(--steel)",
+  flame: "var(--rust)", bike: "var(--green)", bandage: "var(--red)",
+  dumbbell: "var(--chalkDim)", battery: "var(--chalkDim)", watch: "var(--chalkDim)",
+  thought: "var(--chalkDim)", list: "var(--chalkDim)",
+};
 function sectionIcon(name) {
-  return statIconSvg(name, "var(--muted)", 13) + " ";
+  return statIconSvg(name, SECTION_ICON_COLORS[name] || "var(--muted)", 13) + " ";
 }
-function circleGaugeHtml(value, max, opts) {
+// Jauge à indicateur unique (Score d'entraînement, Sommeil) : même principe
+// que formeVigilanceGaugeHtml — illustration fournie par l'utilisateur
+// (score-shape.webp, fond noir pur, mix-blend-mode:screen) recolorée par
+// filter CSS selon le tier, plutôt qu'un anneau SVG. Signature proche de
+// l'ancien circleGaugeHtml (value/max/opts.sublabel/opts.size) pour limiter
+// les changements côté appelants.
+function singleScoreGaugeHtml(value, max, opts) {
   opts = opts || {};
-  const size = opts.size || 140, stroke = opts.strokeWidth || 12;
   const pct = Math.max(0, Math.min(1, value / max));
-  const r = (size - stroke) / 2;
-  const c = 2 * Math.PI * r;
-  const offset = c * (1 - pct);
   const tier = opts.tier || scoreTierColor(pct, opts.invert);
-  const gradStops = scoreTierGradient(tier);
+  const size = opts.size || 200;
   const solidColor = "var(--" + tier + ")";
-  const gid = "gauge-grad-" + (gaugeIdCounter++);
-  let html = '<div style="position:relative;width:' + size + 'px;height:' + size + 'px;margin:0 auto">';
-  html += '<svg width="' + size + '" height="' + size + '" style="transform:rotate(-90deg);overflow:visible">';
-  html += '<defs><linearGradient id="' + gid + '" x1="0%" y1="0%" x2="100%" y2="100%">';
-  html += '<stop offset="0%" stop-color="' + gradStops[0] + '"/><stop offset="100%" stop-color="' + gradStops[1] + '"/>';
-  html += '</linearGradient></defs>';
-  html += '<circle cx="' + size/2 + '" cy="' + size/2 + '" r="' + r + '" fill="none" stroke="var(--surfaceRaised)" stroke-width="' + stroke + '"/>';
-  html += '<circle cx="' + size/2 + '" cy="' + size/2 + '" r="' + r + '" fill="none" stroke="url(#' + gid + ')" stroke-width="' + stroke + '" stroke-dasharray="' + c + '" stroke-dashoffset="' + offset + '" stroke-linecap="round" style="transition:stroke-dashoffset 0.4s;filter:drop-shadow(0 0 6px ' + solidColor + ')"/>';
-
-  html += '</svg>';
-  html += '<div style="position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center">';
+  const tintFilter = tier === "amber" ? "grayscale(0.6) sepia(0.8) saturate(4.5) brightness(1.05)"
+    : tier === "red" ? "grayscale(0.6) sepia(0.8) hue-rotate(-62deg) saturate(5) brightness(1.05)"
+    : "none";
+  let html = '<div style="position:relative;width:100%;max-width:' + size + 'px;margin:0 auto;padding-top:100%">';
+  html += '<img src="score-shape.webp" alt="" style="position:absolute;inset:0;width:100%;height:100%;mix-blend-mode:screen;filter:' + tintFilter + '">';
+  html += '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center">';
   html += '<span style="font-size:' + Math.round(size*0.26) + 'px;font-weight:900;color:var(--chalk);line-height:1;text-shadow:0 0 14px ' + solidColor + '55">' + Math.round(value) + "</span>";
-  if (opts.sublabel) html += '<span style="font-size:11px;font-weight:800;text-transform:uppercase;color:' + solidColor + ';margin-top:2px">' + opts.sublabel + "</span>";
-  // (le sous-libellé de l'anneau intérieur n'est plus affiché au centre —
-  // trop chargé visuellement, déplacé sous "Besoin de repos" par l'appelant)
+  if (opts.sublabel) html += '<span style="font-size:11px;font-weight:800;text-transform:uppercase;color:' + solidColor + ';margin-top:4px">' + opts.sublabel + "</span>";
   html += "</div></div>";
   return html;
 }
