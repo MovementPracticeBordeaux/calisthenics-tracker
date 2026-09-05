@@ -315,6 +315,24 @@ async function sb(path, options) {
   const text = await res.text();
   return text ? JSON.parse(text) : null;
 }
+// Le projet Supabase plafonne le nombre de lignes rendues par requête
+// (max-rows PostgREST, ~1000) quel que soit le "limit" demandé dans
+// l'URL — un jour de wearable_minute_samples peut dépasser ça (jusqu'à
+// ~1600 lignes vu en pratique), ce qui tronquait silencieusement les
+// courbes intraday après quelques heures. Pagine avec limit/offset
+// jusqu'à ce qu'une page revienne plus courte que demandé.
+async function sbPaginated(basePath) {
+  const PAGE = 800;
+  let offset = 0, all = [];
+  while (true) {
+    const page = await sb(basePath + "&limit=" + PAGE + "&offset=" + offset);
+    if (!page || !page.length) break;
+    all = all.concat(page);
+    if (page.length < PAGE) break;
+    offset += PAGE;
+  }
+  return all;
+}
 
 // ---------------- Constantes ----------------
 const THEMES = [
@@ -672,7 +690,7 @@ async function renderForme() {
   // Aujourd'hui : c'est une vue "comment ça a varié", pas l'état du jour.
   let todayHrCurve = null, todayHrExtremes = null, todayHrvPoints = null, todayStressPoints = null;
   if (formeSubTab === "tendance") {
-    const todayMinuteRows = await sb("wearable_minute_samples?day=eq." + today + "&select=ts,heart_rate,hrv,stress&order=ts&limit=1500").catch(function() { return []; });
+    const todayMinuteRows = await sbPaginated("wearable_minute_samples?day=eq." + today + "&select=ts,heart_rate,hrv,stress&order=ts").catch(function() { return []; });
     if (todayMinuteRows.length) {
       // Regroupe par heure (moyenne) plutôt que de tracer chaque lecture
       // brute : la VFC/le stress ne sont mesurés que par intermittence, un
@@ -1257,7 +1275,7 @@ async function loadEntrainement() {
   const unmatchedTodaySession = todaySessions.find(function(s){ return s.time && s.duration && todayKzDisciplines.indexOf(s.discipline) === -1; });
   let estimatedKz = null;
   if (unmatchedTodaySession) {
-    const minuteRows = await sb("wearable_minute_samples?day=eq." + today + "&select=ts,heart_rate&order=ts&limit=1500").catch(function() { return []; });
+    const minuteRows = await sbPaginated("wearable_minute_samples?day=eq." + today + "&select=ts,heart_rate&order=ts").catch(function() { return []; });
     if (minuteRows.length) {
       const startMs = new Date(today + "T" + unmatchedTodaySession.time + ":00").getTime();
       const endMs = startMs + Number(unmatchedTodaySession.duration) * 60000;
@@ -1566,7 +1584,7 @@ async function loadRecuperation() {
     const wakeDay = latest.date;
     const prevDate = new Date(wakeDay + "T00:00:00"); prevDate.setDate(prevDate.getDate() - 1);
     const bedDay = localDateISO(prevDate);
-    const minuteRows = await sb("wearable_minute_samples?day=gte." + bedDay + "&day=lte." + wakeDay + "&select=ts,heart_rate&order=ts&limit=3000").catch(function(){ return []; });
+    const minuteRows = await sbPaginated("wearable_minute_samples?day=gte." + bedDay + "&day=lte." + wakeDay + "&select=ts,heart_rate&order=ts").catch(function(){ return []; });
     if (minuteRows.length) {
       const bedEpoch = new Date(bedDay + "T00:00:00").getTime() + latestW.bedtime_hour * 3600000;
       const wakeEpoch = new Date(wakeDay + "T00:00:00").getTime() + latestW.wake_hour * 3600000;
@@ -1674,7 +1692,7 @@ async function loadRecuperation() {
     }
     let nightCurveHtml = null;
     if (nightCurve && nightCurve.length >= 4) {
-      nightCurveHtml = intradayCurveHtml(nightCurve, { unit: " bpm" });
+      nightCurveHtml = intradayCurveHtml(nightCurve, { unit: " bpm", gridEveryN: 4 });
     }
     html += metricTrendSectionHtml("Durée de sommeil", sleepWeekBars, sleepMonthLine, sleepPhrase, { decimals: 1, unit: "h", qualify: qualifySleepHours, todayHtml: nightCurveHtml });
 
@@ -1996,6 +2014,11 @@ function intradayCurveHtml(items, opts) {
   const decimals = opts.decimals || 0;
   const height = opts.height || 64;
   const unit = opts.unit || "";
+  // Un point = un bucket ; gridEveryN dit combien de buckets font une heure
+  // (1 pour des buckets déjà horaires, 4 pour des buckets de 15 min) — la
+  // trame verticale tombe ainsi vraiment sur chaque heure des données
+  // réelles, pas un motif décoratif sans rapport avec les valeurs.
+  const gridEveryN = opts.gridEveryN || 1;
   const vals = items.map(function(i) { return i.val || 0; });
   const max = Math.max.apply(null, vals.concat([1]));
   const min = Math.min.apply(null, vals.concat([0]));
@@ -2010,16 +2033,16 @@ function intradayCurveHtml(items, opts) {
     return { xPct: xPct, yPct: yPct };
   });
   const lineD = points.map(function(p, i) { return (i === 0 ? "M" : "L") + p.xPct.toFixed(2) + "," + p.yPct.toFixed(2); }).join(" ");
-  const gid = "ecg-grid-" + (_intradayChartSeq++);
   const touchData = points.map(function(p, i) {
     const v = items[i].val || 0;
     return { x: p.xPct, label: items[i].label || "", display: v.toFixed(decimals) + unit };
   });
   let html = '<div class="line-chart-touch" data-points="' + encodeURIComponent(JSON.stringify(touchData)) + '" style="position:relative;height:' + height + 'px;touch-action:pan-y;background:rgba(236,72,153,0.04);border-radius:6px">';
   html += '<svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%">';
-  html += '<defs><pattern id="' + gid + '" width="6.25" height="20" patternUnits="userSpaceOnUse">';
-  html += '<path d="M6.25 0H0V20" fill="none" stroke="var(--pink)" stroke-opacity="0.14" stroke-width="0.6"/></pattern></defs>';
-  html += '<rect x="0" y="0" width="100" height="100" fill="url(#' + gid + ')"/>';
+  points.forEach(function(p, i) {
+    if (i % gridEveryN !== 0) return;
+    html += '<line x1="' + p.xPct.toFixed(2) + '" y1="0" x2="' + p.xPct.toFixed(2) + '" y2="100" stroke="var(--pink)" stroke-opacity="0.18" stroke-width="0.6" vector-effect="non-scaling-stroke"/>';
+  });
   if (n > 1) {
     html += '<path d="' + lineD + '" fill="none" stroke="var(--pink)" stroke-width="1.5" vector-effect="non-scaling-stroke" style="filter:drop-shadow(0 0 2px var(--pink)) drop-shadow(0 0 5px var(--pink))"/>';
   }
