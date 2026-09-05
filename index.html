@@ -1414,6 +1414,41 @@ async function loadRecuperation() {
   const withSleep = nights.filter(function(n) { return n.total != null; });
   const latest = withSleep.length ? withSleep[withSleep.length - 1] : null;
   const avgTotal = withSleep.length ? avgOf(withSleep.map(function(n){ return n.total; })) : null;
+  const latestW = latest ? wearable.find(function(x){ return x.day === latest.date; }) : null;
+
+  // Courbe FC de la nuit, coucher -> réveil, tant que les échantillons minute
+  // par minute existent encore (rétention 3 jours, cf. sync_to_supabase.py) —
+  // uniquement construite pour l'onglet Aujourd'hui, pas Tendance.
+  let nightCurve = null;
+  if (recuperationSubTab !== "tendance" && latestW && latestW.bedtime_hour != null && latestW.wake_hour != null) {
+    const wakeDay = latest.date;
+    const prevDate = new Date(wakeDay + "T00:00:00"); prevDate.setDate(prevDate.getDate() - 1);
+    const bedDay = localDateISO(prevDate);
+    const minuteRows = await sb("wearable_minute_samples?day=gte." + bedDay + "&day=lte." + wakeDay + "&select=ts,heart_rate&order=ts&limit=3000").catch(function(){ return []; });
+    if (minuteRows.length) {
+      const bedEpoch = new Date(bedDay + "T00:00:00").getTime() + latestW.bedtime_hour * 3600000;
+      const wakeEpoch = new Date(wakeDay + "T00:00:00").getTime() + latestW.wake_hour * 3600000;
+      const inWindow = minuteRows.filter(function(r) {
+        if (r.heart_rate == null) return false;
+        const t = new Date(r.ts).getTime();
+        return t >= bedEpoch - 5 * 60000 && t <= wakeEpoch + 5 * 60000;
+      });
+      if (inWindow.length >= 20) {
+        const BUCKET_MIN = 15;
+        const buckets = {};
+        inWindow.forEach(function(r) {
+          const idx = Math.floor((new Date(r.ts).getTime() - bedEpoch) / (BUCKET_MIN * 60000));
+          buckets[idx] = buckets[idx] || [];
+          buckets[idx].push(r.heart_rate);
+        });
+        const idxs = Object.keys(buckets).map(Number).sort(function(a, b) { return a - b; });
+        nightCurve = idxs.map(function(idx, i) {
+          const bucketDt = new Date(bedEpoch + idx * BUCKET_MIN * 60000);
+          return { label: (i % 8 === 0) ? String(bucketDt.getHours()).padStart(2, "0") + "h" : "", val: Math.round(avgOf(buckets[idx])) };
+        });
+      }
+    }
+  }
 
   let sleepScore = null, sleepTier = null, sleepTierColor = "muted";
   if (latest) {
@@ -1460,7 +1495,6 @@ async function loadRecuperation() {
       const deepPct = Math.round((latest.deep/stageTotal)*100), remPct = Math.round((latest.rem/stageTotal)*100), lightPct = Math.round((latest.light/stageTotal)*100);
       const stagesTier = (deepPct < 13 || remPct < 15) ? "amber" : "green";
 
-      const latestW = wearable.find(function(x){ return x.day === latest.date; });
       const checklist = [];
       checklist.push({ label: "Sommeil", icon: "moon", iconColor: "var(--steel)", tier: sleepTierColor, note: sleepScore + "/100 · " + sleepTier });
       checklist.push({ label: "Stades", icon: "list", iconColor: "var(--purple)", tier: stagesTier, note: "Léger " + lightPct + "% · Profond " + deepPct + "% · REM " + remPct + "%" });
@@ -1476,6 +1510,12 @@ async function loadRecuperation() {
       html += collapsibleCardHtml(sectionIcon("list") + 'Récap du jour');
       checklist.forEach(function(c) { html += checklistRowHtml(c); });
       html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></details>';
+
+      if (nightCurve && nightCurve.length >= 4) {
+        html += collapsibleCardHtml(sectionIcon("heart") + 'Courbe de la nuit (FC)');
+        html += '<div style="padding:6px 2px 2px">' + lineChartHtml(nightCurve, { unit: " bpm" }) + '</div>';
+        html += '<div class="muted" style="font-size:10px;margin-top:6px">Fréquence cardiaque par tranches de 15 min, du coucher au réveil estimés. Capteur optique au poignet — indicatif.</div></details>';
+      }
     }
   } else {
     const migDaySet = migraines.map(function(m){ return m.day; });
