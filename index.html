@@ -674,6 +674,25 @@ async function renderForme() {
   if (formeSubTab === "tendance") {
     const todayMinuteRows = await sb("wearable_minute_samples?day=eq." + today + "&select=ts,heart_rate,hrv,stress&order=ts&limit=1500").catch(function() { return []; });
     if (todayMinuteRows.length) {
+      // Regroupe par heure (moyenne) plutôt que de tracer chaque lecture
+      // brute : la VFC/le stress ne sont mesurés que par intermittence, un
+      // point par lecture réelle donne un tracé en dents de scie illisible
+      // (des centaines de points resserrés) et un libellé par point déborde
+      // du cadre. Un point par heure, libellé toutes les 3h, reste lisible
+      // et cohérent avec la courbe FC juste au-dessus.
+      const dayStart = new Date(today + "T00:00:00").getTime();
+      function bucketHourly(rows, field) {
+        const buckets = {};
+        rows.forEach(function(r) {
+          const idx = Math.floor((new Date(r.ts).getTime() - dayStart) / (60 * 60000));
+          buckets[idx] = buckets[idx] || [];
+          buckets[idx].push(r[field]);
+        });
+        const idxs = Object.keys(buckets).map(Number).sort(function(a, b) { return a - b; });
+        return idxs.map(function(idx, i) {
+          return { label: (i % 3 === 0) ? String(idx).padStart(2, "0") + "h" : "", val: Math.round(avgOf(buckets[idx])) };
+        });
+      }
       const hrRows = todayMinuteRows.filter(function(r) { return r.heart_rate != null; });
       if (hrRows.length >= 5) {
         const maxRow = hrRows.slice().sort(function(a, b) { return b.heart_rate - a.heart_rate; })[0];
@@ -683,33 +702,12 @@ async function renderForme() {
           max: maxRow.heart_rate, maxTime: hoursToLabel(hourDec(maxRow.ts)),
           min: minRow.heart_rate, minTime: hoursToLabel(hourDec(minRow.ts)),
         };
-        const BUCKET_MIN = 60;
-        const dayStart = new Date(today + "T00:00:00").getTime();
-        const buckets = {};
-        hrRows.forEach(function(r) {
-          const idx = Math.floor((new Date(r.ts).getTime() - dayStart) / (BUCKET_MIN * 60000));
-          buckets[idx] = buckets[idx] || [];
-          buckets[idx].push(r.heart_rate);
-        });
-        const idxs = Object.keys(buckets).map(Number).sort(function(a, b) { return a - b; });
-        todayHrCurve = idxs.map(function(idx, i) {
-          return { label: (i % 3 === 0) ? String(idx).padStart(2, "0") + "h" : "", val: Math.round(avgOf(buckets[idx])) };
-        });
+        todayHrCurve = bucketHourly(hrRows, "heart_rate");
       }
       const hrvRows = todayMinuteRows.filter(function(r) { return r.hrv != null; });
-      if (hrvRows.length >= 2) {
-        todayHrvPoints = hrvRows.map(function(r) {
-          const dt = new Date(r.ts);
-          return { label: String(dt.getHours()).padStart(2, "0") + "h", val: Math.round(r.hrv) };
-        });
-      }
+      if (hrvRows.length >= 2) todayHrvPoints = bucketHourly(hrvRows, "hrv");
       const stressRows = todayMinuteRows.filter(function(r) { return r.stress != null; });
-      if (stressRows.length >= 2) {
-        todayStressPoints = stressRows.map(function(r) {
-          const dt = new Date(r.ts);
-          return { label: String(dt.getHours()).padStart(2, "0") + "h", val: Math.round(r.stress) };
-        });
-      }
+      if (stressRows.length >= 2) todayStressPoints = bucketHourly(stressRows, "stress");
     }
   }
 
