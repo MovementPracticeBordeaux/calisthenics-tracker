@@ -1460,9 +1460,15 @@ async function loadRecuperation() {
       const deepPct = Math.round((latest.deep/stageTotal)*100), remPct = Math.round((latest.rem/stageTotal)*100), lightPct = Math.round((latest.light/stageTotal)*100);
       const stagesTier = (deepPct < 13 || remPct < 15) ? "amber" : "green";
 
+      const latestW = wearable.find(function(x){ return x.day === latest.date; });
       const checklist = [];
       checklist.push({ label: "Sommeil", icon: "moon", iconColor: "var(--steel)", tier: sleepTierColor, note: sleepScore + "/100 · " + sleepTier });
       checklist.push({ label: "Stades", icon: "list", iconColor: "var(--purple)", tier: stagesTier, note: "Léger " + lightPct + "% · Profond " + deepPct + "% · REM " + remPct + "%" });
+      if (latestW && latestW.bedtime_hour != null && latestW.wake_hour != null) {
+        checklist.push({ label: "Coucher → réveil", icon: "moon", iconColor: "var(--steel)", tier: "steel", note: hoursToLabel(latestW.bedtime_hour) + " → " + hoursToLabel(latestW.wake_hour) });
+      } else if (latestW && latestW.wake_hour != null) {
+        checklist.push({ label: "Réveil", icon: "moon", iconColor: "var(--steel)", tier: "steel", note: hoursToLabel(latestW.wake_hour) });
+      }
       checklist.push({ label: "Sieste", icon: "moon", iconColor: "var(--pink)", tier: totalNapMin > 0 ? "green" : "steel", note: totalNapMin > 0 ? totalNapMin + " min" : "Ø" });
       checklist.push({ label: "PAI (semaine)", icon: "heart", iconColor: "var(--red)", tier: weeklyPai >= 100 ? "green" : "amber", note: weeklyPai >= 100 ? "Objectif atteint" : Math.round(weeklyPai) + "/100" });
       if (todayMigRow) checklist.push({ label: "Migraine", icon: "bandage", iconColor: "var(--red)", tier: "red", note: (todayMigRow.intensity || "–") + "/10" });
@@ -2586,11 +2592,13 @@ function buildCoachData(wearable, sessions, migraines, gripRows, kzWorkouts, lif
 
   return {
     sleepAvg14: avgField(last14, "sleep_total_min"),
-    // Pas d'heure de coucher fiable : ce qui ressemblait à un horodatage de
-    // coucher dans les données du bracelet s'est révélé être une valeur
-    // fixe (22:00:00 toutes les nuits, vérifié sur 10 nuits) — un paramètre
-    // interne de l'algorithme, pas une mesure réelle (voir sync_to_supabase.py).
     wakeHours14: last14.map(function(w) { return w.wake_hour; }).filter(function(x) { return x != null; }),
+    // Heure de coucher réelle, dérivée de l'immobilité minute par minute avant
+    // le réveil (sync_to_supabase.py, derive_bedtimes) — remplace l'ancienne
+    // valeur fixe du bracelet (22:00 chaque nuit) qui n'était pas une mesure.
+    // Peu de nuits au début (calculée seulement à partir de maintenant), la
+    // fenêtre s'enrichit jour après jour.
+    bedtimeHours14: last14.map(function(w) { return w.bedtime_hour; }).filter(function(x) { return x != null; }),
     hrvRecent: avgField(last7, "hrv_avg"), hrvBaseline: avgField(baseline, "hrv_avg"),
     hrRecent: avgField(last7, "hr_resting"), hrBaseline: avgField(baseline, "hr_resting"),
     stressRecent: avgField(last7, "stress_avg"), stressBaseline: avgField(baseline, "stress_avg"),
@@ -2636,25 +2644,30 @@ function coachAnswerSleepAvg(d) {
   return { text: text, chartHtml: chartHtml };
 }
 function coachAnswerSleepRegularity(d) {
-  // Pas d'heure de coucher fiable disponible (voir sync_to_supabase.py) —
-  // seule l'heure de réveil (colonne TIMESTAMP de la session, qui varie
-  // normalement nuit après nuit) s'est avérée exploitable.
   if (d.wakeHours14.length < 5) {
     return "Pas encore assez de nuits avec heure de réveil enregistrée pour évaluer la régularité.";
   }
   const avgWake = circularMeanHour(d.wakeHours14);
-  // Régularité = longueur du vecteur moyen (R, statistique circulaire) sur
-  // le réveil — 1 = réveil à la même heure tous les jours, 0 = dispersé sur
-  // toute la journée. Seuils recalibrés sur la vraie échelle de R (pas
-  // 0-100 linéaire) : même un horaire assez dispersé sur plusieurs heures
-  // garde un R élevé (~85-90%) tant que ça reste dans une même moitié de
-  // journée — seul un vrai désordre façon travail posté fait chuter R
-  // nettement (<50%).
+  // Régularité = longueur du vecteur moyen (R, statistique circulaire) —
+  // 1 = même heure tous les jours, 0 = dispersé sur toute la journée. Seuils
+  // recalibrés sur la vraie échelle de R (pas 0-100 linéaire) : même un
+  // horaire assez dispersé sur plusieurs heures garde un R élevé (~85-90%)
+  // tant que ça reste dans une même moitié de journée — seul un vrai
+  // désordre façon travail posté fait chuter R nettement (<50%).
   const regularity = Math.round(circularRegularity(d.wakeHours14) * 100);
   const note = regularity >= 95 ? "un réveil à une heure très régulière — excellent pour la qualité de récupération"
     : regularity >= 80 ? "un réveil relativement régulier, avec quelques écarts"
     : "un réveil à des heures assez variées, ce qui peut nuire à la qualité de ton sommeil";
-  return "Ta régularité de réveil sur les 14 derniers jours est d'environ " + regularity + "% — tu as " + note + ". Réveil moyen : " + hoursToLabel(avgWake) + ". (Je n'ai pas d'heure de coucher fiable à te donner : ce qui y ressemblait dans les données du bracelet s'est révélé être une valeur fixe de l'algorithme, pas une vraie mesure.)";
+  let text = "Ta régularité de réveil sur les 14 derniers jours est d'environ " + regularity + "% — tu as " + note + ". Réveil moyen : " + hoursToLabel(avgWake) + ".";
+  if (d.bedtimeHours14.length < 5) {
+    text += " Heure de coucher réelle : pas encore assez de nuits mesurées pour une tendance (cette mesure vient d'être mise en place, la fenêtre s'enrichit chaque jour).";
+  } else {
+    const avgBed = circularMeanHour(d.bedtimeHours14);
+    const bedRegularity = Math.round(circularRegularity(d.bedtimeHours14) * 100);
+    const bedNote = bedRegularity >= 95 ? "très régulière" : bedRegularity >= 80 ? "assez régulière" : "assez variable";
+    text += " Heure de coucher moyenne : " + hoursToLabel(avgBed) + " (régularité " + bedRegularity + "%, " + bedNote + ").";
+  }
+  return text;
 }
 function coachAnswerHrvTrend(d) {
   if (d.hrvRecent == null || d.hrvBaseline == null || d.hrvBaseline <= 0) return "Pas encore assez de données de VFC pour dégager une tendance.";
