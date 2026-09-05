@@ -1197,16 +1197,10 @@ async function renderForme() {
         inner += '</div>';
       }
       if (todayHrCurve) inner += intradayCurveHtml(todayHrCurve, { unit: " bpm" });
-      hrTodayHtml = intradaySectionHtml("Aujourd'hui, heure par heure", inner);
+      hrTodayHtml = inner;
     }
-    let hrvTodayHtml = null;
-    if (todayHrvPoints) {
-      hrvTodayHtml = intradaySectionHtml("Aujourd'hui, lectures réelles", intradayCurveHtml(todayHrvPoints, { unit: " ms" }));
-    }
-    let stressTodayHtml = null;
-    if (todayStressPoints) {
-      stressTodayHtml = intradaySectionHtml("Aujourd'hui, lectures réelles", intradayCurveHtml(todayStressPoints, {}));
-    }
+    let hrvTodayHtml = todayHrvPoints ? intradayCurveHtml(todayHrvPoints, { unit: " ms" }) : null;
+    let stressTodayHtml = todayStressPoints ? intradayCurveHtml(todayStressPoints, {}) : null;
 
     const hrvRB = recentVsBaseline("hrv_avg");
     html += metricTrendSectionHtml("VFC", weekBars("hrv_avg"), monthLine("hrv_avg"), trendPhrase(hrvRB, false, " ms", 0), { unit: " ms", qualify: qualifyHRV, todayHtml: hrvTodayHtml });
@@ -1673,7 +1667,7 @@ async function loadRecuperation() {
     }
     let nightCurveHtml = null;
     if (nightCurve && nightCurve.length >= 4) {
-      nightCurveHtml = intradaySectionHtml("La nuit dernière, coucher → réveil", intradayCurveHtml(nightCurve, { unit: " bpm" }));
+      nightCurveHtml = intradayCurveHtml(nightCurve, { unit: " bpm" });
     }
     html += metricTrendSectionHtml("Durée de sommeil", sleepWeekBars, sleepMonthLine, sleepPhrase, { decimals: 1, unit: "h", qualify: qualifySleepHours, todayHtml: nightCurveHtml });
 
@@ -1982,11 +1976,13 @@ function lineChartHtml(items, opts) {
 }
 
 // Rendu dédié aux variations dans la journée (FC/VFC/Stress heure par
-// heure, nuit coucher -> réveil) : aire dégradée sous la courbe plutôt
-// qu'un simple trait, pour qu'on la distingue d'un coup d'œil des barres
-// semaine et de la courbe mois (toujours en trait plein steel) juste
-// au-dessus dans le même bloc. Même géométrie/points tactiles que
-// lineChartHtml, uniquement le rendu visuel change.
+// heure, nuit coucher -> réveil) : allure d'écran de moniteur (trame fine +
+// trait lumineux rose) plutôt que le style barres/courbe classique, pour
+// qu'on la distingue d'un coup d'œil — mais insérée dans la même carte,
+// avec la même mise en page que Semaine/Mois (voir metricTrendSectionHtml),
+// pas un encart à part. Même géométrie/points tactiles que lineChartHtml,
+// juste le rendu visuel qui change ; les valeurs ne sont pas déformées
+// (segments droits entre les vraies mesures, pas de pics inventés).
 let _intradayChartSeq = 0;
 function intradayCurveHtml(items, opts) {
   opts = opts || {};
@@ -2007,27 +2003,24 @@ function intradayCurveHtml(items, opts) {
     return { xPct: xPct, yPct: yPct };
   });
   const lineD = points.map(function(p, i) { return (i === 0 ? "M" : "L") + p.xPct.toFixed(2) + "," + p.yPct.toFixed(2); }).join(" ");
-  const areaD = lineD + " L100,100 L0,100 Z";
-  const gid = "intraday-grad-" + (_intradayChartSeq++);
+  const gid = "ecg-grid-" + (_intradayChartSeq++);
   const touchData = points.map(function(p, i) {
     const v = items[i].val || 0;
     return { x: p.xPct, label: items[i].label || "", display: v.toFixed(decimals) + unit };
   });
-  let html = '<div class="line-chart-touch" data-points="' + encodeURIComponent(JSON.stringify(touchData)) + '" style="position:relative;height:' + height + 'px;touch-action:pan-y">';
+  let html = '<div class="line-chart-touch" data-points="' + encodeURIComponent(JSON.stringify(touchData)) + '" style="position:relative;height:' + height + 'px;touch-action:pan-y;background:rgba(236,72,153,0.04);border-radius:6px">';
   html += '<svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%">';
-  html += '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="0" y2="1">';
-  html += '<stop offset="0%" stop-color="var(--pink)" stop-opacity="0.55"/><stop offset="100%" stop-color="var(--pink)" stop-opacity="0"/>';
-  html += '</linearGradient></defs>';
+  html += '<defs><pattern id="' + gid + '" width="6.25" height="20" patternUnits="userSpaceOnUse">';
+  html += '<path d="M6.25 0H0V20" fill="none" stroke="var(--pink)" stroke-opacity="0.14" stroke-width="0.6"/></pattern></defs>';
+  html += '<rect x="0" y="0" width="100" height="100" fill="url(#' + gid + ')"/>';
   if (n > 1) {
-    html += '<path d="' + areaD + '" fill="url(#' + gid + ')" stroke="none"/>';
-    html += '<path d="' + lineD + '" fill="none" stroke="var(--pink)" stroke-width="1.8" vector-effect="non-scaling-stroke"/>';
+    html += '<path d="' + lineD + '" fill="none" stroke="var(--pink)" stroke-width="1.5" vector-effect="non-scaling-stroke" style="filter:drop-shadow(0 0 2px var(--pink)) drop-shadow(0 0 5px var(--pink))"/>';
   }
   html += "</svg>";
-  points.forEach(function(p, i) {
-    const isLast = i === points.length - 1;
-    const size = isLast ? 6 : 3;
-    html += '<div style="position:absolute;left:' + p.xPct.toFixed(2) + '%;top:' + p.yPct.toFixed(2) + '%;width:' + size + 'px;height:' + size + 'px;border-radius:50%;background:var(--pink);transform:translate(-50%,-50%)"></div>';
-  });
+  if (points.length) {
+    const last = points[points.length - 1];
+    html += '<div style="position:absolute;left:' + last.xPct.toFixed(2) + '%;top:' + last.yPct.toFixed(2) + '%;width:7px;height:7px;border-radius:50%;background:var(--pink);box-shadow:0 0 6px 2px var(--pink);transform:translate(-50%,-50%)"></div>';
+  }
   html += '<div class="lc-cursor" style="display:none;position:absolute;top:0;bottom:0;width:1px;background:var(--line);pointer-events:none"></div>';
   html += '<div class="lc-tooltip" style="display:none;position:absolute;top:0;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:6px;padding:3px 8px;font-size:11px;font-weight:800;color:var(--chalk);white-space:nowrap;pointer-events:none;z-index:5;box-shadow:0 2px 8px rgba(0,0,0,0.35)"></div>';
   html += "</div>";
@@ -2038,14 +2031,12 @@ function intradayCurveHtml(items, opts) {
   html += "</div>";
   return html;
 }
-// Encadré pointillé rose + pastille lumineuse : le même signal visuel pour
-// toute donnée "variation dans la journée", où qu'elle apparaisse (Forme,
-// Récupération) — reconnaissable sans avoir à relire le titre.
-function intradaySectionHtml(label, innerHtml) {
-  return '<div style="margin-top:14px;padding:10px 12px;border:1px dashed var(--pink);border-radius:10px;background:rgba(236,72,153,0.06)">' +
-    '<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;display:flex;align-items:center;gap:5px">' +
-    '<span style="width:6px;height:6px;border-radius:50%;background:var(--pink);box-shadow:0 0 5px 1px var(--pink)"></span>' + esc(label) + '</div>' +
-    innerHtml + '</div>';
+// Libellé de période (Jour/Semaine/Mois) en rose fluo — pour qu'on identifie
+// tout de suite de quelle échelle de temps parle le graphique juste
+// en-dessous, dans metricTrendSectionHtml.
+function periodLabelHtml(text, isFirst) {
+  return '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin:' + (isFirst ? "0 0 4px" : "14px 0 4px") +
+    ';font-weight:800;color:var(--pink);text-shadow:0 0 8px var(--pink)66">' + esc(text) + "</div>";
 }
 
 // Compose un bloc de tendance complet pour une métrique : barres semaine +
@@ -2067,11 +2058,16 @@ function metricTrendSectionHtml(title, weeklyItems, monthlyItems, interpretation
   opts = opts || {};
   const icon = METRIC_TREND_ICONS[title];
   let html = '<div class="card"><div class="section-label">' + (icon ? sectionIcon(icon) : "") + esc(title) + '</div>';
-  html += '<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Semaine</div>';
+  // "Jour" (variation intraday, si dispo) passe avant Semaine/Mois — c'est
+  // la vue la plus fine, elle ouvre le bloc plutôt que de le fermer.
+  if (opts.todayHtml) {
+    html += periodLabelHtml("Jour", true);
+    html += opts.todayHtml;
+  }
+  html += periodLabelHtml("Semaine", !opts.todayHtml);
   html += barChartHtml(weeklyItems, opts);
-  html += '<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin:14px 0 4px">Mois</div>';
+  html += periodLabelHtml("Mois", false);
   html += lineChartHtml(monthlyItems, Object.assign({}, opts, { showAvg: false }));
-  if (opts.todayHtml) html += opts.todayHtml;
   if (interpretation) {
     html += '<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:12px;color:var(--chalkDim)">' + esc(interpretation) + "</div>";
   }
