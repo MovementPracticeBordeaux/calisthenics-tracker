@@ -4064,6 +4064,21 @@ function drawCoach() {
       else if (coachFormOpen === "migraine") html += coachMigraineFormHtml();
     } else {
       html += '<div class="muted" style="margin-bottom:20px">Que veux-tu loguer aujourd\'hui ?</div>';
+      // Le badge rouge sur la bulle Coach (coachPendingCount) comptait des
+      // choses à faire sans jamais les nommer une fois le chat ouvert —
+      // signalé par l'utilisateur ("on ne comprend pas, je ne sais pas quoi
+      // remplir"). Cette bannière + le point rouge par bouton ci-dessous
+      // reprennent exactement les 3 ingrédients du même calcul
+      // (refreshCoachPendingCount) pour qu'ils soient enfin visibles ici.
+      const pendingItems = [];
+      if (!coachTodayStatus.lifeload) pendingItems.push("Ressenti (LifeLoad)");
+      if (coachTodayStatus.gripRequired && !coachTodayStatus.grip) pendingItems.push("Préhension");
+      coachTodayStatus.classesPending.forEach(function(c) { pendingItems.push("Séance : " + c.discipline + " (" + c.heure_debut.slice(0,5) + ")"); });
+      if (pendingItems.length) {
+        html += '<div style="background:rgba(255,51,102,.08);border:1px solid var(--red);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:13px;line-height:1.5">';
+        html += '<b style="color:var(--red)">À faire aujourd\'hui :</b> ' + pendingItems.map(esc).join(" · ");
+        html += "</div>";
+      }
       html += '<div style="display:flex;flex-direction:column;gap:12px;margin-bottom:28px" id="coach-log-row">';
       COACH_LOG_BUTTONS.forEach(function(b) {
         // Coche discrète sur les logs à statut "fait aujourd'hui" (séance,
@@ -4071,15 +4086,16 @@ function drawCoach() {
         // pouvait reloguer le ressenti sans jamais voir qu'il l'était déjà.
         // Sieste et migraine n'ont pas cette coche : ce sont des logs à
         // occurrences multiples dans la journée, pas un état "fait/pas fait".
-        let done = false, label = b.label;
-        if (b.id === "lifeload") done = coachTodayStatus.lifeload;
+        let done = false, pending = false, label = b.label;
+        if (b.id === "lifeload") { done = coachTodayStatus.lifeload; pending = !done; }
         else if (b.id === "prehension") {
           done = coachTodayStatus.grip;
+          pending = coachTodayStatus.gripRequired && !done;
           if (!coachTodayStatus.gripRequired && !done) label += " (optionnel aujourd'hui)";
         }
-        else if (b.id === "seance") done = coachTodayStatus.classesPending.length === 0 && coachTodayStatus.sessionsLogged > 0;
+        else if (b.id === "seance") { done = coachTodayStatus.classesPending.length === 0 && coachTodayStatus.sessionsLogged > 0; pending = coachTodayStatus.classesPending.length > 0; }
         else if (b.id === "sommeil") done = !!coachTodayStatus.sleepFeelingQuality;
-        html += '<button class="coach-question-btn" data-log="' + b.id + '" style="width:100%;text-align:left;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:10px;padding:16px 18px;color:var(--chalk);font-size:14px;font-weight:700;cursor:pointer;display:flex;justify-content:space-between;align-items:center">' + label + (done ? ' <span style="color:var(--green);font-size:16px">✓</span>' : "") + "</button>";
+        html += '<button class="coach-question-btn" data-log="' + b.id + '" style="width:100%;text-align:left;background:var(--surfaceRaised);border:1px solid ' + (pending ? "var(--red)" : "var(--line)") + ';border-radius:10px;padding:16px 18px;color:var(--chalk);font-size:14px;font-weight:700;cursor:pointer;display:flex;justify-content:space-between;align-items:center">' + label + (done ? ' <span style="color:var(--green);font-size:16px">✓</span>' : pending ? ' <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--red);box-shadow:0 0 6px 2px var(--red)"></span>' : "") + "</button>";
       });
       html += "</div>";
       if (coachMessages.length) {
