@@ -311,10 +311,16 @@ def build_minute_samples(db_path, days=MINUTE_RETENTION_DAYS):
     )
     rows = []
     for ts, steps, intensity, hr in cur.fetchall():
-        dt = datetime.datetime.fromtimestamp(ts)
+        # "day" doit rester le jour calendaire LOCAL (comme ms_to_date/le
+        # reste du fichier) ; "ts" doit être écrit avec un fuseau explicite
+        # (UTC) pour que Postgres/PostgREST le stocke sans le confondre avec
+        # l'heure locale — sinon le round-trip décale toutes les heures
+        # affichées côté appli de +1h/+2h (CET/CEST).
+        dt_local = datetime.datetime.fromtimestamp(ts)
+        dt_utc = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc)
         rows.append({
-            "ts": dt.isoformat(),
-            "day": dt.strftime("%Y-%m-%d"),
+            "ts": dt_utc.isoformat(),
+            "day": dt_local.strftime("%Y-%m-%d"),
             "heart_rate": hr if (hr is not None and 0 < hr < 250) else None,
             "steps": steps,
             "intensity": intensity,
@@ -364,8 +370,9 @@ def build_hrv_minute_samples(db_path, days=MINUTE_RETENTION_DAYS):
     for ts, val in cur.fetchall():
         if val is None or val <= 0:
             continue
-        dt = datetime.datetime.fromtimestamp(ts / 1000)
-        rows.append({"ts": dt.isoformat(), "day": dt.strftime("%Y-%m-%d"), "hrv": val})
+        dt_local = datetime.datetime.fromtimestamp(ts / 1000)
+        dt_utc = datetime.datetime.fromtimestamp(ts / 1000, tz=datetime.timezone.utc)
+        rows.append({"ts": dt_utc.isoformat(), "day": dt_local.strftime("%Y-%m-%d"), "hrv": val})
     conn.close()
     return rows
 
@@ -386,8 +393,9 @@ def build_stress_minute_samples(db_path, days=MINUTE_RETENTION_DAYS):
     for ts, val in cur.fetchall():
         if val is None or val < 0:
             continue
-        dt = datetime.datetime.fromtimestamp(ts / 1000)
-        rows.append({"ts": dt.isoformat(), "day": dt.strftime("%Y-%m-%d"), "stress": val})
+        dt_local = datetime.datetime.fromtimestamp(ts / 1000)
+        dt_utc = datetime.datetime.fromtimestamp(ts / 1000, tz=datetime.timezone.utc)
+        rows.append({"ts": dt_utc.isoformat(), "day": dt_local.strftime("%Y-%m-%d"), "stress": val})
     conn.close()
     return rows
 
