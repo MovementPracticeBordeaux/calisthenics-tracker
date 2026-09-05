@@ -370,13 +370,37 @@ def build_hrv_minute_samples(db_path, days=MINUTE_RETENTION_DAYS):
     return rows
 
 
-def push_hrv_minute_samples(rows):
+def build_stress_minute_samples(db_path, days=MINUTE_RETENTION_DAYS):
+    """Lit HUAMI_STRESS_SAMPLE à son horodatage propre sur la fenêtre de
+    rétention — même principe que build_hrv_minute_samples, pour voir le
+    stress évoluer dans la journée plutôt qu'une seule moyenne quotidienne
+    ou les 3 créneaux fixes (stress_morning/afternoon/evening)."""
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cutoff_ms = int((datetime.datetime.now() - datetime.timedelta(days=days)).timestamp() * 1000)
+    cur.execute(
+        "SELECT TIMESTAMP, STRESS FROM HUAMI_STRESS_SAMPLE WHERE TIMESTAMP >= ?",
+        (cutoff_ms,),
+    )
+    rows = []
+    for ts, val in cur.fetchall():
+        if val is None or val < 0:
+            continue
+        dt = datetime.datetime.fromtimestamp(ts / 1000)
+        rows.append({"ts": dt.isoformat(), "day": dt.strftime("%Y-%m-%d"), "stress": val})
+    conn.close()
+    return rows
+
+
+def push_wearable_minute_rows(rows, label):
+    """Pousse des lignes partielles (ts + day + une seule métrique) dans
+    wearable_minute_samples ; merge-duplicates ne touche que les colonnes
+    fournies dans le JSON, donc complète une ligne existante (FC/pas/
+    intensité) ou en crée une nouvelle (le reste à null) plutôt que
+    d'écraser quoi que ce soit — utilisé pour VFC et stress, mesurés à
+    leur propre rythme (quelques fois par jour), pas au rythme de la minute."""
     if not rows:
         return
-    # Mêmes échantillons/minute que push_minute_samples (table partagée,
-    # merge-duplicates sur ts) : une lecture VFC qui tombe sur une minute déjà
-    # présente (pas/FC) complète la ligne, sinon une nouvelle ligne (pas/FC à
-    # null) est créée — la VFC n'est mesurée que quelques fois par jour.
     url = f"{SUPABASE_URL}/rest/v1/wearable_minute_samples?on_conflict=ts"
     headers = {
         "apikey": SUPABASE_KEY,
@@ -386,9 +410,9 @@ def push_hrv_minute_samples(rows):
     }
     resp = requests.post(url, headers=headers, data=json.dumps(rows))
     if resp.status_code >= 300:
-        print(f"Erreur Supabase (VFC minute) ({resp.status_code}): {resp.text}")
+        print(f"Erreur Supabase ({label} minute) ({resp.status_code}): {resp.text}")
         return
-    print(f"{len(rows)} lectures VFC horodatées synchronisées.")
+    print(f"{len(rows)} lectures {label} horodatées synchronisées.")
 
 
 def purge_old_minute_samples():
@@ -460,7 +484,9 @@ if __name__ == "__main__":
     minute_rows = build_minute_samples(DB_PATH)
     push_minute_samples(minute_rows)
     hrv_minute_rows = build_hrv_minute_samples(DB_PATH)
-    push_hrv_minute_samples(hrv_minute_rows)
+    push_wearable_minute_rows(hrv_minute_rows, "VFC")
+    stress_minute_rows = build_stress_minute_samples(DB_PATH)
+    push_wearable_minute_rows(stress_minute_rows, "stress")
     bedtime_rows = derive_bedtimes(minute_rows, sleep_rows)
     push_sleep_stages(bedtime_rows)
     purge_old_minute_samples()

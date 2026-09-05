@@ -659,13 +659,15 @@ async function renderForme() {
   const todayWearable = wearable.find(function(w){ return w.day === today; }) || null;
   const wearable7 = wearable.filter(function(w){ return w.day >= daysAgo(7); });
 
-  // FC & VFC dans la journée : utilise les échantillons minute par minute
-  // (wearable_minute_samples, rétention 3 jours) plutôt qu'une seule valeur
-  // quotidienne (hr_resting/hrv_avg) — vrai max/min du jour avec l'heure, et
-  // vraies lectures VFC horodatées au lieu d'une moyenne unique.
-  let todayHrCurve = null, todayHrExtremes = null, todayHrvPoints = null;
-  if (formeSubTab === "jour") {
-    const todayMinuteRows = await sb("wearable_minute_samples?day=eq." + today + "&select=ts,heart_rate,hrv&order=ts&limit=1500").catch(function() { return []; });
+  // FC, VFC & Stress dans la journée : utilise les échantillons minute par
+  // minute (wearable_minute_samples, rétention 3 jours) plutôt qu'une seule
+  // valeur quotidienne (hr_resting/hrv_avg/stress_avg) — vrai max/min du
+  // jour avec l'heure, et vraies lectures horodatées au lieu d'une moyenne
+  // unique. Affiché dans Tendance (à côté de chaque bloc concerné), pas
+  // Aujourd'hui : c'est une vue "comment ça a varié", pas l'état du jour.
+  let todayHrCurve = null, todayHrExtremes = null, todayHrvPoints = null, todayStressPoints = null;
+  if (formeSubTab === "tendance") {
+    const todayMinuteRows = await sb("wearable_minute_samples?day=eq." + today + "&select=ts,heart_rate,hrv,stress&order=ts&limit=1500").catch(function() { return []; });
     if (todayMinuteRows.length) {
       const hrRows = todayMinuteRows.filter(function(r) { return r.heart_rate != null; });
       if (hrRows.length >= 5) {
@@ -694,6 +696,13 @@ async function renderForme() {
         todayHrvPoints = hrvRows.map(function(r) {
           const dt = new Date(r.ts);
           return { label: String(dt.getHours()).padStart(2, "0") + "h", val: Math.round(r.hrv) };
+        });
+      }
+      const stressRows = todayMinuteRows.filter(function(r) { return r.stress != null; });
+      if (stressRows.length >= 2) {
+        todayStressPoints = stressRows.map(function(r) {
+          const dt = new Date(r.ts);
+          return { label: String(dt.getHours()).padStart(2, "0") + "h", val: Math.round(r.stress) };
         });
       }
     }
@@ -1134,27 +1143,6 @@ async function renderForme() {
     html += collapsibleCardHtml(sectionIcon("list") + 'Récap du jour');
     checklist.forEach(function(c) { html += checklistRowHtml(c); });
     html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></details>';
-
-    if (todayHrCurve || todayHrvPoints) {
-      html += collapsibleCardHtml(sectionIcon("heart") + 'FC & VFC dans la journée');
-      if (todayHrExtremes) {
-        html += '<div style="display:flex;justify-content:space-around;text-align:center;margin-bottom:12px">';
-        html += '<div><div class="muted" style="font-size:10px">FC max</div><b style="font-size:16px;color:var(--red)">' + todayHrExtremes.max + ' bpm</b><div class="muted" style="font-size:10px">' + todayHrExtremes.maxTime + '</div></div>';
-        html += '<div><div class="muted" style="font-size:10px">FC min</div><b style="font-size:16px;color:var(--steel)">' + todayHrExtremes.min + ' bpm</b><div class="muted" style="font-size:10px">' + todayHrExtremes.minTime + '</div></div>';
-        html += '</div>';
-      }
-      if (todayHrCurve) {
-        html += '<div class="muted" style="font-size:10px;margin-bottom:4px">FC moyenne par heure</div>';
-        html += lineChartHtml(todayHrCurve, { unit: " bpm", showAvg: false });
-      }
-      if (todayHrvPoints) {
-        html += '<div class="muted" style="font-size:10px;margin:14px 0 4px">VFC — lectures de la journée</div>';
-        html += lineChartHtml(todayHrvPoints, { unit: " ms", showAvg: false });
-      } else {
-        html += '<div class="muted" style="font-size:10px;margin-top:10px">Pas encore assez de lectures VFC aujourd\'hui (mesurée seulement à l\'immobilité).</div>';
-      }
-      html += '<div class="muted" style="font-size:10px;margin-top:8px">À partir des échantillons minute par minute (3 derniers jours) — capteur optique au poignet, indicatif.</div></details>';
-    }
   } else {
     // Un bloc par métrique (barres semaine + courbe mois + 1 phrase) — jamais
     // plus, pour ne pas retomber dans le fourre-tout de l'ancien Dashboard.
@@ -1195,12 +1183,42 @@ async function renderForme() {
       return "Stable sur le mois, autour de " + recentTxt + " en moyenne.";
     }
 
+    // Ajout "aujourd'hui, heure par heure" sous chaque bloc concerné —
+    // vrai max/min du jour + courbe FC, vraies lectures VFC/stress
+    // horodatées, à partir des échantillons minute par minute (rétention 3
+    // jours). Absent si aucune donnée assez récente (repli silencieux).
+    let hrTodayHtml = null;
+    if (todayHrExtremes || todayHrCurve) {
+      hrTodayHtml = '<div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--line)">';
+      hrTodayHtml += '<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Aujourd\'hui, heure par heure</div>';
+      if (todayHrExtremes) {
+        hrTodayHtml += '<div style="display:flex;justify-content:space-around;text-align:center;margin-bottom:10px">';
+        hrTodayHtml += '<div><div class="muted" style="font-size:10px">FC max</div><b style="font-size:16px;color:var(--red)">' + todayHrExtremes.max + ' bpm</b><div class="muted" style="font-size:10px">' + todayHrExtremes.maxTime + '</div></div>';
+        hrTodayHtml += '<div><div class="muted" style="font-size:10px">FC min</div><b style="font-size:16px;color:var(--steel)">' + todayHrExtremes.min + ' bpm</b><div class="muted" style="font-size:10px">' + todayHrExtremes.minTime + '</div></div>';
+        hrTodayHtml += '</div>';
+      }
+      if (todayHrCurve) hrTodayHtml += lineChartHtml(todayHrCurve, { unit: " bpm", showAvg: false });
+      hrTodayHtml += '</div>';
+    }
+    let hrvTodayHtml = null;
+    if (todayHrvPoints) {
+      hrvTodayHtml = '<div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--line)">';
+      hrvTodayHtml += '<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Aujourd\'hui, lectures réelles</div>';
+      hrvTodayHtml += lineChartHtml(todayHrvPoints, { unit: " ms", showAvg: false }) + '</div>';
+    }
+    let stressTodayHtml = null;
+    if (todayStressPoints) {
+      stressTodayHtml = '<div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--line)">';
+      stressTodayHtml += '<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Aujourd\'hui, lectures réelles</div>';
+      stressTodayHtml += lineChartHtml(todayStressPoints, { showAvg: false }) + '</div>';
+    }
+
     const hrvRB = recentVsBaseline("hrv_avg");
-    html += metricTrendSectionHtml("VFC", weekBars("hrv_avg"), monthLine("hrv_avg"), trendPhrase(hrvRB, false, " ms", 0), { unit: " ms", qualify: qualifyHRV });
+    html += metricTrendSectionHtml("VFC", weekBars("hrv_avg"), monthLine("hrv_avg"), trendPhrase(hrvRB, false, " ms", 0), { unit: " ms", qualify: qualifyHRV, todayHtml: hrvTodayHtml });
     const hrRB = recentVsBaseline("hr_resting");
-    html += metricTrendSectionHtml("FC repos", weekBars("hr_resting"), monthLine("hr_resting"), trendPhrase(hrRB, true, " bpm", 0), { unit: " bpm", qualify: qualifyRHR });
+    html += metricTrendSectionHtml("FC repos", weekBars("hr_resting"), monthLine("hr_resting"), trendPhrase(hrRB, true, " bpm", 0), { unit: " bpm", qualify: qualifyRHR, todayHtml: hrTodayHtml });
     const stressRB = recentVsBaseline("stress_avg");
-    html += metricTrendSectionHtml("Stress", weekBars("stress_avg"), monthLine("stress_avg"), trendPhrase(stressRB, true, "", 0), { qualify: qualifyStress });
+    html += metricTrendSectionHtml("Stress", weekBars("stress_avg"), monthLine("stress_avg"), trendPhrase(stressRB, true, "", 0), { qualify: qualifyStress, todayHtml: stressTodayHtml });
 
     const monthLL = monthLifeload.filter(function(l){ return l.day >= daysAgo(29); });
     if (monthLL.length >= 5) {
@@ -1546,9 +1564,9 @@ async function loadRecuperation() {
 
   // Courbe FC de la nuit, coucher -> réveil, tant que les échantillons minute
   // par minute existent encore (rétention 3 jours, cf. sync_to_supabase.py) —
-  // uniquement construite pour l'onglet Aujourd'hui, pas Tendance.
+  // affichée dans Tendance (variation dans la journée/nuit), pas Aujourd'hui.
   let nightCurve = null;
-  if (recuperationSubTab !== "tendance" && latestW && latestW.bedtime_hour != null && latestW.wake_hour != null) {
+  if (recuperationSubTab === "tendance" && latestW && latestW.bedtime_hour != null && latestW.wake_hour != null) {
     const wakeDay = latest.date;
     const prevDate = new Date(wakeDay + "T00:00:00"); prevDate.setDate(prevDate.getDate() - 1);
     const bedDay = localDateISO(prevDate);
@@ -1638,12 +1656,6 @@ async function loadRecuperation() {
       html += collapsibleCardHtml(sectionIcon("list") + 'Récap du jour');
       checklist.forEach(function(c) { html += checklistRowHtml(c); });
       html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></details>';
-
-      if (nightCurve && nightCurve.length >= 4) {
-        html += collapsibleCardHtml(sectionIcon("heart") + 'Courbe de la nuit (FC)');
-        html += '<div style="padding:6px 2px 2px">' + lineChartHtml(nightCurve, { unit: " bpm" }) + '</div>';
-        html += '<div class="muted" style="font-size:10px;margin-top:6px">Fréquence cardiaque par tranches de 15 min, du coucher au réveil estimés. Capteur optique au poignet — indicatif.</div></details>';
-      }
     }
   } else {
     const migDaySet = migraines.map(function(m){ return m.day; });
@@ -1664,7 +1676,13 @@ async function loadRecuperation() {
         : diffMin >= 30 ? "En hausse de " + Math.round(diffMin) + " min sur les 7 dernières nuits."
         : "Stable sur les 2 dernières semaines.";
     }
-    html += metricTrendSectionHtml("Durée de sommeil", sleepWeekBars, sleepMonthLine, sleepPhrase, { decimals: 1, unit: "h", qualify: qualifySleepHours });
+    let nightCurveHtml = null;
+    if (nightCurve && nightCurve.length >= 4) {
+      nightCurveHtml = '<div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--line)">';
+      nightCurveHtml += '<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">La nuit dernière, coucher → réveil</div>';
+      nightCurveHtml += lineChartHtml(nightCurve, { unit: " bpm", showAvg: false }) + '</div>';
+    }
+    html += metricTrendSectionHtml("Durée de sommeil", sleepWeekBars, sleepMonthLine, sleepPhrase, { decimals: 1, unit: "h", qualify: qualifySleepHours, todayHtml: nightCurveHtml });
 
     // Le PAI se lit nativement en total glissant sur 7 jours, pas jour par
     // jour — la "semaine" montre la contribution quotidienne au score actuel,
@@ -1993,6 +2011,7 @@ function metricTrendSectionHtml(title, weeklyItems, monthlyItems, interpretation
   html += barChartHtml(weeklyItems, opts);
   html += '<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin:14px 0 4px">Mois</div>';
   html += lineChartHtml(monthlyItems, Object.assign({}, opts, { showAvg: false }));
+  if (opts.todayHtml) html += opts.todayHtml;
   if (interpretation) {
     html += '<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:12px;color:var(--chalkDim)">' + esc(interpretation) + "</div>";
   }
