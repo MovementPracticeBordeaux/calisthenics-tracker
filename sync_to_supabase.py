@@ -23,6 +23,10 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 # plus accès aux données depuis le verrouillage des policies RLS.
 ACCESS_TOKEN = None
 DAYS = 30
+# Rétention des échantillons par minute bruts : au-delà, seules les agrégats
+# quotidiens (wearable_daily) et les interprétations dérivées (bedtime_hour,
+# wake_hour, hr_max_activity...) sont conservés indéfiniment.
+MINUTE_RETENTION_DAYS = 3
 
 DB_PATH = sys.argv[1] if len(sys.argv) > 1 else "Gadgetbridge.db"
 
@@ -288,6 +292,113 @@ def push_sleep_stages(rows):
         print(f"{len(rows)} nuits (stades de sommeil) synchronisées.")
 
 
+def build_minute_samples(db_path, days=MINUTE_RETENTION_DAYS):
+    """Lit HUAMI_EXTENDED_ACTIVITY_SAMPLE (une ligne par minute) sur la fenêtre de
+    rétention, sans agréger : c'est la donnée brute que build_daily_summary()
+    résume puis jette. Conservée séparément (courte durée) pour les courbes
+    intra-journée et la dérivation de l'heure de coucher ci-dessous."""
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cutoff_s = int((datetime.datetime.now() - datetime.timedelta(days=days)).timestamp())
+    cur.execute(
+        "SELECT TIMESTAMP, STEPS, RAW_INTENSITY, HEART_RATE FROM HUAMI_EXTENDED_ACTIVITY_SAMPLE "
+        "WHERE TIMESTAMP >= ? ORDER BY TIMESTAMP",
+        (cutoff_s,),
+    )
+    rows = []
+    for ts, steps, intensity, hr in cur.fetchall():
+        dt = datetime.datetime.fromtimestamp(ts)
+        rows.append({
+            "ts": dt.isoformat(),
+            "day": dt.strftime("%Y-%m-%d"),
+            "heart_rate": hr if (hr is not None and 0 < hr < 250) else None,
+            "steps": steps,
+            "intensity": intensity,
+            "_ts_epoch": ts,
+        })
+    conn.close()
+    return rows
+
+
+def push_minute_samples(rows):
+    if not rows:
+        return
+    url = f"{SUPABASE_URL}/rest/v1/wearable_minute_samples?on_conflict=ts"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates,return=minimal",
+    }
+    payload = [
+        {"ts": r["ts"], "day": r["day"], "heart_rate": r["heart_rate"], "steps": r["steps"], "intensity": r["intensity"]}
+        for r in rows
+    ]
+    CHUNK = 2000  # évite un unique payload de plusieurs milliers de lignes
+    for i in range(0, len(payload), CHUNK):
+        resp = requests.post(url, headers=headers, data=json.dumps(payload[i:i + CHUNK]))
+        if resp.status_code >= 300:
+            print(f"Erreur Supabase (minute) ({resp.status_code}): {resp.text}")
+            return
+    print(f"{len(payload)} échantillons par minute synchronisés.")
+
+
+def purge_old_minute_samples():
+    """Supprime les échantillons par minute plus vieux que MINUTE_RETENTION_DAYS.
+    Ne touche jamais wearable_daily : les agrégats et interprétations
+    (hr_max_activity, wake_hour, bedtime_hour...) restent en place."""
+    cutoff_day = (datetime.datetime.now() - datetime.timedelta(days=MINUTE_RETENTION_DAYS)).strftime("%Y-%m-%d")
+    url = f"{SUPABASE_URL}/rest/v1/wearable_minute_samples?day=lt.{cutoff_day}"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Prefer": "return=minimal",
+    }
+    resp = requests.delete(url, headers=headers)
+    if resp.status_code >= 300:
+        print(f"Erreur Supabase (purge minute) ({resp.status_code}): {resp.text}")
+    else:
+        print(f"Échantillons par minute antérieurs au {cutoff_day} purgés.")
+
+
+def derive_bedtimes(minute_rows, wake_rows):
+    """Estime l'heure de coucher réelle à partir de l'immobilité (pas + intensité)
+    qui précède directement le réveil détecté (wake_rows, cf. build_sleep_stages),
+    plutôt que d'utiliser la valeur fixe 22:00 du blob de sommeil (cf.
+    build_sleep_stages, docstring). Ne renvoie une valeur que si au moins 3h
+    d'immobilité quasi continue précèdent le réveil — sinon on ne devine pas."""
+    by_day_wake = {r["day"]: r for r in wake_rows if r.get("wake_hour") is not None}
+    window_all = sorted(minute_rows, key=lambda r: r["_ts_epoch"])
+    results = []
+    for day, wake in by_day_wake.items():
+        wake_epoch = (datetime.datetime.strptime(day, "%Y-%m-%d") + datetime.timedelta(hours=wake["wake_hour"])).timestamp()
+        window_start = wake_epoch - 14 * 3600  # ne remonte pas au-delà de 14h avant le réveil
+        window = [r for r in window_all if window_start <= r["_ts_epoch"] <= wake_epoch]
+        if len(window) < 60:
+            continue
+        still = [(r["steps"] in (0, None)) and ((r["intensity"] or 0) <= 5) for r in window]
+        # Remonte depuis le réveil ; tolère de courts réveils nocturnes (<=5 min
+        # d'activité d'affilée) mais s'arrête dès qu'une plage plus longue rompt
+        # l'immobilité — ça marque la fin de la nuit (le coucher).
+        bed_idx, consecutive_active = None, 0
+        for idx in range(len(window) - 1, -1, -1):
+            if still[idx]:
+                bed_idx = idx
+                consecutive_active = 0
+            else:
+                consecutive_active += 1
+                if consecutive_active > 5:
+                    break
+        if bed_idx is None:
+            continue
+        duration_min = (window[-1]["_ts_epoch"] - window[bed_idx]["_ts_epoch"]) / 60
+        if duration_min < 180:
+            continue
+        bed_dt = datetime.datetime.fromtimestamp(window[bed_idx]["_ts_epoch"])
+        results.append({"day": day, "bedtime_hour": round(bed_dt.hour + bed_dt.minute / 60, 2)})
+    return results
+
+
 if __name__ == "__main__":
     ACCESS_TOKEN = mpb_auth.get_access_token(SUPABASE_URL, SUPABASE_KEY)
     # Séances (zones cardiaques, effet d'entraînement) : plus estimées ici — la
@@ -297,3 +408,9 @@ if __name__ == "__main__":
     push_to_supabase(rows)
     sleep_rows = build_sleep_stages(DB_PATH)
     push_sleep_stages(sleep_rows)
+
+    minute_rows = build_minute_samples(DB_PATH)
+    push_minute_samples(minute_rows)
+    bedtime_rows = derive_bedtimes(minute_rows, sleep_rows)
+    push_sleep_stages(bedtime_rows)
+    purge_old_minute_samples()
