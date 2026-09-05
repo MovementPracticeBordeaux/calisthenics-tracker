@@ -505,6 +505,31 @@ function getEffectiveEntries(s) {
   return {};
 }
 
+// FC max/repos et seuils Karvonen — mêmes constantes que sync_fit.py, pour
+// que les zones estimées ici (à partir des échantillons minute par minute,
+// quand aucun .fit n'a été synchronisé pour la séance) restent cohérentes
+// avec les zones calculées seconde par seconde côté montre.
+const KARVONEN_HR_MAX = 187, KARVONEN_HR_REST = 47;
+function karvonenThresholds() {
+  const reserve = KARVONEN_HR_MAX - KARVONEN_HR_REST;
+  return [0.5, 0.6, 0.7, 0.8, 0.9].map(function(p) { return Math.round(KARVONEN_HR_REST + reserve * p); });
+}
+// hrs : liste de FC (1 valeur ~ 1 minute, cf. wearable_minute_samples) ;
+// retourne des minutes passées dans chacune des 5 zones, sous la FC de
+// repos + 50% de réserve = non compté (repos, comme sync_fit.py).
+function karvonenZonesFromHr(hrs) {
+  const th = karvonenThresholds();
+  const z = [0, 0, 0, 0, 0];
+  hrs.forEach(function(hr) {
+    if (hr < th[0]) return;
+    else if (hr < th[1]) z[0]++;
+    else if (hr < th[2]) z[1]++;
+    else if (hr < th[3]) z[2]++;
+    else if (hr < th[4]) z[3]++;
+    else z[4]++;
+  });
+  return z;
+}
 function computeLoad(s) {
   if (!s) return { sessionLoad: null, correctedLoad: null };
   const participation = s.participation != null ? s.participation : 1.0;
@@ -1142,7 +1167,7 @@ async function loadEntrainement() {
     sb("dismissed_activity_flags?select=day").catch(function() { return []; }),
     sb("training_coefficients?select=*&order=category,label").catch(function() { return []; }),
     sb("migraines?select=day&order=day.desc&limit=60").catch(function() { return []; }),
-    sb("workout_sessions?select=day,kz_leger_min,kz_intensif_min,kz_aerobique_min,kz_anaerobie_min,kz_vo2max_min,kz_hrmax_used,kz_hrrest_used&activity_type=eq.seance&kz_leger_min=not.is.null&order=day.desc&limit=60").catch(function() { return []; }),
+    sb("workout_sessions?select=day,kz_leger_min,kz_intensif_min,kz_aerobique_min,kz_anaerobie_min,kz_vo2max_min,kz_hrmax_used,kz_hrrest_used,matched_discipline&activity_type=eq.seance&kz_leger_min=not.is.null&order=day.desc&limit=60").catch(function() { return []; }),
   ]);
   const migDaySet = migraines.map(function(m){ return m.day; });
 
@@ -1150,6 +1175,31 @@ async function loadEntrainement() {
   const todayTotalLoad = todaySessions.reduce(function(s,x){ return s + (x.correctedLoad || 0); }, 0);
   const loggedDisciplinesToday = todaySessions.map(function(s){ return s.discipline; });
   const classes = getScheduledClasses(today).filter(function(c){ return loggedDisciplinesToday.indexOf(c.discipline) === -1; });
+
+  // Zones cardiaques estimées pour une séance du jour non captée par le .fit
+  // (montre pas synchronisée/pas portée au bon endroit) : à partir des
+  // échantillons minute par minute (wearable_minute_samples, rétention 3
+  // jours) bornés par l'heure de séance renseignée + sa durée. Ne remplace
+  // jamais les zones .fit (seconde par seconde, bien plus fiables) — ne
+  // s'affiche que quand aucune correspondance .fit n'existe pour ce jour.
+  const todayKzDisciplines = kzWorkouts.filter(function(w){ return w.day === today; }).map(function(w){ return w.matched_discipline; });
+  const unmatchedTodaySession = todaySessions.find(function(s){ return s.time && s.duration && todayKzDisciplines.indexOf(s.discipline) === -1; });
+  let estimatedKz = null;
+  if (unmatchedTodaySession) {
+    const minuteRows = await sb("wearable_minute_samples?day=eq." + today + "&select=ts,heart_rate&order=ts&limit=1500").catch(function() { return []; });
+    if (minuteRows.length) {
+      const startMs = new Date(today + "T" + unmatchedTodaySession.time + ":00").getTime();
+      const endMs = startMs + Number(unmatchedTodaySession.duration) * 60000;
+      const hrs = minuteRows.filter(function(r) {
+        if (r.heart_rate == null) return false;
+        const t = new Date(r.ts).getTime();
+        return t >= startMs - 5 * 60000 && t <= endMs + 5 * 60000;
+      }).map(function(r) { return r.heart_rate; });
+      if (hrs.length >= 5) {
+        estimatedKz = { discipline: unmatchedTodaySession.discipline, zones: karvonenZonesFromHr(hrs), sampleCount: hrs.length };
+      }
+    }
+  }
 
   // Même modèle Fitness-Fatigue (Banister, EWMA 7j/28j) que le score Forme
   // (index.html, renderForme) — dupliqué ici volontairement : chaque onglet
@@ -1247,6 +1297,23 @@ async function loadEntrainement() {
       html += '<div style="display:flex;gap:6px;align-items:center"><input type="number" min="0" step="0.5" id="grip-quick-input" placeholder="kg" style="width:64px;padding:6px;text-align:center;font-size:13px" /><button id="grip-quick-save" style="background:var(--gradient);border:none;border-radius:6px;color:var(--bg);font-size:11px;font-weight:800;padding:6px 10px;cursor:pointer">OK</button></div></div>';
     }
     html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></details>';
+
+    if (estimatedKz) {
+      const kzGrand = estimatedKz.zones.reduce(function(s, x) { return s + x; }, 0);
+      if (kzGrand > 0) {
+        html += '<div class="card"><div class="section-label">' + sectionIcon("heart") + 'Zones cardiaques estimées — ' + esc(estimatedKz.discipline) + '</div>';
+        const kzRows = [
+          ["Léger", estimatedKz.zones[0], "steel"], ["Intensif", estimatedKz.zones[1], "green"],
+          ["Aérobique", estimatedKz.zones[2], "amber"], ["Anaérobie", estimatedKz.zones[3], "rust"], ["VO2 max", estimatedKz.zones[4], "red"],
+        ];
+        kzRows.forEach(function(r) {
+          const pct = Math.round((r[1] / kzGrand) * 100);
+          html += '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>' + r[0] + '</span><span class="muted">' + r[1] + " min · " + pct + "%</span></div>";
+          html += '<div style="height:7px;background:var(--surfaceRaised);border-radius:4px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:var(--' + r[2] + ')"></div></div></div>';
+        });
+        html += '<div class="muted" style="font-size:10px;margin-top:8px">Estimation à partir de l\'échantillonnage minute par minute du bracelet (aucun fichier .fit synchronisé pour cette séance) — sur ' + estimatedKz.sampleCount + ' points de mesure. Moins précis que les zones Karvonen habituelles (calculées seconde par seconde) ; disponible seulement dans les 3 jours suivant la séance.</div></div>';
+      }
+    }
   } else {
     const last7 = []; for (let i = 6; i >= 0; i--) last7.push(daysAgo(i));
     const prev7 = []; for (let i = 13; i >= 7; i--) prev7.push(daysAgo(i));
