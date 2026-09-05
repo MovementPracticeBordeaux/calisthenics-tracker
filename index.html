@@ -505,20 +505,25 @@ function getEffectiveEntries(s) {
   return {};
 }
 
-// FC max/repos et seuils Karvonen — mêmes constantes que sync_fit.py, pour
-// que les zones estimées ici (à partir des échantillons minute par minute,
-// quand aucun .fit n'a été synchronisé pour la séance) restent cohérentes
-// avec les zones calculées seconde par seconde côté montre.
-const KARVONEN_HR_MAX = 187, KARVONEN_HR_REST = 47;
-function karvonenThresholds() {
-  const reserve = KARVONEN_HR_MAX - KARVONEN_HR_REST;
-  return [0.5, 0.6, 0.7, 0.8, 0.9].map(function(p) { return Math.round(KARVONEN_HR_REST + reserve * p); });
+// FC max/repos et seuils Karvonen. sync_fit.py reste la source de vérité
+// (HR_MAX/HR_REST y sont réglés à la main si un test d'effort donne mieux)
+// et enregistre les valeurs utilisées sur chaque séance .fit
+// (workout_sessions.kz_hrmax_used/kz_hrrest_used) — on les relit donc de là
+// plutôt que de dupliquer des constantes qui pourraient diverger si l'une
+// des deux est mise à jour sans l'autre. Ces valeurs par défaut ne servent
+// qu'en repli, si aucune séance .fit n'a encore été synchronisée.
+const KARVONEN_HR_MAX_DEFAULT = 187, KARVONEN_HR_REST_DEFAULT = 47;
+function karvonenThresholds(hrMax, hrRest) {
+  hrMax = hrMax || KARVONEN_HR_MAX_DEFAULT;
+  hrRest = hrRest || KARVONEN_HR_REST_DEFAULT;
+  const reserve = hrMax - hrRest;
+  return [0.5, 0.6, 0.7, 0.8, 0.9].map(function(p) { return Math.round(hrRest + reserve * p); });
 }
 // hrs : liste de FC (1 valeur ~ 1 minute, cf. wearable_minute_samples) ;
 // retourne des minutes passées dans chacune des 5 zones, sous la FC de
 // repos + 50% de réserve = non compté (repos, comme sync_fit.py).
-function karvonenZonesFromHr(hrs) {
-  const th = karvonenThresholds();
+function karvonenZonesFromHr(hrs, hrMax, hrRest) {
+  const th = karvonenThresholds(hrMax, hrRest);
   const z = [0, 0, 0, 0, 0];
   hrs.forEach(function(hr) {
     if (hr < th[0]) return;
@@ -1264,7 +1269,11 @@ async function loadEntrainement() {
         return t >= startMs - 5 * 60000 && t <= endMs + 5 * 60000;
       }).map(function(r) { return r.heart_rate; });
       if (hrs.length >= 5) {
-        estimatedKz = { discipline: unmatchedTodaySession.discipline, zones: karvonenZonesFromHr(hrs), sampleCount: hrs.length };
+        // FC max/repos les plus récentes réellement utilisées par une séance
+        // .fit (kzWorkouts trié day.desc) plutôt que la constante de repli.
+        const hrMax = kzWorkouts.length ? kzWorkouts[0].kz_hrmax_used : null;
+        const hrRest = kzWorkouts.length ? kzWorkouts[0].kz_hrrest_used : null;
+        estimatedKz = { discipline: unmatchedTodaySession.discipline, zones: karvonenZonesFromHr(hrs, hrMax, hrRest), sampleCount: hrs.length };
       }
     }
   }
