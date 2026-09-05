@@ -1189,28 +1189,23 @@ async function renderForme() {
     // jours). Absent si aucune donnée assez récente (repli silencieux).
     let hrTodayHtml = null;
     if (todayHrExtremes || todayHrCurve) {
-      hrTodayHtml = '<div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--line)">';
-      hrTodayHtml += '<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Aujourd\'hui, heure par heure</div>';
+      let inner = "";
       if (todayHrExtremes) {
-        hrTodayHtml += '<div style="display:flex;justify-content:space-around;text-align:center;margin-bottom:10px">';
-        hrTodayHtml += '<div><div class="muted" style="font-size:10px">FC max</div><b style="font-size:16px;color:var(--red)">' + todayHrExtremes.max + ' bpm</b><div class="muted" style="font-size:10px">' + todayHrExtremes.maxTime + '</div></div>';
-        hrTodayHtml += '<div><div class="muted" style="font-size:10px">FC min</div><b style="font-size:16px;color:var(--steel)">' + todayHrExtremes.min + ' bpm</b><div class="muted" style="font-size:10px">' + todayHrExtremes.minTime + '</div></div>';
-        hrTodayHtml += '</div>';
+        inner += '<div style="display:flex;justify-content:space-around;text-align:center;margin-bottom:10px">';
+        inner += '<div><div class="muted" style="font-size:10px">FC max</div><b style="font-size:16px;color:var(--red)">' + todayHrExtremes.max + ' bpm</b><div class="muted" style="font-size:10px">' + todayHrExtremes.maxTime + '</div></div>';
+        inner += '<div><div class="muted" style="font-size:10px">FC min</div><b style="font-size:16px;color:var(--steel)">' + todayHrExtremes.min + ' bpm</b><div class="muted" style="font-size:10px">' + todayHrExtremes.minTime + '</div></div>';
+        inner += '</div>';
       }
-      if (todayHrCurve) hrTodayHtml += lineChartHtml(todayHrCurve, { unit: " bpm", showAvg: false });
-      hrTodayHtml += '</div>';
+      if (todayHrCurve) inner += intradayCurveHtml(todayHrCurve, { unit: " bpm" });
+      hrTodayHtml = intradaySectionHtml("Aujourd'hui, heure par heure", inner);
     }
     let hrvTodayHtml = null;
     if (todayHrvPoints) {
-      hrvTodayHtml = '<div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--line)">';
-      hrvTodayHtml += '<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Aujourd\'hui, lectures réelles</div>';
-      hrvTodayHtml += lineChartHtml(todayHrvPoints, { unit: " ms", showAvg: false }) + '</div>';
+      hrvTodayHtml = intradaySectionHtml("Aujourd'hui, lectures réelles", intradayCurveHtml(todayHrvPoints, { unit: " ms" }));
     }
     let stressTodayHtml = null;
     if (todayStressPoints) {
-      stressTodayHtml = '<div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--line)">';
-      stressTodayHtml += '<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Aujourd\'hui, lectures réelles</div>';
-      stressTodayHtml += lineChartHtml(todayStressPoints, { showAvg: false }) + '</div>';
+      stressTodayHtml = intradaySectionHtml("Aujourd'hui, lectures réelles", intradayCurveHtml(todayStressPoints, {}));
     }
 
     const hrvRB = recentVsBaseline("hrv_avg");
@@ -1678,9 +1673,7 @@ async function loadRecuperation() {
     }
     let nightCurveHtml = null;
     if (nightCurve && nightCurve.length >= 4) {
-      nightCurveHtml = '<div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--line)">';
-      nightCurveHtml += '<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">La nuit dernière, coucher → réveil</div>';
-      nightCurveHtml += lineChartHtml(nightCurve, { unit: " bpm", showAvg: false }) + '</div>';
+      nightCurveHtml = intradaySectionHtml("La nuit dernière, coucher → réveil", intradayCurveHtml(nightCurve, { unit: " bpm" }));
     }
     html += metricTrendSectionHtml("Durée de sommeil", sleepWeekBars, sleepMonthLine, sleepPhrase, { decimals: 1, unit: "h", qualify: qualifySleepHours, todayHtml: nightCurveHtml });
 
@@ -1986,6 +1979,73 @@ function lineChartHtml(items, opts) {
     }
   }
   return html;
+}
+
+// Rendu dédié aux variations dans la journée (FC/VFC/Stress heure par
+// heure, nuit coucher -> réveil) : aire dégradée sous la courbe plutôt
+// qu'un simple trait, pour qu'on la distingue d'un coup d'œil des barres
+// semaine et de la courbe mois (toujours en trait plein steel) juste
+// au-dessus dans le même bloc. Même géométrie/points tactiles que
+// lineChartHtml, uniquement le rendu visuel change.
+let _intradayChartSeq = 0;
+function intradayCurveHtml(items, opts) {
+  opts = opts || {};
+  const decimals = opts.decimals || 0;
+  const height = opts.height || 64;
+  const unit = opts.unit || "";
+  const vals = items.map(function(i) { return i.val || 0; });
+  const max = Math.max.apply(null, vals.concat([1]));
+  const min = Math.min.apply(null, vals.concat([0]));
+  const range = (max - min) || 1;
+  const padY = 6;
+  const usableH = Math.max(1, height - padY * 2);
+  const n = items.length;
+  const points = items.map(function(item, i) {
+    const v = item.val || 0;
+    const xPct = n > 1 ? (i / (n - 1)) * 100 : 50;
+    const yPct = ((padY + (usableH - ((v - min) / range) * usableH)) / height) * 100;
+    return { xPct: xPct, yPct: yPct };
+  });
+  const lineD = points.map(function(p, i) { return (i === 0 ? "M" : "L") + p.xPct.toFixed(2) + "," + p.yPct.toFixed(2); }).join(" ");
+  const areaD = lineD + " L100,100 L0,100 Z";
+  const gid = "intraday-grad-" + (_intradayChartSeq++);
+  const touchData = points.map(function(p, i) {
+    const v = items[i].val || 0;
+    return { x: p.xPct, label: items[i].label || "", display: v.toFixed(decimals) + unit };
+  });
+  let html = '<div class="line-chart-touch" data-points="' + encodeURIComponent(JSON.stringify(touchData)) + '" style="position:relative;height:' + height + 'px;touch-action:pan-y">';
+  html += '<svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%">';
+  html += '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="0" y2="1">';
+  html += '<stop offset="0%" stop-color="var(--pink)" stop-opacity="0.55"/><stop offset="100%" stop-color="var(--pink)" stop-opacity="0"/>';
+  html += '</linearGradient></defs>';
+  if (n > 1) {
+    html += '<path d="' + areaD + '" fill="url(#' + gid + ')" stroke="none"/>';
+    html += '<path d="' + lineD + '" fill="none" stroke="var(--pink)" stroke-width="1.8" vector-effect="non-scaling-stroke"/>';
+  }
+  html += "</svg>";
+  points.forEach(function(p, i) {
+    const isLast = i === points.length - 1;
+    const size = isLast ? 6 : 3;
+    html += '<div style="position:absolute;left:' + p.xPct.toFixed(2) + '%;top:' + p.yPct.toFixed(2) + '%;width:' + size + 'px;height:' + size + 'px;border-radius:50%;background:var(--pink);transform:translate(-50%,-50%)"></div>';
+  });
+  html += '<div class="lc-cursor" style="display:none;position:absolute;top:0;bottom:0;width:1px;background:var(--line);pointer-events:none"></div>';
+  html += '<div class="lc-tooltip" style="display:none;position:absolute;top:0;background:var(--surfaceRaised);border:1px solid var(--line);border-radius:6px;padding:3px 8px;font-size:11px;font-weight:800;color:var(--chalk);white-space:nowrap;pointer-events:none;z-index:5;box-shadow:0 2px 8px rgba(0,0,0,0.35)"></div>';
+  html += "</div>";
+  html += '<div style="display:flex;justify-content:space-between;margin-top:4px">';
+  items.forEach(function(item) {
+    html += '<span style="font-size:9px;color:var(--muted);flex:1;text-align:center">' + (item.label || "") + "</span>";
+  });
+  html += "</div>";
+  return html;
+}
+// Encadré pointillé rose + pastille lumineuse : le même signal visuel pour
+// toute donnée "variation dans la journée", où qu'elle apparaisse (Forme,
+// Récupération) — reconnaissable sans avoir à relire le titre.
+function intradaySectionHtml(label, innerHtml) {
+  return '<div style="margin-top:14px;padding:10px 12px;border:1px dashed var(--pink);border-radius:10px;background:rgba(236,72,153,0.06)">' +
+    '<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;display:flex;align-items:center;gap:5px">' +
+    '<span style="width:6px;height:6px;border-radius:50%;background:var(--pink);box-shadow:0 0 5px 1px var(--pink)"></span>' + esc(label) + '</div>' +
+    innerHtml + '</div>';
 }
 
 // Compose un bloc de tendance complet pour une métrique : barres semaine +
