@@ -4147,12 +4147,16 @@ function wireCoachSeanceFormEvents() {
   const validateBtn = document.getElementById("validate-session");
   if (validateBtn) validateBtn.addEventListener("click", function() {
     validateBtn.textContent = "Enregistrement…";
-    saveSessionRow(todayISO(), session).then(function() {
+    saveSessionRow(todayISO(), session).then(async function() {
       editingSession = null;
       coachFormOpen = null;
       coachData = null; // la charge d'entraînement change : force un recalcul pour les questions Statistiques
       coachMessages.push({ role: "assistant", text: "Séance enregistrée." });
-      refreshCoachPendingCount();
+      // Attendre la mise à jour de coachTodayStatus avant de redessiner —
+      // sinon la coche verte ne s'affichait qu'au prochain passage sur
+      // l'onglet (rendu avec l'ancien statut pendant que le fetch tournait
+      // encore en arrière-plan).
+      await refreshCoachPendingCount();
       renderCoach();
     }).catch(function(e) {
       validateBtn.textContent = "Erreur : " + e.message;
@@ -4188,10 +4192,10 @@ function wireCoachLifeloadFormEvents() {
       sb("lifeload", {
         method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
         body: JSON.stringify({ day: todayISO(), state: btn.dataset.value }),
-      }).then(function() {
+      }).then(async function() {
         coachFormOpen = null;
         coachMessages.push({ role: "assistant", text: "Ressenti du jour enregistré : " + label + "." });
-        refreshCoachPendingCount();
+        await refreshCoachPendingCount();
         drawCoach();
       }).catch(function(e) { alert("Erreur : " + e.message); });
     });
@@ -4361,10 +4365,10 @@ function wireCoachPrehensionFormEvents() {
     sb("grip_strength", {
       method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
       body: JSON.stringify({ day: todayISO(), value_kg: val }),
-    }).then(function() {
+    }).then(async function() {
       coachFormOpen = null;
       coachMessages.push({ role: "assistant", text: "Préhension enregistrée : " + val + " kg." });
-      refreshCoachPendingCount();
+      await refreshCoachPendingCount();
       drawCoach();
     }).catch(function(e) { alert("Erreur : " + e.message); saveBtn.textContent = "Enregistrer"; });
   });
