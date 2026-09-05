@@ -659,6 +659,46 @@ async function renderForme() {
   const todayWearable = wearable.find(function(w){ return w.day === today; }) || null;
   const wearable7 = wearable.filter(function(w){ return w.day >= daysAgo(7); });
 
+  // FC & VFC dans la journée : utilise les échantillons minute par minute
+  // (wearable_minute_samples, rétention 3 jours) plutôt qu'une seule valeur
+  // quotidienne (hr_resting/hrv_avg) — vrai max/min du jour avec l'heure, et
+  // vraies lectures VFC horodatées au lieu d'une moyenne unique.
+  let todayHrCurve = null, todayHrExtremes = null, todayHrvPoints = null;
+  if (formeSubTab === "jour") {
+    const todayMinuteRows = await sb("wearable_minute_samples?day=eq." + today + "&select=ts,heart_rate,hrv&order=ts&limit=1500").catch(function() { return []; });
+    if (todayMinuteRows.length) {
+      const hrRows = todayMinuteRows.filter(function(r) { return r.heart_rate != null; });
+      if (hrRows.length >= 5) {
+        const maxRow = hrRows.slice().sort(function(a, b) { return b.heart_rate - a.heart_rate; })[0];
+        const minRow = hrRows.slice().sort(function(a, b) { return a.heart_rate - b.heart_rate; })[0];
+        const hourDec = function(ts) { const dt = new Date(ts); return dt.getHours() + dt.getMinutes() / 60; };
+        todayHrExtremes = {
+          max: maxRow.heart_rate, maxTime: hoursToLabel(hourDec(maxRow.ts)),
+          min: minRow.heart_rate, minTime: hoursToLabel(hourDec(minRow.ts)),
+        };
+        const BUCKET_MIN = 60;
+        const dayStart = new Date(today + "T00:00:00").getTime();
+        const buckets = {};
+        hrRows.forEach(function(r) {
+          const idx = Math.floor((new Date(r.ts).getTime() - dayStart) / (BUCKET_MIN * 60000));
+          buckets[idx] = buckets[idx] || [];
+          buckets[idx].push(r.heart_rate);
+        });
+        const idxs = Object.keys(buckets).map(Number).sort(function(a, b) { return a - b; });
+        todayHrCurve = idxs.map(function(idx, i) {
+          return { label: (i % 3 === 0) ? String(idx).padStart(2, "0") + "h" : "", val: Math.round(avgOf(buckets[idx])) };
+        });
+      }
+      const hrvRows = todayMinuteRows.filter(function(r) { return r.hrv != null; });
+      if (hrvRows.length >= 2) {
+        todayHrvPoints = hrvRows.map(function(r) {
+          const dt = new Date(r.ts);
+          return { label: String(dt.getHours()).padStart(2, "0") + "h", val: Math.round(r.hrv) };
+        });
+      }
+    }
+  }
+
   let streak = 0;
   for (let i = 0; ; i++) {
     const d = daysAgo(i);
@@ -1094,6 +1134,27 @@ async function renderForme() {
     html += collapsibleCardHtml(sectionIcon("list") + 'Récap du jour');
     checklist.forEach(function(c) { html += checklistRowHtml(c); });
     html += '<div class="muted" style="font-size:10px;margin-top:6px">Indicatif — ne remplace pas ton ressenti ni un avis médical.</div></details>';
+
+    if (todayHrCurve || todayHrvPoints) {
+      html += collapsibleCardHtml(sectionIcon("heart") + 'FC & VFC dans la journée');
+      if (todayHrExtremes) {
+        html += '<div style="display:flex;justify-content:space-around;text-align:center;margin-bottom:12px">';
+        html += '<div><div class="muted" style="font-size:10px">FC max</div><b style="font-size:16px;color:var(--red)">' + todayHrExtremes.max + ' bpm</b><div class="muted" style="font-size:10px">' + todayHrExtremes.maxTime + '</div></div>';
+        html += '<div><div class="muted" style="font-size:10px">FC min</div><b style="font-size:16px;color:var(--steel)">' + todayHrExtremes.min + ' bpm</b><div class="muted" style="font-size:10px">' + todayHrExtremes.minTime + '</div></div>';
+        html += '</div>';
+      }
+      if (todayHrCurve) {
+        html += '<div class="muted" style="font-size:10px;margin-bottom:4px">FC moyenne par heure</div>';
+        html += lineChartHtml(todayHrCurve, { unit: " bpm", showAvg: false });
+      }
+      if (todayHrvPoints) {
+        html += '<div class="muted" style="font-size:10px;margin:14px 0 4px">VFC — lectures de la journée</div>';
+        html += lineChartHtml(todayHrvPoints, { unit: " ms", showAvg: false });
+      } else {
+        html += '<div class="muted" style="font-size:10px;margin-top:10px">Pas encore assez de lectures VFC aujourd\'hui (mesurée seulement à l\'immobilité).</div>';
+      }
+      html += '<div class="muted" style="font-size:10px;margin-top:8px">À partir des échantillons minute par minute (3 derniers jours) — capteur optique au poignet, indicatif.</div></details>';
+    }
   } else {
     // Un bloc par métrique (barres semaine + courbe mois + 1 phrase) — jamais
     // plus, pour ne pas retomber dans le fourre-tout de l'ancien Dashboard.
@@ -3003,22 +3064,24 @@ function coachAnswerDominantZoneByDiscipline(d) {
   const text = rows.map(function(r) { return r.name + " → surtout zone " + r.zone + " (" + r.pct + "% du temps, " + r.count + " séance(s))"; }).join(" · ") + ".";
   return { text: text, chartHtml: chartHtml };
 }
-// hr_max_activity (max de la montre pendant l'activité, décodé par
-// sync_to_supabase.py) et hr_resting (FC de repos calculée par la montre)
-// sont les seules valeurs de FC qu'on synchronise au jour — pas les
-// échantillons minute par minute bruts. On ne peut donc répondre qu'au
-// jour près, jamais à l'heure précise, et seulement sur l'historique
-// vraiment disponible dans Supabase (listWearable(200) ci-dessus), pas
-// sur un historique plus ancien qui n'aurait pas été synchronisé.
+// hr_max_activity et hr_min (extrêmes instantanés réels, décodés par
+// sync_to_supabase.py à partir des échantillons minute par minute puis
+// résumés au jour pour l'historique long) sont comparés ici sur l'ensemble
+// de l'historique dispo (listWearable(200) ci-dessus) — précision au jour
+// près pour cet historique long. hr_min n'existe que depuis sa mise en
+// place ; hr_resting (estimation propriétaire de repos, pas un minimum
+// instantané) sert de repli pour les jours antérieurs qui n'ont que ça.
 function coachAnswerHrExtremes(d) {
   const withMax = d.wearableRaw.filter(function(w) { return w.hr_max_activity != null; });
-  const withMin = d.wearableRaw.filter(function(w) { return w.hr_resting != null; });
+  const withMin = d.wearableRaw.filter(function(w) { return w.hr_min != null || w.hr_resting != null; });
   if (withMax.length < 3 || withMin.length < 3) return "Pas encore assez de jours avec FC mesurée pour donner un maximum/minimum fiable.";
+  const minVal = function(w) { return w.hr_min != null ? w.hr_min : w.hr_resting; };
   const highest = withMax.slice().sort(function(a, b) { return b.hr_max_activity - a.hr_max_activity; })[0];
-  const lowest = withMin.slice().sort(function(a, b) { return a.hr_resting - b.hr_resting; })[0];
+  const lowest = withMin.slice().sort(function(a, b) { return minVal(a) - minVal(b); })[0];
   const span = d.wearableRaw.length ? d.wearableRaw.slice().sort(function(a, b) { return a.day < b.day ? -1 : 1; })[0].day : null;
-  const text = "FC la plus haute mesurée : " + Math.round(highest.hr_max_activity) + " bpm (le " + formatDateLabel(highest.day) + "). FC de repos la plus basse mesurée : " + Math.round(lowest.hr_resting) + " bpm (le " + formatDateLabel(lowest.day) + ")." +
-    " Précision au jour près seulement (pas d'horodatage minute par minute synchronisé)" + (span ? ", sur l'historique disponible depuis le " + formatDateLabel(span) + "." : ".");
+  const lowestLabel = lowest.hr_min != null ? "FC la plus basse mesurée" : "FC de repos la plus basse mesurée";
+  const text = "FC la plus haute mesurée : " + Math.round(highest.hr_max_activity) + " bpm (le " + formatDateLabel(highest.day) + "). " + lowestLabel + " : " + Math.round(minVal(lowest)) + " bpm (le " + formatDateLabel(lowest.day) + ")." +
+    " Précision au jour près sur l'historique long ; à l'heure près sur les 3 derniers jours (voir Forme > Aujourd'hui)" + (span ? ", historique disponible depuis le " + formatDateLabel(span) + "." : ".");
   return { text: text };
 }
 // ---- Croisements entre domaines (Entraînement × Récupération, Forme ×

@@ -150,6 +150,10 @@ def build_daily_summary(db_path):
         if d in hr_by_day:
             days[d]["hr_avg"] = round(sum(hr_by_day[d]) / len(hr_by_day[d]), 1)
             days[d]["hr_max_activity"] = max(hr_by_day[d])
+            # FC minimale réelle (instantanée), distincte de hr_resting qui est
+            # l'estimation propriétaire de la montre — même source que
+            # hr_max_activity, pour avoir un vrai minimum/maximum symétriques.
+            days[d]["hr_min"] = min(hr_by_day[d])
 
     # Vigilance par fenêtres horaires (matin/après-midi/soir) : moyennes VFC et
     # stress sur des créneaux fixes, pour comparer chaque jour à sa propre
@@ -343,6 +347,50 @@ def push_minute_samples(rows):
     print(f"{len(payload)} échantillons par minute synchronisés.")
 
 
+def build_hrv_minute_samples(db_path, days=MINUTE_RETENTION_DAYS):
+    """Lit GENERIC_HRV_VALUE_SAMPLE (une mesure réelle à son horodatage propre,
+    pas calée sur la minute) sur la fenêtre de rétention. Jusqu'ici seule une
+    moyenne par jour (hrv_avg) ou par créneau fixe (hrv_morning/afternoon/
+    evening) était conservée ; ces lectures individuelles permettent de voir
+    la VFC évoluer dans la journée plutôt qu'une poignée de valeurs figées."""
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cutoff_ms = int((datetime.datetime.now() - datetime.timedelta(days=days)).timestamp() * 1000)
+    cur.execute(
+        "SELECT TIMESTAMP, VALUE FROM GENERIC_HRV_VALUE_SAMPLE WHERE TIMESTAMP >= ?",
+        (cutoff_ms,),
+    )
+    rows = []
+    for ts, val in cur.fetchall():
+        if val is None or val <= 0:
+            continue
+        dt = datetime.datetime.fromtimestamp(ts / 1000)
+        rows.append({"ts": dt.isoformat(), "day": dt.strftime("%Y-%m-%d"), "hrv": val})
+    conn.close()
+    return rows
+
+
+def push_hrv_minute_samples(rows):
+    if not rows:
+        return
+    # Mêmes échantillons/minute que push_minute_samples (table partagée,
+    # merge-duplicates sur ts) : une lecture VFC qui tombe sur une minute déjà
+    # présente (pas/FC) complète la ligne, sinon une nouvelle ligne (pas/FC à
+    # null) est créée — la VFC n'est mesurée que quelques fois par jour.
+    url = f"{SUPABASE_URL}/rest/v1/wearable_minute_samples?on_conflict=ts"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates,return=minimal",
+    }
+    resp = requests.post(url, headers=headers, data=json.dumps(rows))
+    if resp.status_code >= 300:
+        print(f"Erreur Supabase (VFC minute) ({resp.status_code}): {resp.text}")
+        return
+    print(f"{len(rows)} lectures VFC horodatées synchronisées.")
+
+
 def purge_old_minute_samples():
     """Supprime les échantillons par minute plus vieux que MINUTE_RETENTION_DAYS.
     Ne touche jamais wearable_daily : les agrégats et interprétations
@@ -411,6 +459,8 @@ if __name__ == "__main__":
 
     minute_rows = build_minute_samples(DB_PATH)
     push_minute_samples(minute_rows)
+    hrv_minute_rows = build_hrv_minute_samples(DB_PATH)
+    push_hrv_minute_samples(hrv_minute_rows)
     bedtime_rows = derive_bedtimes(minute_rows, sleep_rows)
     push_sleep_stages(bedtime_rows)
     purge_old_minute_samples()
