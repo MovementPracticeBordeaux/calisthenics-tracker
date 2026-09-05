@@ -711,6 +711,27 @@ async function renderForme() {
           return { label: (i % 3 === 0) ? String(idx).padStart(2, "0") + "h" : "", val: Math.round(avgOf(buckets[idx])) };
         });
       }
+      // Variante avec min/max par heure (pas juste la moyenne) : sans ça,
+      // un pic d'une minute (le "FC max" affiché en en-tête) disparaît
+      // complètement, dilué dans la moyenne des 59 autres minutes de la
+      // même heure — la courbe semblait alors ne pas correspondre du tout
+      // au chiffre annoncé juste au-dessus.
+      function bucketHourlyMinMaxAvg(rows, field) {
+        const buckets = {};
+        rows.forEach(function(r) {
+          const idx = Math.floor((new Date(r.ts).getTime() - dayStart) / (60 * 60000));
+          buckets[idx] = buckets[idx] || [];
+          buckets[idx].push(r[field]);
+        });
+        const idxs = Object.keys(buckets).map(Number).sort(function(a, b) { return a - b; });
+        return idxs.map(function(idx, i) {
+          const vals = buckets[idx];
+          return {
+            label: (i % 3 === 0) ? String(idx).padStart(2, "0") + "h" : "",
+            val: Math.round(avgOf(vals)), min: Math.min.apply(null, vals), max: Math.max.apply(null, vals),
+          };
+        });
+      }
       const hrRows = todayMinuteRows.filter(function(r) { return r.heart_rate != null; });
       if (hrRows.length >= 5) {
         const maxRow = hrRows.slice().sort(function(a, b) { return b.heart_rate - a.heart_rate; })[0];
@@ -720,7 +741,7 @@ async function renderForme() {
           max: maxRow.heart_rate, maxTime: hoursToLabel(hourDec(maxRow.ts)),
           min: minRow.heart_rate, minTime: hoursToLabel(hourDec(minRow.ts)),
         };
-        todayHrCurve = bucketHourly(hrRows, "heart_rate");
+        todayHrCurve = bucketHourlyMinMaxAvg(hrRows, "heart_rate");
       }
       const hrvRows = todayMinuteRows.filter(function(r) { return r.hrv != null; });
       if (hrvRows.length >= 2) todayHrvPoints = bucketHourly(hrvRows, "hrv");
@@ -2019,20 +2040,35 @@ function intradayCurveHtml(items, opts) {
   // trame verticale tombe ainsi vraiment sur chaque heure des données
   // réelles, pas un motif décoratif sans rapport avec les valeurs.
   const gridEveryN = opts.gridEveryN || 1;
-  const vals = items.map(function(i) { return i.val || 0; });
-  const max = Math.max.apply(null, vals.concat([1]));
-  const min = Math.min.apply(null, vals.concat([0]));
+  // Si les buckets portent aussi min/max (cf. bucketHourlyMinMaxAvg), une
+  // bande est dessinée derrière la moyenne — sinon un simple pic instantané
+  // (une minute sur toute une heure) disparaît complètement de la courbe
+  // moyennée alors qu'il peut correspondre au "max" affiché en en-tête,
+  // rendant la courbe visuellement incohérente avec ce chiffre.
+  const hasBand = items.some(function(i) { return i.min != null && i.max != null; });
+  const allVals = items.reduce(function(acc, i) {
+    acc.push(i.val || 0);
+    if (hasBand) { acc.push(i.min != null ? i.min : (i.val || 0)); acc.push(i.max != null ? i.max : (i.val || 0)); }
+    return acc;
+  }, []);
+  const max = Math.max.apply(null, allVals.concat([1]));
+  const min = Math.min.apply(null, allVals.concat([0]));
   const range = (max - min) || 1;
   const padY = 6;
   const usableH = Math.max(1, height - padY * 2);
   const n = items.length;
+  function yPctFor(v) { return ((padY + (usableH - ((v - min) / range) * usableH)) / height) * 100; }
   const points = items.map(function(item, i) {
-    const v = item.val || 0;
     const xPct = n > 1 ? (i / (n - 1)) * 100 : 50;
-    const yPct = ((padY + (usableH - ((v - min) / range) * usableH)) / height) * 100;
-    return { xPct: xPct, yPct: yPct };
+    return { xPct: xPct, yPct: yPctFor(item.val || 0) };
   });
   const lineD = points.map(function(p, i) { return (i === 0 ? "M" : "L") + p.xPct.toFixed(2) + "," + p.yPct.toFixed(2); }).join(" ");
+  let bandD = null;
+  if (hasBand) {
+    const topD = items.map(function(item, i) { const y = yPctFor(item.max != null ? item.max : item.val); return (i === 0 ? "M" : "L") + points[i].xPct.toFixed(2) + "," + y.toFixed(2); }).join(" ");
+    const botD = items.map(function(item, i) { const y = yPctFor(item.min != null ? item.min : item.val); return points[i].xPct.toFixed(2) + "," + y.toFixed(2); }).reverse().join(" L ");
+    bandD = topD + " L " + botD + " Z";
+  }
   const touchData = points.map(function(p, i) {
     const v = items[i].val || 0;
     return { x: p.xPct, label: items[i].label || "", display: v.toFixed(decimals) + unit };
@@ -2043,6 +2079,9 @@ function intradayCurveHtml(items, opts) {
     if (i % gridEveryN !== 0) return;
     html += '<line x1="' + p.xPct.toFixed(2) + '" y1="0" x2="' + p.xPct.toFixed(2) + '" y2="100" stroke="var(--chalkDim)" stroke-opacity="0.5" stroke-width="1" vector-effect="non-scaling-stroke"/>';
   });
+  if (bandD) {
+    html += '<path d="' + bandD + '" fill="var(--pink)" fill-opacity="0.18" stroke="none"/>';
+  }
   if (n > 1) {
     html += '<path d="' + lineD + '" fill="none" stroke="var(--pink)" stroke-width="1.5" vector-effect="non-scaling-stroke" style="filter:drop-shadow(0 0 2px var(--pink)) drop-shadow(0 0 5px var(--pink))"/>';
   }
