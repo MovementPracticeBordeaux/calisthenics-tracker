@@ -2853,6 +2853,54 @@ function coachAnswerKarvonenByDiscipline(d) {
   const text = "Part du temps en zone aérobique/anaérobie/VO2max par discipline : " + rows.map(function(r) { return r.name + " (" + r.cardioPct + "%, " + r.count + " séance(s))"; }).join(", ") + ". " + mostCardio.name + " ressort comme le thème le plus cardio, " + leastCardio.name + " le moins.";
   return { text: text, chartHtml: chartHtml };
 }
+// Contrairement à coachAnswerKarvonenByDiscipline (qui répond "quel thème
+// est le plus cardio ?" via un score agrégé aérobique+anaérobie+VO2max),
+// ici on nomme la zone qui domine réellement pour chaque thème — la
+// question posée était "quelle zone cardiaque pour quel thème de séance",
+// pas un classement.
+function coachAnswerDominantZoneByDiscipline(d) {
+  const kz = d.kzWorkouts.filter(function(w) { return w.day >= daysAgo(59) && w.matched_discipline; });
+  if (kz.length < 3) return "Pas encore assez de séances avec discipline identifiée et zones cardiaques calculées pour comparer (il en faut au moins 3).";
+  const byDiscipline = {};
+  kz.forEach(function(w) {
+    const disc = w.matched_discipline;
+    if (!byDiscipline[disc]) byDiscipline[disc] = { l: 0, i: 0, a: 0, an: 0, v: 0, count: 0 };
+    const b = byDiscipline[disc];
+    b.l += Number(w.kz_leger_min) || 0; b.i += Number(w.kz_intensif_min) || 0; b.a += Number(w.kz_aerobique_min) || 0;
+    b.an += Number(w.kz_anaerobie_min) || 0; b.v += Number(w.kz_vo2max_min) || 0; b.count++;
+  });
+  const ZONE_NAMES = { l: "Léger", i: "Intensif", a: "Aérobique", an: "Anaérobie", v: "VO2 max" };
+  const rows = Object.keys(byDiscipline).map(function(name) {
+    const b = byDiscipline[name];
+    const total = b.l + b.i + b.a + b.an + b.v;
+    if (!total) return null;
+    const zoneKeys = ["l", "i", "a", "an", "v"];
+    const dominantKey = zoneKeys.slice().sort(function(x, y) { return b[y] - b[x]; })[0];
+    return { name: name, count: b.count, zone: ZONE_NAMES[dominantKey], pct: Math.round((b[dominantKey] / total) * 100) };
+  }).filter(function(r) { return r && r.count >= 2; });
+  if (rows.length < 2) return "Pas encore assez de disciplines différentes avec zones cardiaques calculées pour comparer (il faut au moins 2 disciplines avec 2 séances chacune).";
+  const chartHtml = barChartHtml(rows.map(function(r) { return { label: r.name, val: r.pct }; }), { unit: "%", decimals: 0, showAvg: false });
+  const text = rows.map(function(r) { return r.name + " → surtout zone " + r.zone + " (" + r.pct + "% du temps, " + r.count + " séance(s))"; }).join(" · ") + ".";
+  return { text: text, chartHtml: chartHtml };
+}
+// hr_max_activity (max de la montre pendant l'activité, décodé par
+// sync_to_supabase.py) et hr_resting (FC de repos calculée par la montre)
+// sont les seules valeurs de FC qu'on synchronise au jour — pas les
+// échantillons minute par minute bruts. On ne peut donc répondre qu'au
+// jour près, jamais à l'heure précise, et seulement sur l'historique
+// vraiment disponible dans Supabase (listWearable(200) ci-dessus), pas
+// sur un historique plus ancien qui n'aurait pas été synchronisé.
+function coachAnswerHrExtremes(d) {
+  const withMax = d.wearableRaw.filter(function(w) { return w.hr_max_activity != null; });
+  const withMin = d.wearableRaw.filter(function(w) { return w.hr_resting != null; });
+  if (withMax.length < 3 || withMin.length < 3) return "Pas encore assez de jours avec FC mesurée pour donner un maximum/minimum fiable.";
+  const highest = withMax.slice().sort(function(a, b) { return b.hr_max_activity - a.hr_max_activity; })[0];
+  const lowest = withMin.slice().sort(function(a, b) { return a.hr_resting - b.hr_resting; })[0];
+  const span = d.wearableRaw.length ? d.wearableRaw.slice().sort(function(a, b) { return a.day < b.day ? -1 : 1; })[0].day : null;
+  const text = "FC la plus haute mesurée : " + Math.round(highest.hr_max_activity) + " bpm (le " + formatDateLabel(highest.day) + "). FC de repos la plus basse mesurée : " + Math.round(lowest.hr_resting) + " bpm (le " + formatDateLabel(lowest.day) + ")." +
+    " Précision au jour près seulement (pas d'horodatage minute par minute synchronisé)" + (span ? ", sur l'historique disponible depuis le " + formatDateLabel(span) + "." : ".");
+  return { text: text };
+}
 // ---- Croisements entre domaines (Entraînement × Récupération, Forme ×
 // quotidien) — le genre de question qu'un tableau isolé par métrique ne
 // peut pas poser tout seul.
@@ -3484,6 +3532,7 @@ const COACH_QUESTIONS = [
   { id: "sleep_stages_evolution", label: "Comment évoluent mes phases de sommeil (profond/léger/paradoxal) ?", fn: coachAnswerSleepStagesEvolution, domain: "recuperation" },
   { id: "hrv_trend", label: "Ma tendance VFC récente ?", fn: coachAnswerHrvTrend, domain: "forme" },
   { id: "hr_trend", label: "Ma tendance FC repos ?", fn: coachAnswerHrTrend, domain: "forme" },
+  { id: "hr_extremes", label: "Ma FC la plus haute et la plus basse jamais mesurées ?", fn: coachAnswerHrExtremes, domain: "forme" },
   { id: "stress", label: "Mon niveau de stress récent ?", fn: coachAnswerStress, domain: "forme" },
   { id: "stress_by_time_of_day", label: "À quel moment de la journée suis-je le plus stressé ?", fn: coachAnswerStressByTimeOfDay, domain: "forme" },
   { id: "load", label: "Ma charge d'entraînement ?", fn: coachAnswerTrainingLoad, domain: "entrainement" },
@@ -3492,6 +3541,7 @@ const COACH_QUESTIONS = [
   { id: "load_by_discipline", label: "Comment se répartit ma charge par discipline ?", fn: coachAnswerLoadByDiscipline, domain: "entrainement" },
   { id: "karvonen", label: "Mes zones cardiaques à l'entraînement (Karvonen) ?", fn: coachAnswerKarvonen, domain: "entrainement" },
   { id: "karvonen_by_discipline", label: "Quel thème est le plus cardio ? (zones cardiaques par discipline)", fn: coachAnswerKarvonenByDiscipline, domain: "entrainement" },
+  { id: "dominant_zone_by_discipline", label: "Quelle zone cardiaque domine pour quel thème de séance ?", fn: coachAnswerDominantZoneByDiscipline, domain: "entrainement" },
   { id: "migraine_sleep", label: "Migraines liées au sommeil ?", fn: coachAnswerMigraineSleep, domain: "hybride" },
   { id: "migraine_correlation", label: "Un vrai lien entre mes migraines et mes autres signaux (FC/VFC/stress) ?", fn: coachAnswerMigraineCorrelation, domain: "hybride" },
   { id: "load_vs_sleep", label: "Mes grosses séances dégradent-elles mon sommeil qui suit ?", fn: coachAnswerLoadVsSleep, domain: "hybride" },
@@ -3535,7 +3585,7 @@ async function renderCoach() {
     overlay.innerHTML = '<div class="wrap"><div class="muted" style="padding-top:40px">Chargement…</div></div>';
     try {
       const results = await Promise.all([
-        listWearable(60),
+        listWearable(200),
         listSessions(60),
         sb("migraines?select=day,intensity,triggers&order=day.desc&limit=90").catch(function() { return []; }),
         sb("grip_strength?select=day,value_kg&order=day.desc&limit=30").catch(function() { return []; }),
