@@ -475,7 +475,81 @@ def derive_bedtimes(minute_rows, wake_rows):
         if duration_min < 180:
             continue
         bed_dt = datetime.datetime.fromtimestamp(window[bed_idx]["_ts_epoch"])
-        results.append({"day": day, "bedtime_hour": round(bed_dt.hour + bed_dt.minute / 60, 2)})
+        # _bed_epoch : usage interne (derive_wake_events a besoin de la borne
+        # exacte de la nuit, pas seulement l'heure arrondie) — jamais envoyé
+        # à Supabase, retiré avant l'appel à push_sleep_stages.
+        results.append({
+            "day": day, "bedtime_hour": round(bed_dt.hour + bed_dt.minute / 60, 2),
+            "_bed_epoch": window[bed_idx]["_ts_epoch"],
+        })
+    return results
+
+
+def derive_wake_events(minute_rows, wake_rows, bedtime_rows):
+    """Repère les réveils nocturnes par sursauts d'activité (pas/intensité)
+    entourés de calme, dans la fenêtre coucher -> réveil déjà établie
+    (derive_bedtimes) — remplace l'ancien sleep_awake_count (décodé du blob
+    de sommeil, jugé peu fiable et jamais affiché dans l'app, voir
+    build_sleep_stages) par une détection sur les mêmes données brutes que
+    le reste de cette fenêtre de précision minute.
+
+    Un sursaut ne compte comme réveil que s'il dure au moins MIN_WAKE_MIN
+    minutes d'affilée (filtre le bruit d'un simple changement de position)
+    et ne touche pas les EDGE_BUFFER_MIN premières/dernières minutes de la
+    nuit (ça, c'est l'endormissement ou le réveil final, pas une
+    interruption). De courtes coupures de calme (<= MERGE_GAP_MIN) à
+    l'intérieur d'un même sursaut ne le scindent pas en plusieurs réveils."""
+    MIN_WAKE_MIN = 2
+    EDGE_BUFFER_MIN = 10
+    MERGE_GAP_MIN = 3
+    by_day_wake = {r["day"]: r for r in wake_rows if r.get("wake_hour") is not None}
+    window_all = sorted(minute_rows, key=lambda r: r["_ts_epoch"])
+    results = []
+    for bed in bedtime_rows:
+        day = bed["day"]
+        wake = by_day_wake.get(day)
+        if not wake:
+            continue
+        bed_epoch = bed["_bed_epoch"]
+        wake_epoch = (datetime.datetime.strptime(day, "%Y-%m-%d") + datetime.timedelta(hours=wake["wake_hour"])).timestamp()
+        window = [r for r in window_all if bed_epoch <= r["_ts_epoch"] <= wake_epoch]
+        if len(window) < 30:
+            continue
+        still = [(r["steps"] in (0, None)) and ((r["intensity"] or 0) <= 5) for r in window]
+
+        events, i, n = [], 0, len(window)
+        while i < n:
+            if still[i]:
+                i += 1
+                continue
+            start = end = i
+            gap = 0
+            j = i + 1
+            while j < n:
+                if not still[j]:
+                    end = j
+                    gap = 0
+                else:
+                    gap += 1
+                    if gap > MERGE_GAP_MIN:
+                        break
+                j += 1
+            events.append((start, end))
+            i = j
+
+        edge_start = bed_epoch + EDGE_BUFFER_MIN * 60
+        edge_end = wake_epoch - EDGE_BUFFER_MIN * 60
+        wake_times = []
+        for start_idx, end_idx in events:
+            start_ts = window[start_idx]["_ts_epoch"]
+            end_ts = window[end_idx]["_ts_epoch"]
+            duration_min = (end_ts - start_ts) / 60 + 1
+            mid_ts = (start_ts + end_ts) / 2
+            if duration_min < MIN_WAKE_MIN or not (edge_start <= mid_ts <= edge_end):
+                continue
+            dt = datetime.datetime.fromtimestamp(start_ts)
+            wake_times.append(round(dt.hour + dt.minute / 60, 2))
+        results.append({"day": day, "sleep_wake_count": len(wake_times), "sleep_wake_times": wake_times})
     return results
 
 
@@ -496,5 +570,9 @@ if __name__ == "__main__":
     stress_minute_rows = build_stress_minute_samples(DB_PATH)
     push_wearable_minute_rows(stress_minute_rows, "stress")
     bedtime_rows = derive_bedtimes(minute_rows, sleep_rows)
-    push_sleep_stages(bedtime_rows)
+    # _bed_epoch (usage interne, cf. derive_wake_events) n'est pas une
+    # colonne Supabase — retiré avant l'envoi.
+    push_sleep_stages([{"day": r["day"], "bedtime_hour": r["bedtime_hour"]} for r in bedtime_rows])
+    wake_event_rows = derive_wake_events(minute_rows, sleep_rows, bedtime_rows)
+    push_sleep_stages(wake_event_rows)
     purge_old_minute_samples()
