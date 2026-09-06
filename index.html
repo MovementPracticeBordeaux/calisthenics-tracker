@@ -1748,16 +1748,24 @@ async function loadRecuperation() {
     }
     html += metricTrendSectionHtml("Durée de sommeil", sleepWeekBars, sleepMonthLine, sleepPhrase, { decimals: 1, unit: "h", qualify: qualifySleepHours, todayHtml: nightCurveHtml });
 
-    // Moyenne de chaque stade sur le mois — un chiffre par stade, pas un
-    // graphique de plus (la répartition détaillée jour par jour reste dans
-    // Aujourd'hui -> Récap du jour).
+    // Moyenne de chaque stade sur le mois — un diagramme à barres (une barre
+    // par stade) plutôt qu'une simple ligne de texte, illisible pour comparer
+    // trois durées d'un coup d'œil (retour utilisateur).
     const monthStageNights = wearable.filter(function(x) { return month.indexOf(x.day) !== -1 && x.sleep_total_min != null; });
     if (monthStageNights.length >= 3) {
       const fmtH = function(min) { return Math.floor(min/60) + "h" + Math.round(min%60).toString().padStart(2,"0"); };
       const avgLight = avgOf(monthStageNights.map(function(n){ return n.sleep_light_min || 0; }));
       const avgDeep = avgOf(monthStageNights.map(function(n){ return n.sleep_deep_min || 0; }));
       const avgRem = avgOf(monthStageNights.map(function(n){ return n.sleep_rem_min || 0; }));
-      html += '<div class="card"><div class="section-label">Moyenne des stades (mois)</div><div style="font-size:13px">Léger ' + fmtH(avgLight) + ' · Profond ' + fmtH(avgDeep) + ' · Paradoxal ' + fmtH(avgRem) + "</div></div>";
+      const stageBars = [
+        { label: "Léger", val: Math.round(avgLight/60*10)/10 },
+        { label: "Profond", val: Math.round(avgDeep/60*10)/10 },
+        { label: "Paradoxal", val: Math.round(avgRem/60*10)/10 },
+      ];
+      html += '<div class="card"><div class="section-label">Moyenne des stades (mois)</div>';
+      html += barChartHtml(stageBars, { decimals: 1, showAvg: false });
+      html += '<div class="muted" style="text-align:center;font-size:11px;margin-top:8px">Léger ' + fmtH(avgLight) + ' · Profond ' + fmtH(avgDeep) + ' · Paradoxal ' + fmtH(avgRem) + "</div>";
+      html += "</div>";
     }
 
     // Le PAI se lit nativement en total glissant sur 7 jours, pas jour par
