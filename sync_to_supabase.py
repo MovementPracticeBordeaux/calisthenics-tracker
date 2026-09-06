@@ -469,11 +469,23 @@ def derive_bedtimes(minute_rows, wake_rows):
         if len(window) < 60:
             continue
         still = [(r["steps"] in (0, None)) and ((r["intensity"] or 0) <= STILL_INTENSITY_MAX) for r in window]
-        # Remonte depuis le réveil ; tolère de courts réveils nocturnes (<=5 min
-        # d'activité d'affilée) mais s'arrête dès qu'une plage plus longue rompt
-        # l'immobilité — ça marque la fin de la nuit (le coucher).
+        # Le réveil s'accompagne forcément de mouvement (se lever, marcher) —
+        # observé en pratique jusqu'à ~10 min avant l'heure de réveil retenue
+        # (qui peut elle-même être décalée de quelques minutes par rapport au
+        # tout premier mouvement). Sans ignorer cette zone de transition, le
+        # balayage arrière prend ce mouvement pour une interruption nocturne
+        # à tolérer et s'arrête immédiatement, trouvant un "coucher" à
+        # quelques minutes du réveil. On ignore donc WAKE_TRANSITION_MIN
+        # minutes avant le réveil, puis on remonte en tolérant de courts
+        # réveils nocturnes (<=5 min d'activité d'affilée) jusqu'à ce qu'une
+        # plage plus longue rompe l'immobilité — ça marque le coucher.
+        WAKE_TRANSITION_MIN = 15
+        transition_boundary = wake_epoch - WAKE_TRANSITION_MIN * 60
+        idx = len(window) - 1
+        while idx >= 0 and window[idx]["_ts_epoch"] > transition_boundary:
+            idx -= 1
         bed_idx, consecutive_active = None, 0
-        for idx in range(len(window) - 1, -1, -1):
+        while idx >= 0:
             if still[idx]:
                 bed_idx = idx
                 consecutive_active = 0
@@ -481,6 +493,7 @@ def derive_bedtimes(minute_rows, wake_rows):
                 consecutive_active += 1
                 if consecutive_active > 5:
                     break
+            idx -= 1
         if bed_idx is None:
             continue
         duration_min = (window[-1]["_ts_epoch"] - window[bed_idx]["_ts_epoch"]) / 60
