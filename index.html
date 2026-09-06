@@ -2831,7 +2831,8 @@ let coachMessages = []; // { role: "user"|"assistant", text } — confirmations 
 let coachStatsCurrent = null; // { qid, label, text } | null
 let coachStatsAskedIds = {}; // { [qid]: true }
 let coachData = null; // recalculé une fois par visite de l'onglet, pas à chaque question
-let coachMode = "aujourdhui"; // "aujourdhui" (logging) | "stats" (questions)
+let coachMode = "aujourdhui"; // "aujourdhui" (logging) | "stats" (questions) | "infos" (fiches indicateurs)
+let coachInfoSubTab = "entrainement"; // "entrainement" | "forme" | "recuperation"
 let coachFormOpen = null; // null | "seance" | "prehension" | "lifeload" | "sieste" | "migraine"
 
 // Badge du bouton Coach (façon messagerie) — nombre de logs du jour encore à
@@ -4458,6 +4459,55 @@ const COACH_LOG_BUTTONS = [
   { id: "sieste", label: "Sieste" },
   { id: "migraine", label: "Migraine" },
 ];
+
+// Fiches indicateurs (Coach > Infos) — à quoi chaque donnée correspond, ce
+// que la littérature scientifique en dit, et ses limites. Sourcé sur des
+// travaux publiés et vérifiables plutôt que des affirmations vagues ;
+// certaines conclusions historiquement citées (ACWR, "zone optimale") sont
+// elles-mêmes signalées comme contestées quand c'est le cas — la rigueur
+// inclut de dire ce qui a été remis en question, pas seulement ce qui est
+// établi. Texte volontairement dense (fiches dépliables, pas des popups).
+const COACH_INFO_SECTIONS = {
+  entrainement: [
+    { title: "Score d'entraînement", body: "Une jauge composite propre à cette appli : elle démarre en haut selon ta fatigue déjà accumulée au réveil (charge récente, sommeil, VFC), puis se vide au fil des séances loguées dans la journée — l'inverse du score de sommeil, qui se recharge la nuit. Ce n'est pas une mesure validée en tant que telle, mais une synthèse pratique de plusieurs signaux eux-mêmes documentés (charge, sommeil, VFC — voir leurs fiches). À lire comme un repère relatif jour après jour, pas comme une valeur absolue." },
+    { title: "Fatigue accumulée (réveil) / ACWR", body: "Compare ta charge d'entraînement récente (7 jours) à ta charge habituelle (28 jours) — le ratio charge aiguë/charge chronique (ACWR), popularisé par Gabbett (2016) avec une « zone optimale » entre 0,8 et 1,3 pour limiter le risque de blessure. Cette zone a depuis été largement remise en question (Impellizzeri et al., 2020, British Journal of Sports Medicine) : l'effet montré dans l'étude d'origine tenait en grande partie à un artefact statistique (découpage de données continues en catégories), et aucune étude n'a démontré de lien de causalité. À utiliser comme repère de tendance (charge qui grimpe vite vs charge stable), pas comme un seuil de sécurité garanti." },
+    { title: "Dépense du jour", body: "Traduit la charge des séances déjà loguées aujourd'hui (durée × intensité) en points retirés du score d'entraînement — une fatigue immédiate, distincte de la fatigue accumulée sur plusieurs jours. Plus la charge du jour est élevée, plus la récupération des heures suivantes compte." },
+    { title: "Charge d'entraînement (tendance)", body: "Vue semaine/mois de la charge totale loguée — la notion de charge externe (durée × intensité) documentée dans la gestion de charge d'entraînement (Bourdon et al., 2017, consensus international IJSPP). Utile pour repérer une hausse brutale ou une accumulation sur plusieurs semaines, mais comme pour l'ACWR, la charge seule ne dit pas tout : elle se lit avec le ressenti, le sommeil et la VFC." },
+    { title: "Force de préhension", body: "La force de préhension (grip strength) est l'un des marqueurs de force globale les mieux documentés en épidémiologie : de grandes cohortes (UK Biobank ; étude PURE, Leong et al., 2015, The Lancet, ~140 000 adultes) l'associent à la mortalité toute cause et au risque cardiovasculaire, indépendamment de l'âge (revues de Bohannon, 2008/2015). Ici, elle sert de marqueur de fatigue neuromusculaire périphérique au jour le jour — une baisse ponctuelle par rapport à ta moyenne récente est un signal de fatigue, pas un problème de santé en soi." },
+    { title: "Zones cardiaques (Karvonen)", body: "La formule de Karvonen (Karvonen, Kentala & Mustala, 1957) calcule tes zones d'intensité à partir de ta fréquence de réserve (FC max − FC repos), plus précise que le simple pourcentage de FC max puisqu'elle tient compte de ta FC repos individuelle. Ça reste une approximation de terrain : les vraies zones physiologiques (seuils ventilatoires, seuil lactique) varient d'une personne à l'autre et ne peuvent être fixées avec certitude sans test en laboratoire." },
+  ],
+  forme: [
+    { title: "Score Forme", body: "Score composite propre à cette appli, combinant sommeil, charge, VFC, FC repos, stress et ressenti en un seul chiffre journalier. Pas une mesure validée en tant que telle, mais chaque brique qui le compose s'appuie sur un marqueur documenté en sciences du sport (voir les fiches ci-dessous)." },
+    { title: "Vigilance", body: "Estime ta vigilance du moment à partir du sommeil récent et de l'heure de la journée — l'idée qu'une dette de sommeil dégrade la vigilance diurne est bien établie en chronobiologie, avec des effets mesurables dès une nuit écourtée. Un indicateur indicatif, pas un test de réactivité réel." },
+    { title: "VFC (variabilité de la fréquence cardiaque)", body: "Mesure l'écart entre battements cardiaques successifs (ici en ms, calculée par l'algorithme du bracelet à partir du capteur optique au poignet). Reflète l'équilibre du système nerveux autonome : une VFC plus haute traduit en général une dominance parasympathique (repos, récupération), une VFC en baisse peut signaler fatigue, stress, surentraînement ou infection (Buchheit, 2014, Frontiers in Physiology ; Plews et al., 2013, Sports Medicine). Ce qui compte est ta tendance individuelle (moyenne mobile sur plusieurs jours) bien plus que la valeur brute — il n'existe pas de seuil universel. Un bracelet au poignet (PPG) est aussi moins précis qu'une ceinture ECG, surtout au repos strict, mais reste jugé suffisamment fiable pour suivre une tendance (de Zambotti et al., 2019)." },
+    { title: "FC repos", body: "Fréquence cardiaque au réveil, avant le lever — l'un des marqueurs les plus simples et les plus robustes de l'état de forme cardiovasculaire et de récupération (Bourdon et al., 2017). Une FC repos qui grimpe de plus de 5 à 10 battements/min au-dessus de ta moyenne est un signal classique de sous-récupération, de début de maladie ou de surentraînement ; à l'inverse, une baisse progressive sur plusieurs mois traduit souvent une meilleure condition aérobie." },
+    { title: "Stress", body: "Score propriétaire du bracelet (algorithme Huami/Zepp, dans la même famille que Firstbeat ou Garmin), calculé à partir de la variabilité cardiaque à court terme sur la journée et exprimé de 0 à 100. Il capte une activation du système nerveux sympathique, pas le stress ressenti ou le cortisol en tant que tel — aucun étalonnage indépendant publié à notre connaissance, contrairement à la VFC ou la FC repos. À lire en tendance relative (jour plus chargé que la moyenne), pas comme une mesure clinique." },
+    { title: "Effort mesuré (.fit) / Trajets à vélo", body: "Charge externe calculée à partir des fichiers d'activité (fréquence cardiaque seconde par seconde) ou des trajets à vélo, ajoutée au calcul de dépense du jour — la même logique de charge que « Charge d'entraînement », appliquée à des activités non loguées manuellement en séance." },
+    { title: "Ressenti & qualité de sommeil (LifeLoad)", body: "Le ressenti subjectif quotidien (fatigue, stress, courbatures, sommeil perçu) est l'un des signaux les mieux soutenus par la littérature pour détecter une mauvaise adaptation à l'entraînement : une revue systématique (Saw, Main & Gastin, 2016, British Journal of Sports Medicine) montre que les mesures subjectives sont souvent plus sensibles et plus précoces que les marqueurs physiologiques objectifs (VFC, FC, charge) pour repérer une dérive. La qualité de sommeil ressentie, elle, ne colle pas toujours à ce que mesure le bracelet (durée, stades) — les deux se complètent plus qu'ils ne se recoupent." },
+  ],
+  recuperation: [
+    { title: "Score de sommeil", body: "Combine la durée totale, la répartition des stades et le nombre de réveils nocturnes détectés en un score sur 100. Chaque composante s'appuie sur une base scientifique (voir les fiches ci-dessous), mais leur pondération et leur combinaison ici sont propres à cette appli, pas une échelle validée cliniquement." },
+    { title: "Durée de sommeil", body: "Les recommandations pour un adulte se situent entre 7 et 9h par nuit (National Sleep Foundation / American Academy of Sleep Medicine). Chez le sportif, un sommeil chronique inférieur à 7h est associé à une récupération dégradée, un risque de blessure plus élevé et des effets cognitifs et métaboliques mesurables (Watson, 2017, Current Sports Medicine Reports)." },
+    { title: "Stades de sommeil (léger, profond, paradoxal)", body: "Le sommeil profond (ondes lentes) est associé à la récupération physique — sécrétion d'hormone de croissance, réparation tissulaire — tandis que le sommeil paradoxal (REM) est lié à la consolidation de la mémoire et à la régulation émotionnelle. Ces deux stades diminuent progressivement avec l'âge (Ohayon et al., 2004, Sleep — méta-analyse de référence sur les valeurs normatives du sommeil, 65 études, plus de 3500 sujets). Limite importante : la détection des stades par bracelet (mouvement + fréquence cardiaque) est bien validée pour distinguer sommeil/éveil, mais reste d'une fiabilité modérée sur les frontières exactes entre stades comparée à la polysomnographie, la référence clinique (de Zambotti et al., 2019) — à lire comme une tendance, pas un diagnostic." },
+    { title: "Réveils nocturnes", body: "Détectés ici par sursaut de mouvement et de fréquence cardiaque entouré de calme, dans la fenêtre coucher → réveil. Physiologiquement, de courts réveils sont normaux plusieurs fois par nuit — le sommeil s'organise en cycles d'environ 90 minutes, avec de brefs micro-réveils souvent non mémorisés — et jusqu'à 5 réveils par nuit reste dans une fourchette courante, sans signaler forcément un problème. Ce qui compte le plus cliniquement, c'est la durée totale d'éveil dans la nuit et le ressenti au réveil, plus qu'un simple comptage." },
+    { title: "Sieste", body: "Une sieste courte (20-30 min) améliore la vigilance et les performances cognitives et physiques sans perturber le sommeil nocturne suivant chez la plupart des gens. Au-delà de 30-45 min, le risque d'inertie du sommeil (groggy au réveil) augmente, et une sieste trop tardive ou trop longue peut retarder l'endormissement le soir." },
+    { title: "PAI (Personal Activity Intelligence)", body: "Métrique développée à partir de la grande cohorte norvégienne HUNT (Nes et al., 2017), qui traduit l'activité en un score basé sur ta fréquence cardiaque individuelle plutôt que sur des pas ou des minutes fixes — plus personnalisé qu'un objectif de pas universel. Dans cette cohorte, atteindre ≥100 PAI par semaine est associé à un risque de mortalité réduit d'environ 36% (cardiovasculaire) et 24% (toutes causes) par rapport aux personnes inactives, l'effet se maintenant chez des personnes ayant déjà une maladie cardiovasculaire. Comme toute étude observationnelle, ça montre une association forte et reproduite sur de grandes cohortes, pas une preuve de causalité absolue à l'échelle individuelle." },
+    { title: "Récupération cardiaque (HRR, 1 min)", body: "La chute de fréquence cardiaque dans la minute qui suit l'arrêt d'un effort reflète la réactivation du système parasympathique (vagal). Dans l'étude de référence (Cole et al., 1999, New England Journal of Medicine, 2428 patients), une récupération inférieure à 12 battements en 1 minute était associée à un risque de mortalité multiplié par environ 4, indépendamment de la charge de travail et d'autres facteurs. Limite : cette mesure au poignet en conditions réelles (pas en protocole de laboratoire standardisé) reste approximative — le capteur optique est moins fiable juste après l'effort à cause du mouvement résiduel." },
+    { title: "Migraine", body: "Le lien entre sommeil et migraine est bidirectionnel et bien documenté : un sommeil de mauvaise qualité peut déclencher une crise, et la migraine elle-même perturbe le sommeil (Vgontzas & Pavlović, 2018, Current Pain and Headache Reports). Suivre la fréquence et les déclencheurs (repris dans le Coach, mode Statistiques) suit la logique de l'agenda de crises recommandé en neurologie pour identifier des schémas individuels." },
+  ],
+};
+function coachInfoHtml() {
+  let html = '<div class="pill-row compact" style="flex-wrap:wrap;gap:8px;margin-bottom:16px" id="coach-info-subtab-row">';
+  [["entrainement","Entraînement"],["forme","Forme"],["recuperation","Récupération"]].forEach(function(t) {
+    html += '<button class="pill' + (coachInfoSubTab === t[0] ? " active" : "") + '" data-subtab="' + t[0] + '" style="flex:none">' + t[1] + "</button>";
+  });
+  html += "</div>";
+  COACH_INFO_SECTIONS[coachInfoSubTab].forEach(function(s) {
+    html += collapsibleCardHtml(s.title) + '<div style="font-size:13px;line-height:1.6;color:var(--chalkDim);padding-top:8px">' + esc(s.body) + "</div></details>";
+  });
+  html += '<div class="card steel"><div class="muted" style="font-size:11px;line-height:1.6">Indicatif — vulgarisation à partir de travaux publiés, ne remplace pas un avis médical ou l\'expertise d\'un professionnel du sport.</div></div>';
+  return html;
+}
 function drawCoach() {
   const overlay = document.getElementById("coach-overlay");
   let html = '<div class="wrap">';
@@ -4465,10 +4515,24 @@ function drawCoach() {
   html += '<button id="coach-close-btn" style="background:none;border:1px solid var(--line);border-radius:6px;color:var(--chalkDim);font-size:11px;font-weight:700;padding:6px 12px;cursor:pointer">✕ Fermer</button></div>';
 
   html += '<div class="pill-row compact" style="margin:16px 0 24px" id="coach-mode-row">';
-  [["aujourdhui","Aujourd'hui"],["stats","Statistiques"]].forEach(function(m) {
+  [["aujourdhui","Aujourd'hui"],["stats","Statistiques"],["infos","Infos"]].forEach(function(m) {
     html += '<button class="pill' + (coachMode === m[0] ? " active" : "") + '" data-mode="' + m[0] + '">' + m[1] + "</button>";
   });
   html += "</div>";
+
+  if (coachMode === "infos") {
+    html += coachInfoHtml();
+    html += "</div>";
+    overlay.innerHTML = html;
+    document.getElementById("coach-close-btn").addEventListener("click", closeCoach);
+    document.querySelectorAll('#coach-mode-row .pill').forEach(function(btn) {
+      btn.addEventListener("click", function() { coachMode = btn.dataset.mode; coachFormOpen = null; drawCoach(); });
+    });
+    document.querySelectorAll('#coach-info-subtab-row .pill').forEach(function(btn) {
+      btn.addEventListener("click", function() { coachInfoSubTab = btn.dataset.subtab; drawCoach(); });
+    });
+    return;
+  }
 
   if (coachMode === "aujourdhui") {
     if (coachFormOpen) {
