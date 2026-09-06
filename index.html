@@ -632,6 +632,8 @@ async function listWearable(limit) {
 let currentTab = "forme";
 let napQuality = "moyenne";
 let napDuration = 30;
+let lifeloadPick = null;
+let sleepQualityPick = null;
 
 // État du formulaire de séance du Coach (mode Aujourd'hui).
 let editingSession = null;
@@ -1656,10 +1658,12 @@ async function loadRecuperation() {
     // sleep_awake_count (décodé du blob de sommeil, jugé peu fiable, jamais
     // affiché) qui ne pénalisait donc jamais le score. Seuils modestes : 0-1
     // réveil est normal, on ne pénalise qu'au-delà, et seulement quand la
-    // donnée existe (nuits récentes, rétention 3 jours).
+    // donnée existe (nuits récentes, rétention 3 jours). Jusqu'à 5 réveils
+    // est dans la norme (confirmé par l'utilisateur) — aucune pénalité en
+    // dessous de ce seuil.
     if (latestW && latestW.sleep_wake_count != null) {
-      if (latestW.sleep_wake_count >= 4) sleepScore -= 18;
-      else if (latestW.sleep_wake_count >= 2) sleepScore -= 8;
+      if (latestW.sleep_wake_count > 8) sleepScore -= 18;
+      else if (latestW.sleep_wake_count > 5) sleepScore -= 8;
     }
     sleepScore = Math.max(0, Math.min(100, sleepScore));
     sleepTier = sleepScore >= 70 ? "Bon" : sleepScore >= 40 ? "Correct" : "Insuffisant";
@@ -1707,7 +1711,7 @@ async function loadRecuperation() {
       }
       if (latestW && latestW.sleep_wake_count != null) {
         const wc = latestW.sleep_wake_count;
-        const wakeTier = wc >= 4 ? "red" : wc >= 2 ? "amber" : "green";
+        const wakeTier = wc > 8 ? "red" : wc > 5 ? "amber" : "green";
         const times = (latestW.sleep_wake_times || []).map(hoursToLabel).join(", ");
         checklist.push({ label: "Réveils nocturnes", icon: "moon", iconColor: "var(--steel)", tier: wakeTier, note: wc === 0 ? "Aucun" : wc + (times ? " (" + times + ")" : "") });
       }
@@ -1743,6 +1747,18 @@ async function loadRecuperation() {
       nightCurveHtml = intradayCurveHtml(nightCurve, { unit: " bpm", gridEveryN: 4 });
     }
     html += metricTrendSectionHtml("Durée de sommeil", sleepWeekBars, sleepMonthLine, sleepPhrase, { decimals: 1, unit: "h", qualify: qualifySleepHours, todayHtml: nightCurveHtml });
+
+    // Moyenne de chaque stade sur le mois — un chiffre par stade, pas un
+    // graphique de plus (la répartition détaillée jour par jour reste dans
+    // Aujourd'hui -> Récap du jour).
+    const monthStageNights = wearable.filter(function(x) { return month.indexOf(x.day) !== -1 && x.sleep_total_min != null; });
+    if (monthStageNights.length >= 3) {
+      const fmtH = function(min) { return Math.floor(min/60) + "h" + Math.round(min%60).toString().padStart(2,"0"); };
+      const avgLight = avgOf(monthStageNights.map(function(n){ return n.sleep_light_min || 0; }));
+      const avgDeep = avgOf(monthStageNights.map(function(n){ return n.sleep_deep_min || 0; }));
+      const avgRem = avgOf(monthStageNights.map(function(n){ return n.sleep_rem_min || 0; }));
+      html += '<div class="card"><div class="section-label">Moyenne des stades (mois)</div><div style="font-size:13px">Léger ' + fmtH(avgLight) + ' · Profond ' + fmtH(avgDeep) + ' · Paradoxal ' + fmtH(avgRem) + "</div></div>";
+    }
 
     // Le PAI se lit nativement en total glissant sur 7 jours, pas jour par
     // jour — la "semaine" montre la contribution quotidienne au score actuel,
@@ -4232,77 +4248,71 @@ function wireCoachSeanceFormEvents() {
   if (cancelBtn) cancelBtn.addEventListener("click", function() { editingSession = null; coachFormOpen = null; drawCoach(); });
 }
 
+const LIFELOAD_OPTIONS = [
+  ["bien", "Bien"], ["neutre", "Neutre"], ["stresse", "Stressé"],
+  ["fatigue", "Fatigué"], ["courbature", "Courbaturé"], ["malade", "Malade"],
+];
+const SLEEP_QUALITY_OPTIONS = [["bonne", "Bonne"], ["moyenne", "Moyenne"], ["mauvaise", "Mauvaise"]];
+// Ressenti général + qualité de nuit ressentie, réunis dans une seule carte
+// (deux questions liées, posées ensemble plutôt qu'en deux logs séparés) —
+// sur le modèle sélection-puis-Valider de coachSiesteFormHtml, nécessaire
+// dès qu'un formulaire pose plus d'une question.
 function coachLifeloadFormHtml() {
-  const LIFELOAD_OPTIONS = [
-    ["bien", "Bien"], ["neutre", "Neutre"], ["stresse", "Stressé"],
-    ["fatigue", "Fatigué"], ["courbature", "Courbaturé"], ["malade", "Malade"],
-  ];
-  let html = '<div class="card"><div class="section-label">Comment tu te sens aujourd\'hui ?</div>';
-  if (coachTodayStatus.lifeloadState) {
-    html += '<div class="muted" style="font-size:11px;margin-bottom:12px">Déjà enregistré aujourd\'hui : <b style="color:var(--chalk)">' + esc((LIFELOAD_OPTIONS.find(function(o){return o[0]===coachTodayStatus.lifeloadState;})||[,coachTodayStatus.lifeloadState])[1]) + '</b> — reclique pour corriger.</div>';
-  }
-  html += '<div class="pill-row compact" style="flex-wrap:wrap;gap:8px" id="coach-lifeload-row">';
+  if (lifeloadPick == null) lifeloadPick = coachTodayStatus.lifeloadState;
+  if (sleepQualityPick == null) sleepQualityPick = coachTodayStatus.sleepFeelingQuality;
+  let html = '<div class="card"><div class="section-label">Ressenti du jour</div>';
+  html += '<div class="muted" style="font-size:12px;margin-bottom:6px">Comment tu te sens aujourd\'hui ?</div>';
+  html += '<div class="pill-row compact" style="flex-wrap:wrap;gap:8px;margin-bottom:16px" id="coach-lifeload-row">';
   LIFELOAD_OPTIONS.forEach(function(o) {
-    const active = coachTodayStatus.lifeloadState === o[0];
-    html += '<button class="pill' + (active ? " active" : "") + '" data-value="' + o[0] + '" style="flex:none;padding:9px 14px">' + o[1] + "</button>";
+    html += '<button class="pill' + (lifeloadPick === o[0] ? " active" : "") + '" data-value="' + o[0] + '" style="flex:none;padding:9px 14px">' + o[1] + "</button>";
   });
   html += "</div>";
-  html += '<button id="coach-form-cancel" style="width:100%;margin-top:16px;padding:10px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer">Annuler</button>';
+  html += '<div class="muted" style="font-size:12px;margin-bottom:6px">Comment était ta nuit ?</div>';
+  html += '<div class="pill-row compact" style="flex-wrap:wrap;gap:8px" id="coach-sommeil-row">';
+  SLEEP_QUALITY_OPTIONS.forEach(function(o) {
+    html += '<button class="pill' + (sleepQualityPick === o[0] ? " active" : "") + '" data-value="' + o[0] + '" style="flex:none;padding:9px 14px">' + o[1] + "</button>";
+  });
+  html += "</div>";
+  html += '<button id="coach-lifeload-validate" style="width:100%;margin-top:16px;padding:13px 0;background:var(--gradient);border:none;border-radius:8px;color:var(--bg);font-size:13px;font-weight:900;letter-spacing:.3px;cursor:pointer;text-transform:uppercase">Valider</button>';
+  html += '<button id="coach-form-cancel" style="width:100%;margin-top:8px;padding:10px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer">Annuler</button>';
   html += "</div>";
   return html;
 }
 function wireCoachLifeloadFormEvents() {
   document.querySelectorAll('#coach-lifeload-row .pill').forEach(function(btn) {
-    btn.addEventListener("click", function() {
-      const label = btn.textContent;
+    btn.addEventListener("click", function() { lifeloadPick = btn.dataset.value; drawCoach(); });
+  });
+  document.querySelectorAll('#coach-sommeil-row .pill').forEach(function(btn) {
+    btn.addEventListener("click", function() { sleepQualityPick = btn.dataset.value; drawCoach(); });
+  });
+  const validateBtn = document.getElementById("coach-lifeload-validate");
+  if (validateBtn) validateBtn.addEventListener("click", function() {
+    if (!lifeloadPick) { alert("Choisis d'abord comment tu te sens."); return; }
+    validateBtn.textContent = "Enregistrement…";
+    const writes = [
       sb("lifeload", {
         method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-        body: JSON.stringify({ day: todayISO(), state: btn.dataset.value }),
-      }).then(async function() {
-        coachFormOpen = null;
-        coachMessages.push({ role: "assistant", text: "Ressenti du jour enregistré : " + label + "." });
-        await refreshCoachPendingCount();
-        drawCoach();
-      }).catch(function(e) { alert("Erreur : " + e.message); });
-    });
-  });
-  const cancelBtn = document.getElementById("coach-form-cancel");
-  if (cancelBtn) cancelBtn.addEventListener("click", function() { coachFormOpen = null; drawCoach(); });
-}
-
-function coachSommeilFormHtml() {
-  const SLEEP_QUALITY_OPTIONS = [["bonne", "Bonne"], ["moyenne", "Moyenne"], ["mauvaise", "Mauvaise"]];
-  let html = '<div class="card"><div class="section-label">Comment était ta nuit ?</div>';
-  if (coachTodayStatus.sleepFeelingQuality) {
-    html += '<div class="muted" style="font-size:11px;margin-bottom:12px">Déjà enregistré aujourd\'hui : <b style="color:var(--chalk)">' + esc((SLEEP_QUALITY_OPTIONS.find(function(o){return o[0]===coachTodayStatus.sleepFeelingQuality;})||[,coachTodayStatus.sleepFeelingQuality])[1]) + '</b> — reclique pour corriger.</div>';
-  }
-  html += '<div class="pill-row compact" style="flex-wrap:wrap;gap:8px" id="coach-sommeil-row">';
-  SLEEP_QUALITY_OPTIONS.forEach(function(o) {
-    const active = coachTodayStatus.sleepFeelingQuality === o[0];
-    html += '<button class="pill' + (active ? " active" : "") + '" data-value="' + o[0] + '" style="flex:none;padding:9px 14px">' + o[1] + "</button>";
-  });
-  html += "</div>";
-  html += '<button id="coach-form-cancel" style="width:100%;margin-top:16px;padding:10px 0;background:none;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer">Annuler</button>';
-  html += "</div>";
-  return html;
-}
-function wireCoachSommeilFormEvents() {
-  document.querySelectorAll('#coach-sommeil-row .pill').forEach(function(btn) {
-    btn.addEventListener("click", function() {
-      const label = btn.textContent;
-      sb("sleep_feeling", {
+        body: JSON.stringify({ day: todayISO(), state: lifeloadPick }),
+      }),
+    ];
+    if (sleepQualityPick) {
+      writes.push(sb("sleep_feeling", {
         method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-        body: JSON.stringify({ day: todayISO(), quality: btn.dataset.value }),
-      }).then(function() {
-        coachTodayStatus.sleepFeelingQuality = btn.dataset.value;
-        coachFormOpen = null;
-        coachMessages.push({ role: "assistant", text: "Qualité de la nuit enregistrée : " + label + "." });
-        drawCoach();
-      }).catch(function(e) { alert("Erreur : " + e.message); });
-    });
+        body: JSON.stringify({ day: todayISO(), quality: sleepQualityPick }),
+      }));
+    }
+    Promise.all(writes).then(async function() {
+      const lifeloadLabel = (LIFELOAD_OPTIONS.find(function(o){ return o[0] === lifeloadPick; }) || [,lifeloadPick])[1];
+      coachTodayStatus.sleepFeelingQuality = sleepQualityPick;
+      coachFormOpen = null;
+      lifeloadPick = null; sleepQualityPick = null;
+      coachMessages.push({ role: "assistant", text: "Ressenti du jour enregistré : " + lifeloadLabel + "." });
+      await refreshCoachPendingCount();
+      drawCoach();
+    }).catch(function(e) { alert("Erreur : " + e.message); validateBtn.textContent = "Valider"; });
   });
   const cancelBtn = document.getElementById("coach-form-cancel");
-  if (cancelBtn) cancelBtn.addEventListener("click", function() { coachFormOpen = null; drawCoach(); });
+  if (cancelBtn) cancelBtn.addEventListener("click", function() { lifeloadPick = null; sleepQualityPick = null; coachFormOpen = null; drawCoach(); });
 }
 
 function coachSiesteFormHtml() {
@@ -4444,8 +4454,7 @@ function wireCoachPrehensionFormEvents() {
 const COACH_LOG_BUTTONS = [
   { id: "seance", label: "Séance" },
   { id: "prehension", label: "Préhension" },
-  { id: "lifeload", label: "Ressenti (LifeLoad)" },
-  { id: "sommeil", label: "Qualité de la nuit" },
+  { id: "lifeload", label: "Ressenti & qualité de nuit" },
   { id: "sieste", label: "Sieste" },
   { id: "migraine", label: "Migraine" },
 ];
@@ -4467,7 +4476,6 @@ function drawCoach() {
       else if (coachFormOpen === "seance") html += coachSeanceFormHtml();
       else if (coachFormOpen === "prehension") html += coachPrehensionFormHtml();
       else if (coachFormOpen === "lifeload") html += coachLifeloadFormHtml();
-      else if (coachFormOpen === "sommeil") html += coachSommeilFormHtml();
       else if (coachFormOpen === "sieste") html += coachSiesteFormHtml();
       else if (coachFormOpen === "migraine") html += coachMigraineFormHtml();
     } else {
@@ -4479,7 +4487,7 @@ function drawCoach() {
       // reprennent exactement les 3 ingrédients du même calcul
       // (refreshCoachPendingCount) pour qu'ils soient enfin visibles ici.
       const pendingItems = [];
-      if (!coachTodayStatus.lifeload) pendingItems.push("Ressenti (LifeLoad)");
+      if (!coachTodayStatus.lifeload) pendingItems.push("Ressenti & qualité de nuit");
       if (coachTodayStatus.gripRequired && !coachTodayStatus.grip) pendingItems.push("Préhension");
       coachTodayStatus.classesPending.forEach(function(c) { pendingItems.push("Séance : " + c.discipline + " (" + c.heure_debut.slice(0,5) + ")"); });
       if (pendingItems.length) {
@@ -4490,10 +4498,10 @@ function drawCoach() {
       html += '<div style="display:flex;flex-direction:column;gap:12px;margin-bottom:28px" id="coach-log-row">';
       COACH_LOG_BUTTONS.forEach(function(b) {
         // Coche discrète sur les logs à statut "fait aujourd'hui" (séance,
-        // préhension, ressenti, qualité de nuit) — répond au fait qu'on
-        // pouvait reloguer le ressenti sans jamais voir qu'il l'était déjà.
-        // Sieste et migraine n'ont pas cette coche : ce sont des logs à
-        // occurrences multiples dans la journée, pas un état "fait/pas fait".
+        // préhension, ressenti) — répond au fait qu'on pouvait reloguer le
+        // ressenti sans jamais voir qu'il l'était déjà. Sieste et migraine
+        // n'ont pas cette coche : ce sont des logs à occurrences multiples
+        // dans la journée, pas un état "fait/pas fait".
         let done = false, pending = false, label = b.label;
         if (b.id === "lifeload") { done = coachTodayStatus.lifeload; pending = !done; }
         else if (b.id === "prehension") {
@@ -4502,7 +4510,6 @@ function drawCoach() {
           if (!coachTodayStatus.gripRequired && !done) label += " (optionnel aujourd'hui)";
         }
         else if (b.id === "seance") { done = coachTodayStatus.classesPending.length === 0 && coachTodayStatus.sessionsLogged > 0; pending = coachTodayStatus.classesPending.length > 0; }
-        else if (b.id === "sommeil") done = !!coachTodayStatus.sleepFeelingQuality;
         html += '<button class="coach-question-btn" data-log="' + b.id + '" style="width:100%;text-align:left;background:var(--surfaceRaised);border:1px solid ' + (pending ? "var(--red)" : "var(--line)") + ';border-radius:10px;padding:16px 18px;color:var(--chalk);font-size:14px;font-weight:700;cursor:pointer;display:flex;justify-content:space-between;align-items:center">' + label + (done ? ' <span style="color:var(--green);font-size:16px">✓</span>' : pending ? ' <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--red);box-shadow:0 0 6px 2px var(--red)"></span>' : "") + "</button>";
       });
       html += "</div>";
@@ -4563,7 +4570,6 @@ function drawCoach() {
     else if (coachFormOpen === "seance") wireCoachSeanceFormEvents();
     else if (coachFormOpen === "prehension") wireCoachPrehensionFormEvents();
     else if (coachFormOpen === "lifeload") wireCoachLifeloadFormEvents();
-    else if (coachFormOpen === "sommeil") wireCoachSommeilFormEvents();
     else if (coachFormOpen === "sieste") wireCoachSiesteFormEvents();
     else if (coachFormOpen === "migraine") wireCoachMigraineFormEvents();
     else {
