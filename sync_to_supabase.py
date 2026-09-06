@@ -441,6 +441,18 @@ def purge_old_minute_samples():
         print(f"Échantillons par minute antérieurs au {cutoff_day} purgés.")
 
 
+# Seuil "immobilité" pour RAW_INTENSITY : vérifié sur des données réelles
+# (nuit du 5 au 6 septembre) que le seuil initial de 5 était bien trop
+# strict — sur une fenêtre de 10h30 avec seulement 18 minutes de vrais pas
+# (0.4% du temps), RAW_INTENSITY <= 5 classait quand même 217 minutes
+# (20%) comme "actives", fragmentant toute plage de calme continue. La
+# distribution réelle de RAW_INTENSITY à pas=0 s'étale de façon quasi
+# continue jusqu'à ~48 (bruit de fond du capteur pendant le sommeil), avec
+# seulement des valeurs isolées au-delà de 50 (vraie activité) — d'où ce
+# seuil, qui ramène les minutes "actives" à 29 (2.6%) sur la même nuit.
+STILL_INTENSITY_MAX = 50
+
+
 def derive_bedtimes(minute_rows, wake_rows):
     """Estime l'heure de coucher réelle à partir de l'immobilité (pas + intensité)
     qui précède directement le réveil détecté (wake_rows, cf. build_sleep_stages),
@@ -456,7 +468,7 @@ def derive_bedtimes(minute_rows, wake_rows):
         window = [r for r in window_all if window_start <= r["_ts_epoch"] <= wake_epoch]
         if len(window) < 60:
             continue
-        still = [(r["steps"] in (0, None)) and ((r["intensity"] or 0) <= 5) for r in window]
+        still = [(r["steps"] in (0, None)) and ((r["intensity"] or 0) <= STILL_INTENSITY_MAX) for r in window]
         # Remonte depuis le réveil ; tolère de courts réveils nocturnes (<=5 min
         # d'activité d'affilée) mais s'arrête dès qu'une plage plus longue rompt
         # l'immobilité — ça marque la fin de la nuit (le coucher).
@@ -515,7 +527,7 @@ def derive_wake_events(minute_rows, wake_rows, bedtime_rows):
         window = [r for r in window_all if bed_epoch <= r["_ts_epoch"] <= wake_epoch]
         if len(window) < 30:
             continue
-        still = [(r["steps"] in (0, None)) and ((r["intensity"] or 0) <= 5) for r in window]
+        still = [(r["steps"] in (0, None)) and ((r["intensity"] or 0) <= STILL_INTENSITY_MAX) for r in window]
 
         events, i, n = [], 0, len(window)
         while i < n:
