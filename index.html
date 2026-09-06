@@ -1603,8 +1603,18 @@ async function loadRecuperation() {
   let nightCurve = null;
   if (recuperationSubTab === "tendance" && latestW && latestW.bedtime_hour != null && latestW.wake_hour != null) {
     const wakeDay = latest.date;
-    const prevDate = new Date(wakeDay + "T00:00:00"); prevDate.setDate(prevDate.getDate() - 1);
-    const bedDay = localDateISO(prevDate);
+    // bedtime_hour et wake_hour sont deux valeurs 0-24h sur la même ligne
+    // (jour = jour du réveil, cf. sync_to_supabase.py derive_bedtimes) : un
+    // coucher tardif dans la soirée (ex. 22.92 = 22h55) est forcément la
+    // veille du réveil, mais un coucher après minuit (ex. 1.65 = 01h39, cf.
+    // le coucher-minuit détecté grâce à la FC) tombe le MÊME jour calendaire
+    // que le réveil. Sans cette distinction, la fenêtre remontait 24h trop
+    // tôt et englobait toute une journée (d'où le pic en pleine après-midi).
+    let bedDay = wakeDay;
+    if (latestW.bedtime_hour > 12) {
+      const prevDate = new Date(wakeDay + "T00:00:00"); prevDate.setDate(prevDate.getDate() - 1);
+      bedDay = localDateISO(prevDate);
+    }
     const minuteRows = await sbPaginated("wearable_minute_samples?day=gte." + bedDay + "&day=lte." + wakeDay + "&select=ts,heart_rate&order=ts").catch(function(){ return []; });
     if (minuteRows.length) {
       const bedEpoch = new Date(bedDay + "T00:00:00").getTime() + latestW.bedtime_hour * 3600000;
