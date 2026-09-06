@@ -2177,7 +2177,11 @@ const METRIC_TREND_ICONS = {
 function metricTrendSectionHtml(title, weeklyItems, monthlyItems, interpretation, opts) {
   opts = opts || {};
   const icon = METRIC_TREND_ICONS[title];
-  let html = '<div class="card"><div class="section-label">' + (icon ? sectionIcon(icon) : "") + esc(title) + '</div>';
+  // Repliable comme "Récap du jour" (même composant <details>) — chaque
+  // thème de Tendance s'ouvre au clic plutôt que d'occuper l'écran en
+  // permanence (retour utilisateur, valable dans les 3 onglets puisque
+  // c'est la même fonction partagée qui les génère tous).
+  let html = collapsibleCardHtml((icon ? sectionIcon(icon) : "") + esc(title));
   // "Jour" (variation intraday, si dispo) passe avant Semaine/Mois — c'est
   // la vue la plus fine, elle ouvre le bloc plutôt que de le fermer.
   if (opts.todayHtml) {
@@ -2191,7 +2195,7 @@ function metricTrendSectionHtml(title, weeklyItems, monthlyItems, interpretation
   if (interpretation) {
     html += '<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:12px;color:var(--chalkDim)">' + esc(interpretation) + "</div>";
   }
-  html += "</div>";
+  html += "</details>";
   return html;
 }
 
