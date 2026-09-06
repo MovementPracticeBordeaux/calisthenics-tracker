@@ -13,6 +13,14 @@ echo "--- $(date) ---"
 
 set -e
 
+# Empêche le CPU de se rendormir pendant la synchro (rclone + Python
+# peuvent prendre plusieurs secondes) — sans effet sur QUAND Doze autorise
+# le job à démarrer, seulement protège le run une fois lancé. Nécessite
+# Termux:API (app + pkg install termux-api) ; repli silencieux sinon, pour
+# ne jamais faire échouer le script si ce n'est pas installé.
+(command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock) || true
+trap '(command -v termux-wake-unlock >/dev/null 2>&1 && termux-wake-unlock) || true' EXIT
+
 # --- Données quotidiennes (FC, VFC, stress, sommeil) ---
 rclone copy gdrive:Gadgetbridge_Export/Gadgetbridge.db "$HOME_DIR" --update
 python "$HOME_DIR/sync_to_supabase.py" "$HOME_DIR/Gadgetbridge.db"
