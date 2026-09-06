@@ -452,13 +452,50 @@ def purge_old_minute_samples():
 # seuil, qui ramène les minutes "actives" à 29 (2.6%) sur la même nuit.
 STILL_INTENSITY_MAX = 50
 
+# Le seuil d'immobilité (pas + intensité) seul ne distingue pas "assis/allongé
+# immobile mais éveillé" de "endormi" : vérifié sur des données réelles (nuit
+# du 5 au 6 septembre) qu'une soirée passée assis sans bouger (steps=0,
+# intensité sous le seuil) donnait une FC élevée et variable (60-90 bpm)
+# jusqu'à l'endormissement effectif, où la FC chute et se stabilise nettement
+# (53-58 bpm cette nuit-là) — la vraie signature physiologique du sommeil.
+# On ajoute donc la FC comme second critère d'immobilité, avec un seuil
+# adaptatif par nuit (FC minimale observée sur la fenêtre + marge) plutôt
+# qu'un seuil absolu, pour s'adapter à la FC de repos propre à chacun.
+HR_SLEEP_MARGIN_BPM = 12
+# Un coucher ne compte que s'il est suivi d'au moins MIN_SLEEP_ONSET_MIN
+# minutes d'immobilité quasi continue (tolère de courtes coupures, cf.
+# STILL_MERGE_GAP_MIN) : filtre les creux isolés de FC/activité en soirée
+# (on se pose sur le canapé sans s'endormir) qui ne doivent pas être pris
+# pour un endormissement.
+MIN_SLEEP_ONSET_MIN = 20
+STILL_MERGE_GAP_MIN = 3
+
+
+def _hr_sleep_threshold(window):
+    hr_values = [r["heart_rate"] for r in window if r.get("heart_rate") is not None]
+    if not hr_values:
+        return None
+    return min(hr_values) + HR_SLEEP_MARGIN_BPM
+
+
+def _is_still(row, hr_threshold):
+    base = (row["steps"] in (0, None)) and ((row["intensity"] or 0) <= STILL_INTENSITY_MAX)
+    if hr_threshold is None or row.get("heart_rate") is None:
+        return base
+    return base and row["heart_rate"] <= hr_threshold
+
 
 def derive_bedtimes(minute_rows, wake_rows):
-    """Estime l'heure de coucher réelle à partir de l'immobilité (pas + intensité)
-    qui précède directement le réveil détecté (wake_rows, cf. build_sleep_stages),
-    plutôt que d'utiliser la valeur fixe 22:00 du blob de sommeil (cf.
-    build_sleep_stages, docstring). Ne renvoie une valeur que si au moins 3h
-    d'immobilité quasi continue précèdent le réveil — sinon on ne devine pas."""
+    """Estime l'heure de coucher réelle à partir de l'immobilité (pas +
+    intensité + FC, cf. _is_still) qui précède le réveil détecté (wake_rows,
+    cf. build_sleep_stages), plutôt que d'utiliser la valeur fixe 22:00 du
+    blob de sommeil (cf. build_sleep_stages, docstring).
+
+    On cherche, en balayant la nuit du soir vers le matin, le premier bloc
+    d'immobilité continue (coupures tolérées <= STILL_MERGE_GAP_MIN) d'au
+    moins MIN_SLEEP_ONSET_MIN minutes — c'est le coucher. Ne renvoie une
+    valeur que si au moins 3h séparent ce coucher du réveil — sinon on ne
+    devine pas."""
     by_day_wake = {r["day"]: r for r in wake_rows if r.get("wake_hour") is not None}
     window_all = sorted(minute_rows, key=lambda r: r["_ts_epoch"])
     results = []
@@ -468,51 +505,53 @@ def derive_bedtimes(minute_rows, wake_rows):
         window = [r for r in window_all if window_start <= r["_ts_epoch"] <= wake_epoch]
         if len(window) < 60:
             continue
-        still = [(r["steps"] in (0, None)) and ((r["intensity"] or 0) <= STILL_INTENSITY_MAX) for r in window]
-        # Le réveil s'accompagne forcément de mouvement (se lever, marcher) —
-        # observé en pratique jusqu'à ~10 min avant l'heure de réveil retenue
-        # (qui peut elle-même être décalée de quelques minutes par rapport au
-        # tout premier mouvement). Sans ignorer cette zone de transition, le
-        # balayage arrière prend ce mouvement pour une interruption nocturne
-        # à tolérer et s'arrête immédiatement, trouvant un "coucher" à
-        # quelques minutes du réveil. On ignore donc WAKE_TRANSITION_MIN
-        # minutes avant le réveil, puis on remonte en tolérant de courts
-        # réveils nocturnes (<=5 min d'activité d'affilée) jusqu'à ce qu'une
-        # plage plus longue rompe l'immobilité — ça marque le coucher.
-        WAKE_TRANSITION_MIN = 15
-        transition_boundary = wake_epoch - WAKE_TRANSITION_MIN * 60
-        idx = len(window) - 1
-        while idx >= 0 and window[idx]["_ts_epoch"] > transition_boundary:
-            idx -= 1
-        bed_idx, consecutive_active = None, 0
-        while idx >= 0:
-            if still[idx]:
-                bed_idx = idx
-                consecutive_active = 0
-            else:
-                consecutive_active += 1
-                if consecutive_active > 5:
-                    break
-            idx -= 1
+        hr_threshold = _hr_sleep_threshold(window)
+        still = [_is_still(r, hr_threshold) for r in window]
+        n = len(window)
+        bed_idx = None
+        i = 0
+        while i < n:
+            if not still[i]:
+                i += 1
+                continue
+            start, last_still, gap = i, i, 0
+            j = i + 1
+            while j < n:
+                if still[j]:
+                    last_still = j
+                    gap = 0
+                else:
+                    gap += 1
+                    if gap > STILL_MERGE_GAP_MIN:
+                        break
+                j += 1
+            block_duration_min = (window[last_still]["_ts_epoch"] - window[start]["_ts_epoch"]) / 60 + 1
+            if block_duration_min >= MIN_SLEEP_ONSET_MIN:
+                bed_idx = start
+                break
+            i = j
         if bed_idx is None:
             continue
         duration_min = (window[-1]["_ts_epoch"] - window[bed_idx]["_ts_epoch"]) / 60
         if duration_min < 180:
             continue
         bed_dt = datetime.datetime.fromtimestamp(window[bed_idx]["_ts_epoch"])
-        # _bed_epoch : usage interne (derive_wake_events a besoin de la borne
-        # exacte de la nuit, pas seulement l'heure arrondie) — jamais envoyé
-        # à Supabase, retiré avant l'appel à push_sleep_stages.
+        # _bed_epoch/_hr_threshold : usage interne (derive_wake_events a besoin
+        # de la borne exacte de la nuit et du même seuil de FC pour rester
+        # cohérent) — jamais envoyés à Supabase, retirés avant l'appel à
+        # push_sleep_stages.
         results.append({
             "day": day, "bedtime_hour": round(bed_dt.hour + bed_dt.minute / 60, 2),
             "_bed_epoch": window[bed_idx]["_ts_epoch"],
+            "_hr_threshold": hr_threshold,
         })
     return results
 
 
 def derive_wake_events(minute_rows, wake_rows, bedtime_rows):
-    """Repère les réveils nocturnes par sursauts d'activité (pas/intensité)
-    entourés de calme, dans la fenêtre coucher -> réveil déjà établie
+    """Repère les réveils nocturnes par sursauts d'activité (pas/intensité/FC,
+    cf. _is_still, avec le même seuil de FC que derive_bedtimes pour cette
+    nuit) entourés de calme, dans la fenêtre coucher -> réveil déjà établie
     (derive_bedtimes) — remplace l'ancien sleep_awake_count (décodé du blob
     de sommeil, jugé peu fiable et jamais affiché dans l'app, voir
     build_sleep_stages) par une détection sur les mêmes données brutes que
@@ -540,7 +579,8 @@ def derive_wake_events(minute_rows, wake_rows, bedtime_rows):
         window = [r for r in window_all if bed_epoch <= r["_ts_epoch"] <= wake_epoch]
         if len(window) < 30:
             continue
-        still = [(r["steps"] in (0, None)) and ((r["intensity"] or 0) <= STILL_INTENSITY_MAX) for r in window]
+        hr_threshold = bed.get("_hr_threshold")
+        still = [_is_still(r, hr_threshold) for r in window]
 
         events, i, n = [], 0, len(window)
         while i < n:
