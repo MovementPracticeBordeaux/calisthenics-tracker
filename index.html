@@ -1692,10 +1692,7 @@ async function loadRecuperation() {
     } else {
       const h = Math.floor(latest.total / 60), m = latest.total % 60;
       html += '<div style="margin:16px 0 28px"><div class="section-label" style="display:flex;justify-content:space-between;align-items:center"><span>' + sectionIcon("moon") + 'Sommeil</span><span>' + tierDot(sleepTierColor) + '</span></div>';
-      html += '<div style="padding:18px 0">' + singleScoreGaugeHtml(sleepScore, 100, { sublabel: sleepTier, size: 300, icon: "moon" }) + "</div>";
-      html += '<div style="text-align:center;padding-top:14px;border-top:1px solid var(--line);font-size:13px"><b>' + h + 'h' + (m<10?'0':'') + m + '</b>';
-      if (avgTotal != null) html += ' <span class="muted">· moyenne 14j : ' + Math.floor(avgTotal/60) + 'h' + Math.round(avgTotal%60).toString().padStart(2,'0') + '</span>';
-      html += "</div></div>";
+      html += '<div style="padding:18px 0">' + singleScoreGaugeHtml(sleepScore, 100, { sublabel: sleepTier, size: 300, icon: "moon" }) + "</div></div>";
 
       const stageTotal = latest.total || 1;
       const deepPct = Math.round((latest.deep/stageTotal)*100), remPct = Math.round((latest.rem/stageTotal)*100), lightPct = Math.round((latest.light/stageTotal)*100);
@@ -1703,6 +1700,7 @@ async function loadRecuperation() {
 
       const checklist = [];
       checklist.push({ label: "Sommeil", icon: "moon", iconColor: "var(--steel)", tier: sleepTierColor, note: sleepScore + "/100 · " + sleepTier });
+      checklist.push({ label: "Durée", icon: "moon", iconColor: "var(--steel)", tier: "steel", note: h + "h" + (m<10?'0':'') + m + (avgTotal != null ? " · moyenne 14j " + Math.floor(avgTotal/60) + "h" + Math.round(avgTotal%60).toString().padStart(2,'0') : "") });
       checklist.push({ label: "Stades", icon: "list", iconColor: "var(--purple)", tier: stagesTier, note: "Léger " + lightPct + "% · Profond " + deepPct + "% · REM " + remPct + "%" });
       if (latestW && latestW.bedtime_hour != null && latestW.wake_hour != null) {
         checklist.push({ label: "Coucher → réveil", icon: "moon", iconColor: "var(--steel)", tier: "steel", note: hoursToLabel(latestW.bedtime_hour) + " → " + hoursToLabel(latestW.wake_hour) });
