@@ -480,8 +480,21 @@ def _hr_sleep_threshold(window):
 
 def _is_still(row, hr_threshold):
     base = (row["steps"] in (0, None)) and ((row["intensity"] or 0) <= STILL_INTENSITY_MAX)
-    if hr_threshold is None or row.get("heart_rate") is None:
+    if hr_threshold is None:
         return base
+    # Un trou de FC (capteur décroché, lecture manquante) ne doit PAS valoir
+    # passe-droit : vérifié sur données réelles qu'une coupure de 50 minutes
+    # sans FC, avec pas/intensité bas pendant ce trou précis, suffisait à
+    # elle seule à franchir MIN_SLEEP_ONSET_MIN et déclarer un coucher au
+    # beau milieu d'une soirée où la FC restait élevée juste avant et juste
+    # après (donc clairement éveillé). Sans seuil FC connu pour la nuit
+    # (aucune lecture nulle part dans la fenêtre), on retombe sur pas+
+    # intensité seuls — ici, on a un seuil mais pas de lecture pour CETTE
+    # minute précise, donc on ne peut pas confirmer l'immobilité : compte
+    # comme actif, au pire ça coupe un bloc calme réel de quelques minutes
+    # (toléré par STILL_MERGE_GAP_MIN), jamais l'inverse.
+    if row.get("heart_rate") is None:
+        return False
     return base and row["heart_rate"] <= hr_threshold
 
 
