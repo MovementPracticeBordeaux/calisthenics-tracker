@@ -1760,10 +1760,10 @@ async function loadRecuperation() {
         { label: "Profond", val: Math.round(avgDeep/60*10)/10 },
         { label: "Paradoxal", val: Math.round(avgRem/60*10)/10 },
       ];
-      html += '<div class="card"><div class="section-label">Moyenne des stades (mois)</div>';
+      html += collapsibleCardHtml("Moyenne des stades (mois)");
       html += barChartHtml(stageBars, { decimals: 1, showAvg: false });
       html += '<div class="muted" style="text-align:center;font-size:11px;margin-top:8px">Léger ' + fmtH(avgLight) + ' · Profond ' + fmtH(avgDeep) + ' · Paradoxal ' + fmtH(avgRem) + "</div>";
-      html += "</div>";
+      html += "</details>";
     }
 
     // Le PAI se lit nativement en total glissant sur 7 jours, pas jour par
