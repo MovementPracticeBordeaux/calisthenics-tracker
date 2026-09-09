@@ -605,7 +605,25 @@ def derive_wake_events(minute_rows, wake_rows, bedtime_rows):
         # sommeil comme des réveils (jusqu'à 10 par nuit). Un réveil se
         # reconnaît à un sursaut d'ACTIVITÉ (pas/intensité), pas à une
         # variation de FC sans mouvement — cf. docstring de cette fonction.
-        still = [_is_still(r, None) for r in window]
+        #
+        # En plus du sursaut minute par minute (_is_still), une moyenne
+        # glissante de l'intensité sur ROLL_WINDOW_MIN minutes repère les
+        # phases "immobile mais éveillé" : aucun pas, une intensité qui ne
+        # dépasse jamais STILL_INTENSITY_MAX assez longtemps pour ressortir
+        # minute par minute, mais qui reste sensiblement au-dessus du bruit
+        # de fond du sommeil calme (~1-5) sur la durée — vérifié sur données
+        # réelles (nuit du 8-9 septembre, 2 réveils ressentis vers 3h et
+        # 7h30, invisibles minute par minute mais nets une fois lissés).
+        ROLL_WINDOW_MIN = 30
+        ROLL_INTENSITY_MAX = 8
+        rolling_source = [(r["intensity"] or 0) if r["steps"] in (0, None) else 999 for r in window]
+        still = []
+        for idx, r in enumerate(window):
+            if not _is_still(r, None):
+                still.append(False)
+                continue
+            seg = rolling_source[max(0, idx - ROLL_WINDOW_MIN + 1):idx + 1]
+            still.append(sum(seg) / len(seg) <= ROLL_INTENSITY_MAX)
 
         events, i, n = [], 0, len(window)
         while i < n:
