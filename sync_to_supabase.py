@@ -554,14 +554,12 @@ def derive_bedtimes(minute_rows, wake_rows):
         if duration_min < 180:
             continue
         bed_dt = datetime.datetime.fromtimestamp(window[bed_idx]["_ts_epoch"])
-        # _bed_epoch/_hr_threshold : usage interne (derive_wake_events a besoin
-        # de la borne exacte de la nuit et du même seuil de FC pour rester
-        # cohérent) — jamais envoyés à Supabase, retirés avant l'appel à
-        # push_sleep_stages.
+        # _bed_epoch : usage interne (derive_wake_events a besoin de la borne
+        # exacte de la nuit) — jamais envoyé à Supabase, retiré avant l'appel
+        # à push_sleep_stages.
         results.append({
             "day": day, "bedtime_hour": round(bed_dt.hour + bed_dt.minute / 60, 2),
             "_bed_epoch": window[bed_idx]["_ts_epoch"],
-            "_hr_threshold": hr_threshold,
         })
     return results
 
@@ -597,8 +595,17 @@ def derive_wake_events(minute_rows, wake_rows, bedtime_rows):
         window = [r for r in window_all if bed_epoch <= r["_ts_epoch"] <= wake_epoch]
         if len(window) < 30:
             continue
-        hr_threshold = bed.get("_hr_threshold")
-        still = [_is_still(r, hr_threshold) for r in window]
+        # Uniquement pas/intensité ici, jamais la FC : vérifié sur données
+        # réelles (nuit du 8-9 septembre) que la FC varie naturellement de
+        # 15-20 bpm au cours d'une même nuit selon les phases de sommeil
+        # (léger/profond/paradoxal), sans aucun mouvement (steps=0). Le seuil
+        # FC adaptatif de derive_bedtimes (utile pour distinguer "éveillé
+        # assis" de "endormi" en soirée) devient du bruit une fois la nuit
+        # confirmée : il classait de simples changements de phase de
+        # sommeil comme des réveils (jusqu'à 10 par nuit). Un réveil se
+        # reconnaît à un sursaut d'ACTIVITÉ (pas/intensité), pas à une
+        # variation de FC sans mouvement — cf. docstring de cette fonction.
+        still = [_is_still(r, None) for r in window]
 
         events, i, n = [], 0, len(window)
         while i < n:
