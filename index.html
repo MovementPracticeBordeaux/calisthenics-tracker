@@ -1417,7 +1417,7 @@ async function loadEntrainement() {
     if (estimatedKz) {
       const kzGrand = estimatedKz.zones.reduce(function(s, x) { return s + x; }, 0);
       if (kzGrand > 0) {
-        html += '<div class="card"><div class="section-label">' + sectionIcon("heart") + 'Zones cardiaques estimées — ' + esc(estimatedKz.discipline) + '</div>';
+        html += collapsibleCardHtml(sectionIcon("heart") + 'Zones cardiaques estimées — ' + esc(estimatedKz.discipline));
         const kzRows = [
           ["Léger", estimatedKz.zones[0], "steel"], ["Intensif", estimatedKz.zones[1], "green"],
           ["Aérobique", estimatedKz.zones[2], "amber"], ["Anaérobie", estimatedKz.zones[3], "rust"], ["VO2 max", estimatedKz.zones[4], "red"],
@@ -1427,7 +1427,7 @@ async function loadEntrainement() {
           html += '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>' + r[0] + '</span><span class="muted">' + r[1] + " min · " + pct + "%</span></div>";
           html += '<div style="height:7px;background:var(--surfaceRaised);border-radius:4px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:var(--' + r[2] + ')"></div></div></div>';
         });
-        html += '<div class="muted" style="font-size:10px;margin-top:8px">Estimation à partir de l\'échantillonnage minute par minute du bracelet (aucun fichier .fit synchronisé pour cette séance) — sur ' + estimatedKz.sampleCount + ' points de mesure. Moins précis que les zones Karvonen habituelles (calculées seconde par seconde) ; disponible seulement dans les 3 jours suivant la séance.</div></div>';
+        html += '<div class="muted" style="font-size:10px;margin-top:8px">Estimation à partir de l\'échantillonnage minute par minute du bracelet (aucun fichier .fit synchronisé pour cette séance) — sur ' + estimatedKz.sampleCount + ' points de mesure. Moins précis que les zones Karvonen habituelles (calculées seconde par seconde) ; disponible seulement dans les 3 jours suivant la séance.</div></details>';
       }
     }
   } else {
@@ -1495,13 +1495,13 @@ async function loadEntrainement() {
           ["Léger", kzTot.l, "steel"], ["Intensif", kzTot.i, "green"],
           ["Aérobique", kzTot.a, "amber"], ["Anaérobie", kzTot.an, "rust"], ["VO2 max", kzTot.v, "red"],
         ];
-        html += '<div class="card"><div class="section-label">' + sectionIcon("heart") + 'Zones cardiaques — 30 derniers jours</div>';
+        html += collapsibleCardHtml(sectionIcon("heart") + 'Zones cardiaques — 30 derniers jours');
         kzRows.forEach(function(r) {
           const pct = Math.round((r[1] / kzGrand) * 100);
           html += '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>' + r[0] + '</span><span class="muted">' + Math.round(r[1]) + " min · " + pct + "%</span></div>";
           html += '<div style="height:7px;background:var(--surfaceRaised);border-radius:4px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:var(--' + r[2] + ')"></div></div></div>';
         });
-        html += '<div class="muted" style="font-size:10px;margin-top:8px">Méthode Karvonen (réserve cardiaque), FC max ' + kz30[0].kz_hrmax_used + ', FC repos ' + kz30[0].kz_hrrest_used + '. Plus juste que le %FCmax des montres (qui ignore la FC repos), mais reste une estimation.</div></div>';
+        html += '<div class="muted" style="font-size:10px;margin-top:8px">Méthode Karvonen (réserve cardiaque), FC max ' + kz30[0].kz_hrmax_used + ', FC repos ' + kz30[0].kz_hrrest_used + '. Plus juste que le %FCmax des montres (qui ignore la FC repos), mais reste une estimation.</div></details>';
       }
     }
 
@@ -1710,8 +1710,7 @@ async function loadRecuperation() {
       if (latestW && latestW.sleep_wake_count != null) {
         const wc = latestW.sleep_wake_count;
         const wakeTier = wc > 8 ? "red" : wc > 5 ? "amber" : "green";
-        const times = (latestW.sleep_wake_times || []).map(hoursToLabel).join(", ");
-        checklist.push({ label: "Réveils nocturnes", icon: "moon", iconColor: "var(--steel)", tier: wakeTier, note: wc === 0 ? "Aucun" : wc + (times ? " (" + times + ")" : "") });
+        checklist.push({ label: "Réveils nocturnes", icon: "moon", iconColor: "var(--steel)", tier: wakeTier, note: wc === 0 ? "Aucun" : wc + (wc > 1 ? " réveils" : " réveil") });
       }
       checklist.push({ label: "Sieste", icon: "moon", iconColor: "var(--pink)", tier: totalNapMin > 0 ? "green" : "steel", note: totalNapMin > 0 ? totalNapMin + " min" : "Ø" });
       checklist.push({ label: "PAI (semaine)", icon: "heart", iconColor: "var(--red)", tier: weeklyPai >= 100 ? "green" : "amber", note: weeklyPai >= 100 ? "Objectif atteint" : Math.round(weeklyPai) + "/100" });

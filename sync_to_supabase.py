@@ -478,23 +478,28 @@ def _hr_sleep_threshold(window):
     return min(hr_values) + HR_SLEEP_MARGIN_BPM
 
 
-def _is_still(row, hr_threshold):
+def _is_still(row, hr_threshold, require_hr=False):
     base = (row["steps"] in (0, None)) and ((row["intensity"] or 0) <= STILL_INTENSITY_MAX)
-    if hr_threshold is None:
-        return base
-    # Un trou de FC (capteur décroché, lecture manquante) ne doit PAS valoir
-    # passe-droit : vérifié sur données réelles qu'une coupure de 50 minutes
-    # sans FC, avec pas/intensité bas pendant ce trou précis, suffisait à
-    # elle seule à franchir MIN_SLEEP_ONSET_MIN et déclarer un coucher au
-    # beau milieu d'une soirée où la FC restait élevée juste avant et juste
-    # après (donc clairement éveillé). Sans seuil FC connu pour la nuit
-    # (aucune lecture nulle part dans la fenêtre), on retombe sur pas+
-    # intensité seuls — ici, on a un seuil mais pas de lecture pour CETTE
-    # minute précise, donc on ne peut pas confirmer l'immobilité : compte
-    # comme actif, au pire ça coupe un bloc calme réel de quelques minutes
-    # (toléré par STILL_MERGE_GAP_MIN), jamais l'inverse.
-    if row.get("heart_rate") is None:
-        return False
+    if hr_threshold is None or row.get("heart_rate") is None:
+        # Sans FC pour cette minute (capteur décroché, lecture manquante) on
+        # ne peut pas confirmer l'immobilité par la FC — deux usages avec des
+        # besoins opposés :
+        # - derive_bedtimes (require_hr=True) : vérifié sur données réelles
+        #   qu'une coupure LONGUE (50 min) avec pas/intensité bas pendant ce
+        #   trou précis suffisait à elle seule à franchir MIN_SLEEP_ONSET_MIN
+        #   et déclarer un coucher au beau milieu d'une soirée où la FC
+        #   restait élevée juste avant/après (donc éveillé) — ici on compte
+        #   comme actif, quitte à couper un vrai bloc calme de quelques
+        #   minutes (toléré par STILL_MERGE_GAP_MIN).
+        # - derive_wake_events (require_hr=False, comportement d'origine) :
+        #   dans une nuit déjà confirmée comme telle par derive_bedtimes, les
+        #   coupures FC BRÈVES et RÉPÉTÉES (contact poignet, quelques minutes,
+        #   plusieurs fois par nuit) sont normales pendant un sommeil réel —
+        #   vérifié sur données réelles qu'exiger la FC ici comptait chaque
+        #   coupure comme un réveil séparé (jusqu'à 10 par nuit, toutes les
+        #   ~13 min, pas un schéma de réveils réels) au lieu de les laisser
+        #   fusionner dans le calme environnant.
+        return False if require_hr else base
     return base and row["heart_rate"] <= hr_threshold
 
 
@@ -519,7 +524,7 @@ def derive_bedtimes(minute_rows, wake_rows):
         if len(window) < 60:
             continue
         hr_threshold = _hr_sleep_threshold(window)
-        still = [_is_still(r, hr_threshold) for r in window]
+        still = [_is_still(r, hr_threshold, require_hr=True) for r in window]
         n = len(window)
         bed_idx = None
         i = 0
