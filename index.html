@@ -458,6 +458,12 @@ function formatDateLabel(iso) {
   return d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
 }
 function avgOf(arr) { return arr.length ? arr.reduce(function(s,v){return s+v;},0) / arr.length : null; }
+function medianOf(arr) {
+  if (!arr.length) return null;
+  const s = arr.slice().sort(function(a,b){ return a-b; });
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid-1] + s[mid]) / 2;
+}
 function esc(s) { return (s == null ? "" : String(s)).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
 
 function getWeekLetter(dateStr, ref) {
@@ -1645,13 +1651,24 @@ async function loadRecuperation() {
 
   let sleepScore = null, sleepTier = null, sleepTierColor = "muted";
   if (latest) {
+    // Pénalités progressives (proportionnelles à l'écart), pas des paliers
+    // plats : sinon toute nuit "correcte" tombe dans une large zone à 0
+    // pénalité et le score plafonne à 100 en continu, ce qui n'a rien de
+    // crédible pour une mesure physiologique (constaté sur 2 nuits d'affilée
+    // à 100/100 alors que rien ne garantit une nuit "parfaite").
     sleepScore = 100;
     const totalH = latest.total / 60;
-    if (totalH < 6) sleepScore -= 35; else if (totalH < 7) sleepScore -= 12; else if (totalH > 9.5) sleepScore -= 8;
+    // Durée : optimum 7.5-8.5h, pénalité proportionnelle en dehors.
+    if (totalH < 7.5) sleepScore -= Math.min(35, (7.5 - totalH) * 12);
+    else if (totalH > 8.5) sleepScore -= Math.min(15, (totalH - 8.5) * 6);
     const deepPct = Math.round((latest.deep / latest.total) * 100);
     const remPct = Math.round((latest.rem / latest.total) * 100);
-    if (deepPct < 13) sleepScore -= 15; else if (deepPct > 23) sleepScore -= 5;
-    if (remPct < 15) sleepScore -= 15; else if (remPct < 20 || remPct > 25) sleepScore -= 5;
+    // Profond : cible ~15-20%, pénalité proportionnelle en dehors.
+    if (deepPct < 15) sleepScore -= Math.min(18, (15 - deepPct) * 1.8);
+    else if (deepPct > 23) sleepScore -= Math.min(8, (deepPct - 23) * 1.5);
+    // REM : cible ~18-25%, pénalité proportionnelle en dehors.
+    if (remPct < 18) sleepScore -= Math.min(18, (18 - remPct) * 1.8);
+    else if (remPct > 27) sleepScore -= Math.min(8, (remPct - 27) * 1.5);
     // Réveils nocturnes détectés par sursaut d'activité (steps/intensité)
     // entouré de calme, dans la fenêtre coucher->réveil déjà établie — cf.
     // sync_to_supabase.py, derive_wake_events. Remplace l'ancien
@@ -1665,7 +1682,27 @@ async function loadRecuperation() {
       if (latestW.sleep_wake_count > 8) sleepScore -= 18;
       else if (latestW.sleep_wake_count > 5) sleepScore -= 8;
     }
-    sleepScore = Math.max(0, Math.min(100, sleepScore));
+    // Régularité du coucher : écart entre l'heure de coucher de la nuit et
+    // l'heure habituelle de l'utilisateur (médiane des 14 nuits précédentes),
+    // plutôt qu'un seuil absolu type "après 23h = tardif" qui n'aurait aucun
+    // sens pour un horaire de coucher qui varie naturellement (confirmé sur
+    // ce fil : coucher observé entre 21h et 1h selon les nuits). Un coucher
+    // décalé de plus d'1h par rapport à l'habitude pénalise progressivement
+    // — la régularité du sommeil est un facteur de qualité reconnu,
+    // indépendamment de l'heure en elle-même.
+    if (latestW && latestW.bedtime_hour != null) {
+      const normBed = function(h) { return h > 12 ? h - 24 : h; };
+      const priorBedtimes = wearable
+        .filter(function(w) { return w.day < latestW.day && w.bedtime_hour != null; })
+        .slice(-14)
+        .map(function(w) { return normBed(w.bedtime_hour); });
+      if (priorBedtimes.length >= 5) {
+        const usualBed = medianOf(priorBedtimes);
+        const deviation = normBed(latestW.bedtime_hour) - usualBed;
+        if (deviation > 1) sleepScore -= Math.min(12, (deviation - 1) * 6);
+      }
+    }
+    sleepScore = Math.max(0, Math.min(100, Math.round(sleepScore)));
     sleepTier = sleepScore >= 70 ? "Bon" : sleepScore >= 40 ? "Correct" : "Insuffisant";
     sleepTierColor = sleepScore >= 70 ? "green" : sleepScore >= 40 ? "amber" : "red";
   }
