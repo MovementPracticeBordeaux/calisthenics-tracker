@@ -1658,8 +1658,14 @@ async function loadRecuperation() {
     // à 100/100 alors que rien ne garantit une nuit "parfaite").
     sleepScore = 100;
     const totalH = latest.total / 60;
-    // Durée : optimum 7.5-8.5h, pénalité proportionnelle en dehors.
-    if (totalH < 7.5) sleepScore -= Math.min(35, (7.5 - totalH) * 12);
+    // Durée : optimum 7.5-8.5h, pénalité proportionnelle en dehors. En
+    // dessous de l'optimum le poids est volontairement fort (x24, plafond
+    // 60) : la durée est le facteur le plus déterminant du ressenti au
+    // réveil, un déficit ne se compense pas par ailleurs (repères
+    // médicaux adulte 7-9h/nuit) — corrigé après une nuit de 5h45 notée
+    // 79/100 "Bon" avec l'ancien poids (x12, plafond 35), alors que le
+    // ressenti réel était mauvais.
+    if (totalH < 7.5) sleepScore -= Math.min(60, (7.5 - totalH) * 24);
     else if (totalH > 8.5) sleepScore -= Math.min(15, (totalH - 8.5) * 6);
     const deepPct = Math.round((latest.deep / latest.total) * 100);
     const remPct = Math.round((latest.rem / latest.total) * 100);
