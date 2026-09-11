@@ -658,6 +658,40 @@ function rpeLadderHtml(scope, value) {
   return html + "</div>";
 }
 
+// Complète après coup la VFC mesurée pendant une séance de respiration
+// (breathing_sessions.hrv_avg) une fois que les échantillons minute par
+// minute correspondants ont eu le temps d'être synchronisés (~15-60 min,
+// cf. run_sync.sh) — impossible à calculer au moment où la séance se
+// termine (logBreathingSession), la donnée n'existe pas encore côté
+// serveur à cet instant. Sert de relevé de vigilance fiable à tout
+// moment de la journée (une respiration = plusieurs minutes réellement
+// immobile), là où les créneaux fixes après-midi/soir ne captent
+// quasiment jamais rien pour un usage actif — cf. loadForme. Limité aux
+// 3 derniers jours : au-delà, la rétention de wearable_minute_samples a
+// déjà purgé les échantillons, ce serait recalculé pour rien.
+function backfillBreathingHrv(breathingSessions) {
+  const now = Date.now();
+  const cutoffDay = daysAgo(2);
+  breathingSessions.forEach(function(s) {
+    if (s.hrv_avg != null || !s.created_at || s.day < cutoffDay) return;
+    const endMs = new Date(s.created_at).getTime();
+    if (now - endMs < 20 * 60 * 1000) return; // laisse le temps à la synchro de tourner
+    const startMs = endMs - (s.duration_min || 0) * 60000 - 60000;
+    const endWindowMs = endMs + 60000;
+    sbPaginated("wearable_minute_samples?day=eq." + s.day + "&hrv=not.is.null&select=ts,hrv")
+      .then(function(rows) {
+        const inWindow = (rows || []).filter(function(r) {
+          const t = new Date(r.ts).getTime();
+          return t >= startMs && t <= endWindowMs;
+        });
+        if (!inWindow.length) return;
+        const avg = Math.round(avgOf(inWindow.map(function(r) { return r.hrv; })) * 10) / 10;
+        return sb("breathing_sessions?id=eq." + s.id, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ hrv_avg: avg }) });
+      })
+      .catch(function() {});
+  });
+}
+
 // ---------------- Rendu : Forme ----------------
 let formeSubTab = "jour";
 async function renderForme() {
@@ -671,7 +705,7 @@ async function renderForme() {
   // connexion mobile un peu lente, avec un dashboard qui reste bloqué sur
   // "Chargement…" en attendant). Chaque requête garde son propre repli en
   // cas d'échec isolé, exactement comme avant.
-  const [sessions, wearable, workouts, monthMigraines, monthLifeload, lifeloadRows, napRows, todayFitSessions, todayTrips, migRows, todayMigRows, gripRows] = await Promise.all([
+  const [sessions, wearable, workouts, monthMigraines, monthLifeload, lifeloadRows, napRows, todayFitSessions, todayTrips, migRows, todayMigRows, gripRows, breathingSessions] = await Promise.all([
     listSessions(90).catch(function(e) { errorMsg = errorMsg || e.message; return []; }),
     listWearable(40).catch(function(e) { errorMsg = errorMsg || e.message; return []; }),
     sb("workout_sessions?select=day,training_effect_aerobic,training_effect_anaerobic&activity_type=eq.seance&order=day.desc&limit=60").catch(function() { return []; }),
@@ -684,7 +718,9 @@ async function renderForme() {
     sb("migraines?select=day").catch(function() { return []; }),
     sb("migraines?day=eq." + today + "&select=intensity").catch(function() { return []; }),
     sb("grip_strength?select=day,value_kg&order=day.desc&limit=30").catch(function() { return []; }),
+    sb("breathing_sessions?select=id,day,duration_min,created_at,hrv_avg&order=created_at.desc&limit=90").catch(function() { return []; }),
   ]);
+  backfillBreathingHrv(breathingSessions);
 
   const todayTotalLoad = sessions.filter(function(s){ return s.date === today; }).reduce(function(s,x){ return s + (x.correctedLoad || 0); }, 0);
   const todayWearable = wearable.find(function(w){ return w.day === today; }) || null;
@@ -1111,28 +1147,51 @@ async function renderForme() {
       html += '<div class="error-banner" style="background:rgba(242,113,28,0.15);border-color:var(--rust)"><b>⚠ Signaux similaires à une migraine passée :</b> ' + esc(migraineAlert) + "</div>";
     }
 
-    // Vigilance — 3 points de contrôle réels dans la journée (VFC mesurée sur
+    // Vigilance — points de contrôle réels dans la journée (VFC mesurée sur
     // ce créneau précis, comparée à ta moyenne sur ce même créneau les jours
     // précédents). Une vraie baisse de VFC en temps réel est associée à la
     // somnolence dans la littérature (études de détection de somnolence au
     // volant, validées contre des mesures oculaires). On calcule ici le
     // dernier créneau atteint pour l'imbriquer dans l'anneau Forme.
+    //
+    // Les créneaux fixes après-midi/soir supposent une immobilité à heure
+    // fixe qui n'arrive quasiment jamais pour un usage actif (vérifié sur
+    // les échantillons bruts : la VFC n'est mesurée en continu que pendant
+    // les phases de repos réel, essentiellement la nuit) — ils restent en
+    // repli au cas où, mais une séance de respiration loguée aujourd'hui
+    // (immobilité volontaire de plusieurs minutes, hrv_avg calculé après
+    // coup par backfillBreathingHrv) sert de déclencheur fiable à n'importe
+    // quelle heure et complète ces créneaux plutôt que de les remplacer.
     const VIG_WINDOWS = [
-      { label: "Matin", hrvKey: "hrv_morning", lo: 6, hi: 9 },
-      { label: "Après-midi", hrvKey: "hrv_afternoon", lo: 14, hi: 16 },
-      { label: "Soir", hrvKey: "hrv_evening", lo: 17, hi: 19 },
+      { label: "Matin", hrvKey: "hrv_morning", hour: 7.5 },
+      { label: "Après-midi", hrvKey: "hrv_afternoon", hour: 15 },
+      { label: "Soir", hrvKey: "hrv_evening", hour: 18 },
     ];
-    let vigPct = null, vigWindowLabel = null;
-    VIG_WINDOWS.slice().reverse().forEach(function(w) {
-      if (vigPct != null) return;
+    const vigCandidates = [];
+    VIG_WINDOWS.forEach(function(w) {
       const todayHrv = todayWearable ? todayWearable[w.hrvKey] : null;
       if (todayHrv == null) return;
       const baseVals = wearable.filter(function(x){ return x.day !== today && x[w.hrvKey] != null; }).map(function(x){ return x[w.hrvKey]; });
-      const baseHrv = baseVals.length >= 3 ? avgOf(baseVals) : null;
-      if (baseHrv == null || baseHrv <= 0) return;
-      vigPct = Math.round(((todayHrv - baseHrv) / baseHrv) * 100);
-      vigWindowLabel = w.label;
+      if (baseVals.length < 3) return;
+      const baseHrv = avgOf(baseVals);
+      if (!baseHrv) return;
+      vigCandidates.push({ hour: w.hour, label: w.label, pct: Math.round(((todayHrv - baseHrv) / baseHrv) * 100) });
     });
+    breathingSessions.filter(function(s){ return s.day === today && s.hrv_avg != null; }).forEach(function(s) {
+      const baseVals = breathingSessions.filter(function(x){ return x.id !== s.id && x.hrv_avg != null; }).map(function(x){ return x.hrv_avg; });
+      if (baseVals.length < 3) return;
+      const baseHrv = avgOf(baseVals);
+      if (!baseHrv) return;
+      const dt = new Date(s.created_at);
+      vigCandidates.push({ hour: dt.getHours() + dt.getMinutes() / 60, label: "Respiration " + String(dt.getHours()).padStart(2,'0') + "h" + String(dt.getMinutes()).padStart(2,'0'), pct: Math.round(((s.hrv_avg - baseHrv) / baseHrv) * 100) });
+    });
+    vigCandidates.sort(function(a, b){ return a.hour - b.hour; });
+    let vigPct = null, vigWindowLabel = null;
+    if (vigCandidates.length) {
+      const last = vigCandidates[vigCandidates.length - 1];
+      vigPct = last.pct;
+      vigWindowLabel = last.label;
+    }
     const vigScore = vigPct != null ? Math.max(0, Math.min(100, Math.round(85 + vigPct * 1.5))) : null;
     const vigTierNow = vigPct != null ? (vigPct <= -20 ? "red" : vigPct <= -10 ? "amber" : "green") : null;
 
