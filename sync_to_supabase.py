@@ -470,12 +470,43 @@ HR_SLEEP_MARGIN_BPM = 12
 MIN_SLEEP_ONSET_MIN = 20
 STILL_MERGE_GAP_MIN = 3
 
+# Moyenne glissante d'intensité (sans FC) utilisée à deux endroits : repérer
+# les réveils nocturnes (derive_wake_events) et vérifier qu'un coucher
+# candidat (derive_bedtimes) est bien suivi d'une vraie nuit calme plutôt
+# que d'un simple creux du soir — cf. docstrings respectives.
+ROLL_WINDOW_MIN = 30
+ROLL_INTENSITY_MAX = 8
+# Un coucher candidat (immobilité + FC basse pendant MIN_SLEEP_ONSET_MIN)
+# n'est retenu que si le calme se maintient ensuite : filtre une pause
+# assise/allongée en soirée (FC basse un moment, puis reprise d'activité)
+# que MIN_SLEEP_ONSET_MIN seul ne suffit pas à écarter — vérifié sur
+# données réelles (nuit du 11-12 septembre, un coucher détecté à 18h28
+# alors qu'une vraie reprise d'activité suivait peu après). Volontairement
+# < 1 : une vraie nuit inclut des réveils légitimes.
+REST_OF_NIGHT_STILL_MIN = 0.75
+
 
 def _hr_sleep_threshold(window):
     hr_values = [r["heart_rate"] for r in window if r.get("heart_rate") is not None]
     if not hr_values:
         return None
     return min(hr_values) + HR_SLEEP_MARGIN_BPM
+
+
+def _rolling_still_flags(window):
+    """Immobilité sans FC : pas + intensité instantanée, complétés par une
+    moyenne glissante de l'intensité sur ROLL_WINDOW_MIN minutes pour capter
+    les phases immobiles mais légèrement agitées qu'un seuil minute par
+    minute seul manque (cf. derive_wake_events)."""
+    rolling_source = [(r["intensity"] or 0) if r["steps"] in (0, None) else 999 for r in window]
+    flags = []
+    for idx, r in enumerate(window):
+        if not _is_still(r, None):
+            flags.append(False)
+            continue
+        seg = rolling_source[max(0, idx - ROLL_WINDOW_MIN + 1):idx + 1]
+        flags.append(sum(seg) / len(seg) <= ROLL_INTENSITY_MAX)
+    return flags
 
 
 def _is_still(row, hr_threshold, require_hr=False):
@@ -509,11 +540,19 @@ def derive_bedtimes(minute_rows, wake_rows):
     cf. build_sleep_stages), plutôt que d'utiliser la valeur fixe 22:00 du
     blob de sommeil (cf. build_sleep_stages, docstring).
 
-    On cherche, en balayant la nuit du soir vers le matin, le premier bloc
+    On cherche, en balayant la nuit du soir vers le matin, un bloc
     d'immobilité continue (coupures tolérées <= STILL_MERGE_GAP_MIN) d'au
-    moins MIN_SLEEP_ONSET_MIN minutes — c'est le coucher. Ne renvoie une
-    valeur que si au moins 3h séparent ce coucher du réveil — sinon on ne
-    devine pas."""
+    moins MIN_SLEEP_ONSET_MIN minutes suivi d'une vraie nuit calme (cf.
+    REST_OF_NIGHT_STILL_MIN) — c'est le coucher. Le premier bloc qui atteint
+    MIN_SLEEP_ONSET_MIN ne suffit pas : vérifié sur données réelles (nuit du
+    11-12 septembre) qu'une pause assise en soirée (FC basse ~20-30 min)
+    suivie d'une reprise d'activité franchissait ce seuil et se faisait
+    passer pour un coucher, alors que la vraie nuit commençait des heures
+    plus tard. On ne retient donc un candidat que si le calme se maintient
+    ensuite jusqu'au réveil (mesuré sans FC, cf. _rolling_still_flags — la
+    FC varie naturellement pendant le sommeil, cf. derive_wake_events).
+    Ne renvoie une valeur que si au moins 3h séparent ce coucher du réveil
+    — sinon on ne devine pas."""
     by_day_wake = {r["day"]: r for r in wake_rows if r.get("wake_hour") is not None}
     window_all = sorted(minute_rows, key=lambda r: r["_ts_epoch"])
     results = []
@@ -525,6 +564,7 @@ def derive_bedtimes(minute_rows, wake_rows):
             continue
         hr_threshold = _hr_sleep_threshold(window)
         still = [_is_still(r, hr_threshold, require_hr=True) for r in window]
+        roll_still = _rolling_still_flags(window)
         n = len(window)
         bed_idx = None
         i = 0
@@ -545,8 +585,10 @@ def derive_bedtimes(minute_rows, wake_rows):
                 j += 1
             block_duration_min = (window[last_still]["_ts_epoch"] - window[start]["_ts_epoch"]) / 60 + 1
             if block_duration_min >= MIN_SLEEP_ONSET_MIN:
-                bed_idx = start
-                break
+                remainder = roll_still[start:]
+                if sum(remainder) / len(remainder) >= REST_OF_NIGHT_STILL_MIN:
+                    bed_idx = start
+                    break
             i = j
         if bed_idx is None:
             continue
@@ -606,24 +648,15 @@ def derive_wake_events(minute_rows, wake_rows, bedtime_rows):
         # reconnaît à un sursaut d'ACTIVITÉ (pas/intensité), pas à une
         # variation de FC sans mouvement — cf. docstring de cette fonction.
         #
-        # En plus du sursaut minute par minute (_is_still), une moyenne
-        # glissante de l'intensité sur ROLL_WINDOW_MIN minutes repère les
-        # phases "immobile mais éveillé" : aucun pas, une intensité qui ne
-        # dépasse jamais STILL_INTENSITY_MAX assez longtemps pour ressortir
-        # minute par minute, mais qui reste sensiblement au-dessus du bruit
-        # de fond du sommeil calme (~1-5) sur la durée — vérifié sur données
-        # réelles (nuit du 8-9 septembre, 2 réveils ressentis vers 3h et
-        # 7h30, invisibles minute par minute mais nets une fois lissés).
-        ROLL_WINDOW_MIN = 30
-        ROLL_INTENSITY_MAX = 8
-        rolling_source = [(r["intensity"] or 0) if r["steps"] in (0, None) else 999 for r in window]
-        still = []
-        for idx, r in enumerate(window):
-            if not _is_still(r, None):
-                still.append(False)
-                continue
-            seg = rolling_source[max(0, idx - ROLL_WINDOW_MIN + 1):idx + 1]
-            still.append(sum(seg) / len(seg) <= ROLL_INTENSITY_MAX)
+        # En plus du sursaut minute par minute, une moyenne glissante de
+        # l'intensité (cf. _rolling_still_flags) repère les phases "immobile
+        # mais éveillé" : aucun pas, une intensité qui ne dépasse jamais
+        # STILL_INTENSITY_MAX assez longtemps pour ressortir minute par
+        # minute, mais qui reste sensiblement au-dessus du bruit de fond du
+        # sommeil calme (~1-5) sur la durée — vérifié sur données réelles
+        # (nuit du 8-9 septembre, 2 réveils ressentis vers 3h et 7h30,
+        # invisibles minute par minute mais nets une fois lissés).
+        still = _rolling_still_flags(window)
 
         events, i, n = [], 0, len(window)
         while i < n:
