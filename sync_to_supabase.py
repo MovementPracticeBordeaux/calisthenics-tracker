@@ -590,10 +590,24 @@ def derive_bedtimes(minute_rows, wake_rows):
                     bed_idx = start
                     break
             i = j
+        # bed_idx is None (aucun candidat retenu) ou nuit trop courte (<3h) :
+        # on renvoie quand même une ligne avec bedtime_hour=None plutôt que de
+        # simplement sauter le jour. Sans ça, une synchro partielle en pleine
+        # nuit (fenêtre encore incomplète) peut pousser un coucher plausible
+        # à ce moment-là ; une fois la nuit complète synchronisée, un calcul
+        # plus juste peut légitimement ne plus trouver aucun candidat (nuit
+        # trop agitée pour trancher) — sans ligne explicite pour l'écraser,
+        # l'ancienne valeur fausse restait indéfiniment en base (vérifié sur
+        # données réelles : "14h52" puis "21h59" comme coucher, deux nuits où
+        # la synchro avait tourné avant la fin de la nuit). len(window) < 60
+        # (fenêtre quasi vide, cf. plus haut) reste un cas à part : on ne
+        # sait vraiment rien, on ne touche pas à une valeur existante.
         if bed_idx is None:
+            results.append({"day": day, "bedtime_hour": None})
             continue
         duration_min = (window[-1]["_ts_epoch"] - window[bed_idx]["_ts_epoch"]) / 60
         if duration_min < 180:
+            results.append({"day": day, "bedtime_hour": None})
             continue
         bed_dt = datetime.datetime.fromtimestamp(window[bed_idx]["_ts_epoch"])
         # _bed_epoch : usage interne (derive_wake_events a besoin de la borne
@@ -632,7 +646,15 @@ def derive_wake_events(minute_rows, wake_rows, bedtime_rows):
         wake = by_day_wake.get(day)
         if not wake:
             continue
-        bed_epoch = bed["_bed_epoch"]
+        bed_epoch = bed.get("_bed_epoch")
+        if bed_epoch is None:
+            # derive_bedtimes n'a pas retenu de coucher pour ce jour (cf. sa
+            # docstring) : pas de fenêtre coucher->réveil fiable pour compter
+            # des réveils. On efface une éventuelle valeur déjà en base
+            # plutôt que de la laisser filer, même logique que pour le
+            # coucher lui-même.
+            results.append({"day": day, "sleep_wake_count": None, "sleep_wake_times": None})
+            continue
         wake_epoch = (datetime.datetime.strptime(day, "%Y-%m-%d") + datetime.timedelta(hours=wake["wake_hour"])).timestamp()
         window = [r for r in window_all if bed_epoch <= r["_ts_epoch"] <= wake_epoch]
         if len(window) < 30:
