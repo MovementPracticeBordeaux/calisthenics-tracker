@@ -477,13 +477,21 @@ STILL_MERGE_GAP_MIN = 3
 ROLL_WINDOW_MIN = 30
 ROLL_INTENSITY_MAX = 8
 # Un coucher candidat (immobilité + FC basse pendant MIN_SLEEP_ONSET_MIN)
-# n'est retenu que si le calme se maintient ensuite : filtre une pause
-# assise/allongée en soirée (FC basse un moment, puis reprise d'activité)
-# que MIN_SLEEP_ONSET_MIN seul ne suffit pas à écarter — vérifié sur
-# données réelles (nuit du 11-12 septembre, un coucher détecté à 18h28
-# alors qu'une vraie reprise d'activité suivait peu après). Volontairement
-# < 1 : une vraie nuit inclut des réveils légitimes.
-REST_OF_NIGHT_STILL_MIN = 0.75
+# n'est retenu que si aucune reprise d'activité SOUTENUE ne suit avant le
+# réveil — filtre une pause assise/allongée en soirée (FC basse un moment,
+# puis reprise d'activité) que MIN_SLEEP_ONSET_MIN seul ne suffit pas à
+# écarter (vérifié sur données réelles, nuit du 11-12 septembre : coucher
+# détecté à 18h28, suivi de 210 min d'activité cumulée avant la vraie
+# nuit). Mesuré comme la plus longue séquence continue d'activité dans le
+# reste de la fenêtre plutôt qu'une proportion du temps total : une nuit
+# agitée mais réelle (plusieurs réveils courts, cf. derive_wake_events)
+# ne doit pas être rejetée juste parce qu'elle cumule beaucoup de réveils
+# — seule une séquence ininterrompue anormalement longue trahit une vraie
+# reprise d'activité (pas un simple réveil). Calibré entre les plus longs
+# réveils réels observés (60 min, nuit du 8-9 septembre) et la reprise
+# d'activité de 210 min ci-dessus, sur l'ensemble des nuits réelles
+# utilisées pour valider ce module.
+MAX_ACTIVE_RUN_MIN = 90
 
 
 def _hr_sleep_threshold(window):
@@ -542,17 +550,23 @@ def derive_bedtimes(minute_rows, wake_rows):
 
     On cherche, en balayant la nuit du soir vers le matin, un bloc
     d'immobilité continue (coupures tolérées <= STILL_MERGE_GAP_MIN) d'au
-    moins MIN_SLEEP_ONSET_MIN minutes suivi d'une vraie nuit calme (cf.
-    REST_OF_NIGHT_STILL_MIN) — c'est le coucher. Le premier bloc qui atteint
-    MIN_SLEEP_ONSET_MIN ne suffit pas : vérifié sur données réelles (nuit du
-    11-12 septembre) qu'une pause assise en soirée (FC basse ~20-30 min)
-    suivie d'une reprise d'activité franchissait ce seuil et se faisait
-    passer pour un coucher, alors que la vraie nuit commençait des heures
-    plus tard. On ne retient donc un candidat que si le calme se maintient
-    ensuite jusqu'au réveil (mesuré sans FC, cf. _rolling_still_flags — la
-    FC varie naturellement pendant le sommeil, cf. derive_wake_events).
-    Ne renvoie une valeur que si au moins 3h séparent ce coucher du réveil
-    — sinon on ne devine pas."""
+    moins MIN_SLEEP_ONSET_MIN minutes non suivi d'une reprise d'activité
+    soutenue (cf. MAX_ACTIVE_RUN_MIN) — c'est le coucher. Le premier bloc
+    qui atteint MIN_SLEEP_ONSET_MIN ne suffit pas : vérifié sur données
+    réelles (nuit du 11-12 septembre) qu'une pause assise en soirée (FC
+    basse ~20-30 min) suivie d'une reprise d'activité franchissait ce
+    seuil et se faisait passer pour un coucher, alors que la vraie nuit
+    commençait des heures plus tard. Approche inspirée de la littérature
+    sur les wearables du commerce (Fitbit/Garmin/Oura) qui combinent
+    mouvement et FC plutôt qu'un seul signal, et évaluent des séquences
+    plutôt qu'un ratio global — une nuit réellement agitée (plusieurs
+    réveils courts, cf. derive_wake_events) ne doit pas être rejetée juste
+    parce qu'elle cumule beaucoup de réveils ; seule une séquence continue
+    anormalement longue d'activité (mesurée sans FC, cf.
+    _rolling_still_flags — la FC varie naturellement pendant le sommeil,
+    cf. derive_wake_events) trahit une vraie reprise d'activité. Ne
+    renvoie une valeur que si au moins 3h séparent ce coucher du réveil —
+    sinon on ne devine pas."""
     by_day_wake = {r["day"]: r for r in wake_rows if r.get("wake_hour") is not None}
     window_all = sorted(minute_rows, key=lambda r: r["_ts_epoch"])
     results = []
@@ -586,7 +600,14 @@ def derive_bedtimes(minute_rows, wake_rows):
             block_duration_min = (window[last_still]["_ts_epoch"] - window[start]["_ts_epoch"]) / 60 + 1
             if block_duration_min >= MIN_SLEEP_ONSET_MIN:
                 remainder = roll_still[start:]
-                if sum(remainder) / len(remainder) >= REST_OF_NIGHT_STILL_MIN:
+                max_active_run, cur_run = 0, 0
+                for calm in remainder:
+                    if calm:
+                        cur_run = 0
+                    else:
+                        cur_run += 1
+                        max_active_run = max(max_active_run, cur_run)
+                if max_active_run <= MAX_ACTIVE_RUN_MIN:
                     bed_idx = start
                     break
             i = j
